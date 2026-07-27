@@ -1,0 +1,9 @@
+# MSRV for the workspace. Originally pinned to 1.82 (GATs, stable since 1.65; let-else;
+# impl Trait in associated types), but bumped to 1.94.1 during F0 setup: the `image`
+# crate (0.25.5) transitively depends on `moxcms`, which requires Cargo's `edition2024`
+# feature, stabilized in 1.85. Bump only with architect sign-off, since it is part of
+# the build contract CI enforces.
+[toolchain]
+channel    = "1.94.1"
+components = ["rustfmt", "clippy"]
+profile    = "minimal"

@@ -49,7 +49,7 @@ panel-ocr/
 
 Rules Codex must not violate:
 
-1. **Stage crates never touch the filesystem for path *resolution*.** They receive `ImageHandle`s and typed structs; `pc-pipeline` owns all path construction and persistence. (Stage crates may *read* an `ImageHandle` that carries a path, and may *write* an output only when handed an explicit destination `PathBuf`.)
+1. **Stage crates never touch the filesystem for path *resolution*.** They receive `ImageHandle`s and typed structs; `pc-pipeline` owns all path construction and persistence. (Stage crates may *read* an `ImageHandle` that carries a path, and may *write* an output only when handed an explicit destination `PathBuf`.) **Documented exception: `pc-export`** (§12.3 step 1, task E3) resolves its own *destination* paths (`output_dir` absolute-vs-relative logic, per-artifact filename construction, `mkdir -p`), because export destinations are export-format-specific derivations of `export_path`/`output_dir`, not cache-layer bookkeeping — cache-path resolution and artifact *availability* remain exclusively `pc-pipeline`'s job (§12.3 step 2).
 2. **No stage crate depends on another stage crate.** All shared vocabulary lives in `pc-core`; all shared pixel math in `pc-imageops`.
 3. **`pc-cli` contains no algorithm code** — argument parsing, config loading, and calls into `pc-pipeline` only.
 4. **Every ML call goes through a trait** (`TextDetector`, `OcrEngine`) so the `candle` escape hatch stays real (decision #2).
@@ -64,13 +64,13 @@ pc-detect, pc-ocr, pc-preprocess, pc-mask, pc-denoise, pc-export ← pc-pipeline
 pc-testkit ← (dev-dependencies of every crate above)
 ```
 
-Third-party crates (pinned in `[workspace.dependencies]`): `serde`/`serde_json`, `toml_edit`, `image`, `imageproc`, `ndarray`, `rayon`, `clap` (derive), `thiserror`, `anyhow` (binary only), `tracing` + `tracing-subscriber`, `ort` (`=2.0.0-rc.12`, feature-gated), `reqwest` (rustls), `sha2`, `hf-hub`, `indicatif`, `regex`, `csv`. Dev: `insta` (**restricted use, §15.10** — only for the two named regression locks in §8.7(B)9 and §9.7(B)11; every numeric/algorithmic gate elsewhere uses hand-written assertions), `approx`.
+Third-party crates (pinned in `[workspace.dependencies]`): `serde`/`serde_json`, `toml_edit`, `image`, `imageproc`, `ndarray`, `rayon`, `clap` (derive), `thiserror`, `anyhow` (binary only), `tracing` + `tracing-subscriber`, `ort` (`=2.0.0-rc.12`, feature-gated), `reqwest` (rustls), `sha2`, `hf-hub`, `indicatif`, `regex`, `csv`, `uuid` (§4.2's `CachePaths` needs it). Dev: `insta` (**restricted use, §15.10** — only for the two named regression locks in §8.7(B)9 and §9.7(B)11; every numeric/algorithmic gate elsewhere uses hand-written assertions), `approx`, `tempfile` (disk-backed tests, e.g. `ImageHandle` materialization).
 
 ---
 
 ## 2. Shared types (`pc-core`)
 
-All types `#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]` unless noted. JSON is `snake_case`. Every persisted struct carries `schema_version: u32` (start at `1`) as its first field so future format changes are detectable.
+All types `#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]` unless noted — **except** `ImageHandle` (§2.3) and any struct containing one (`PageDataRaw`, `PageData`, `MaskData`): these derive `Debug, Clone, Serialize, Deserialize` only. `ImageHandle` gets a **hand-written** `PartialEq` comparing `path` only (the `cached` field is excluded, since it is `#[serde(skip)]` and comparing decoded pixel buffers would be semantically wrong for a value-equality check). Structs containing an `ImageHandle` therefore cannot derive `PartialEq` transitively; tests on these compare canonical JSON strings and field-wise equality on their `PartialEq` sub-fields instead — this is resolved, not a gap (see docs history: Rust Engineer report, Part 1 item 2). JSON is `snake_case`, including for C-like enums (`Step`, `Output` — both carry `#[serde(rename_all = "snake_case")]`, resolving Rust Engineer report Part 1 item 3: e.g. `Step::Detect` serializes as `"detect"`, `Output::BaseImage` as `"base_image"`). Every top-level persisted struct (`PageDataRaw`, `PageData`, `MaskData`, and each stage's `*Input`) carries `schema_version: u32` (start at `1`) as its first field so future format changes are detectable; nested types (`TextBox`, `MaskingRegion`, `DetectedBlock`, `MaskRegionStats`) and the §2.7 analytics records do not carry their own `schema_version`.
 
 ### 2.1 Geometry
 
@@ -87,6 +87,11 @@ impl Rect {
     pub fn area(&self)   -> i64;                    // width * height as i64 (upstream: int, can be large)
     pub fn center(&self) -> (i32, i32);             // ((x1+x2)/2, (y1+y2)/2), floor-div like Python //
     pub fn contains(&self, p: (i32, i32)) -> bool;  // x1 <= x <= x2 && y1 <= y <= y2
+    /// Rect containment, inclusive on all four sides (`self.x1<=o.x1 && self.y1<=o.y1
+    /// && self.x2>=o.x2 && self.y2>=o.y2`); `self.contains_rect(&self)` is true. Added
+    /// beyond the original method list because §2.5's "every `reference` ⊇ `masking`"
+    /// invariant needs it and `contains()` only takes a point.
+    pub fn contains_rect(&self, other: &Rect) -> bool;
     pub fn merge(&self, other: &Rect) -> Rect;      // bounding union
     pub fn overlaps(&self, other: &Rect, threshold_percent: f64) -> bool;
     pub fn overlaps_center(&self, other: &Rect) -> bool;
@@ -95,7 +100,11 @@ impl Rect {
     pub fn scale(&self, factor: f64) -> Rect;       // per-coordinate, truncating toward zero (Python int())
     pub fn translate(&self, dx: i32, dy: i32) -> Rect;
     pub fn is_empty(&self) -> bool;                 // width <= 0 || height <= 0
-    pub fn to_crop(&self, canvas: (u32,u32)) -> Option<(u32,u32,u32,u32)>; // clamped (x,y,w,h) for image crate
+    /// Clamped `(x, y, w, h)` for the `image` crate's crop API. `x1/y1` clamp up to 0;
+    /// `x2/y2` (treated as exclusive, per §2.1's cropping convention) clamp down to the
+    /// canvas. Returns `None` when the clamped width or height is `<= 0` (fully
+    /// degenerate or fully out-of-bounds). Decided (no upstream counterpart to defer to).
+    pub fn to_crop(&self, canvas: (u32,u32)) -> Option<(u32,u32,u32,u32)>;
 }
 ```
 
@@ -138,14 +147,18 @@ impl ImageHandle {
     pub fn from_memory(img: DynamicImage) -> Self;                     // path: None
     pub fn with_both(p: impl Into<PathBuf>, img: DynamicImage) -> Self;
     /// Returns the cached image if present, else decodes from `path`.
-    pub fn load(&self) -> Result<Arc<DynamicImage>, CoreError>;
+    pub fn load(&self) -> Result<Arc<DynamicImage>, StageError>;
     /// Decode-free size query (uses cache, else image header).
-    pub fn dimensions(&self) -> Result<(u32, u32), CoreError>;
+    pub fn dimensions(&self) -> Result<(u32, u32), StageError>;
     pub fn is_materialized(&self) -> bool;                              // path exists on disk
+    /// `Ok(())` iff this handle can survive a checkpoint round-trip (`path.is_some()`),
+    /// else `StageError::UnmaterializedHandle`. Call before handing a struct containing
+    /// this handle to `serde_json::to_string` for a checkpoint write.
+    pub fn ensure_materialized(&self) -> Result<(), StageError>;
 }
 ```
 
-Invariant: after `serde` round-trip, `cached` is `None`; a handle with `path: None` that round-trips is an error (`CoreError::UnmaterializedHandle`) — the pipeline must materialize before checkpointing. This invariant is directly testable.
+Invariant, decided: after `serde` round-trip, `cached` is `None`. The materialization invariant ("a handle with `path: None` must not be checkpointed") is enforced at **two** points, not one: (1) `ensure_materialized()` is a pre-flight check the pipeline calls before assembling a checkpoint struct; (2) `ImageHandle`'s hand-written `Serialize` impl itself fails (returns a serde error) when `path.is_none()`, so no code path — including one that forgets the pre-flight check — can silently write an unusable handle into a JSON checkpoint. `StageError::UnmaterializedHandle` is the error variant; there is no separate `CoreError` type (an earlier draft's reference to `CoreError` was a naming slip — `StageError` is the only error type `pc-core` defines, per §2.9).
 
 ### 2.4 `PageDataRaw` — detector output (upstream `#raw.json`)
 
@@ -252,6 +265,12 @@ Mirror upstream `output_structures.py` minus inpainting:
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Step { Detect = 1, Preprocess, Mask, Denoise, Export }
 
+impl Step {
+    /// The step before this one; `None` for `Detect`. Required by §4.4's resume logic
+    /// (added beyond the original method list — used in §4.4 but not previously declared here).
+    pub fn prev(self) -> Option<Step>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Output {
     // Detect
@@ -266,6 +285,8 @@ pub enum Output {
 
 impl Output { pub fn step(self) -> Step; pub fn cache_suffix(self) -> &'static str; }
 ```
+
+Note: `Output::step()` is deliberately non-surjective onto `Step` — there is no `Output` variant mapping to `Step::Export`, because export writes final user-facing files, not cache artifacts. Tests over `Output::ALL` must not assume every `Step` is covered.
 
 `cache_suffix` values are the upstream file suffixes verbatim (`_base.png`, `_raw_mask.png`, `#raw.json`, `#clean.json`, `_box_mask.png`, `_cut_mask.png`, `_combined_mask.png`, `_with_masks.png`, `_text.png`, `_clean.png`, `#mask_data.json`, `_noise_mask.png`, `_clean_denoised.png`). Keeping them identical means a user can diff our cache against upstream's during parity work — cheap and useful.
 
@@ -381,15 +402,15 @@ Format `{uuid}_{stem}{suffix}` mirrors upstream `OutputPathGenerator` (`output_s
               text_layer: Option<ImageHandle>, analytics: Vec<MaskFittingAnalytic> }
       │  pipeline: write mask_data → #mask_data.json
       ▼
- DenoiseInput { mask_data: MaskData, masked_image: ImageHandle /* _clean.png */,
+ DenoiseInput { mask_data: MaskData, original_image: ImageHandle, masked_image: ImageHandle /* _clean.png */,
                 config: DenoiserConfig, dests: DenoiseDests { noise_mask, clean_denoised } }
       │  pc_denoise::run(input)
       ▼
  DenoiseOutput { denoised: ImageHandle, noise_mask: ImageHandle, analytics }
       │  pipeline: (if split) stitch segment outputs back together
       ▼
- ExportInput { original_path, export_path, output_dir, outputs, sources: ExportSources, general: GeneralConfig,
-               denoising_enabled }
+ ExportInput { original_path, export_path, output_dir, outputs, sources: ExportSources,
+               preferred_file_type, preferred_mask_file_type, denoising_enabled }
       │  pc_export::run(input)
       ▼
  ExportOutput { files_written: Vec<PathBuf> }
@@ -405,6 +426,7 @@ Format `{uuid}_{stem}{suffix}` mirrors upstream `OutputPathGenerator` (`output_s
 | `MaskInput.original_image` | the user's input file (needed when `scale != 1`) |
 | `DenoiseInput.mask_data` | `MaskOutput.mask_data` (or `#mask_data.json`) |
 | `DenoiseInput.masked_image` | `MaskOutput.cleaned` (`_clean.png`) |
+| `DenoiseInput.original_image` | the user's input file (§11.2/§11.3: needed for the 1-bit-mode probe and to build the full-resolution base canvas) |
 | `DenoiseInput.mask_data.combined_mask` | `MaskOutput.combined_mask` (`_combined_mask.png`) |
 | `ExportInput.sources` | `MaskOutput` + `DenoiseOutput` handles (or discovered from cache, §12.3) |
 
@@ -461,6 +483,7 @@ always_cache_masks           = false
 [text_detector]
 model_path                   = ""        # empty = use managed cache
 concurrent_models            = 1
+mask_refine_mode              = "simple"  # simple | annotation ("annotation" rejected in v1: see §8.3 step 5 / §15.2). Deliberate v1 addition, not present upstream.
 
 [preprocessor]
 box_min_size                 = 400       # 20*20
@@ -501,7 +524,7 @@ template_window_size          = 7
 search_window_size            = 21
 ```
 
-Validation (fail config load, not per-image): `mask_growth_step_pixels >= 1`, `mask_growth_steps >= 1`, `min_mask_thickness >= 0`, `0.0 <= mask_improvement_threshold < 1.0`, `mask_max_standard_deviation > 0`, `0 <= box_overlap_threshold <= 100`, `template_window_size` and `search_window_size` odd and `>= 3`, `off_white_max_threshold` in `0..=255`, `ocr_blacklist_pattern` compiles as a regex, `long_strip_aspect_ratio > 0`.
+Validation (fail config load, not per-image): `mask_growth_step_pixels >= 1`, `mask_growth_steps >= 1`, `min_mask_thickness >= 0`, `0.0 <= mask_improvement_threshold < 1.0`, `mask_max_standard_deviation > 0`, `0 <= box_overlap_threshold <= 100`, `template_window_size` and `search_window_size` odd and `>= 3`, `off_white_max_threshold` in `0..=255`, `ocr_blacklist_pattern` compiles as a regex, `long_strip_aspect_ratio > 0`, `noise_outline_size >= 0`, `noise_fade_radius >= 0`, `filter_strength > 0.0`, `color_filter_strength > 0.0`. Also validated here (closing the gap between this list and §12.3 step 6 / §12.7(A)9, which require these to be config-load errors, not runtime ones): `preferred_file_type` (when non-empty) and `preferred_mask_file_type` must each be one of the suffixes §12.3 step 6 lists (`.png .jpg .jpeg .webp .tif .tiff .bmp .dib .ppm` — `.jp2` is accepted as valid *input* but rejected as an output suffix per §12.3 step 6's note), with an error naming the supported list on mismatch.
 
 Missing keys take defaults; unknown keys produce a `WARN` and are **preserved** on round-trip (that is why `toml_edit`). `panel-ocr profile new/show/edit/validate` subcommands wrap this.
 
@@ -541,7 +564,7 @@ The one-time recording is a **checked-in artifact**, reviewed like code. This is
 
 Upstream's `*_clean.png` images were produced by a specific PanelCleaner version/profile we cannot fully verify. Per CLAUDE.md, tests are frozen once written — so tolerance numbers must be *measured before freezing*, not guessed after. Therefore:
 
-> **Task F2 (must complete before the Stage-3 golden test is written):** implement `cargo xtask calibrate-goldens`, run it against the reference implementation available at that moment, and record measured deltas in `docs/GOLDEN_CALIBRATION.md`. The tolerances proposed in §10.7 are the *specified* values; if calibration shows they cannot be met for a specific fixture, the discrepancy goes back to the two architects jointly (per CLAUDE.md) **before** the test is frozen — never silently loosened afterwards.
+> **Task F2 (must complete before the §11.7(B) denoising parity test is frozen):** implement `cargo xtask calibrate-goldens`, run it against the reference implementation available at that moment, and record measured deltas in `docs/GOLDEN_CALIBRATION.md`. The §11.7(B) tolerances are the *specified* values; if calibration shows they cannot be met, the discrepancy goes back to the two architects jointly (per CLAUDE.md) **before** that test is frozen — never silently loosened afterwards. **This does not gate §10.7(B)**: per §15.2 (decided), the masking stage ships `MaskRefineMode::Simple` rather than upstream's full mask refinement, so the demo_bubbles comparison in §10.7(B) is a non-gating calibration report, not a frozen parity gate — F2 must still run it and record the numbers (for visibility and future v1.5 planning), but a shortfall there is expected evidence of the refinement-mode difference, not a blocker.
 
 To keep the project unblocked regardless, each stage's acceptance criteria are split into:
 - **(A) Primary gates** — synthetic, exact, implementation-independent. These are the real correctness contract; they cannot be blocked by third-party fixture uncertainty.
@@ -810,7 +833,7 @@ Batching: `{P1, P2, P3, P4, P5}` one sequential call (all pure geometry/boilerpl
 
 - **Synthetic rects** for P2–P5: hand-built `PageDataRaw` values with known areas/overlaps. These are the primary tests — geometry needs no images.
 - `ocr_output/good_detected_text.csv` / `.txt` → these define the **OCR report format** (2 boxes for `img1.jpg` with the first at `(100,100)-(300,200)`, area 20 000; `page1.jpg` 2 lines, `page2.jpg` 3 lines). They are **not** filter-behaviour fixtures — the filter is a regex over engine output. Assigned to **E4** (§12) as format goldens, and reused in P6 only as the source of the "area == 20_000" arithmetic check. **Decided (§15.5), confirmed:** `run_ocr` — the code path that actually produces this format — sets `ocr_blacklist_pattern = ".*"` and `ocr_max_size = 10**10` (`main.py:866-868`), making the filter inert there; the fixtures cannot be filter-behavior tests.
-- `demo_bubbles/handwritten_bubble_raw.png` (72×132, area 9 504 < `ocr_max_size` 3 000? no — 9 504 > 3 000) — use `demo_bubbles/handwritten_bubble_raw.png` cropped to a 40×70 region as a small-box OCR candidate crop for P6's `MockOcrEngine` plumbing test (the crop content is irrelevant; the mock returns scripted text).
+- `demo_bubbles/handwritten_bubble_raw.png` (72×132, full-image area 9,504 px — too large to itself be an `ocr_max_size` candidate at the default 3,000) cropped down to a 40×70 region (area 2,800 px, under the 3,000 threshold) as a small-box OCR candidate crop for P6's `MockOcrEngine` plumbing test — the crop content is irrelevant, since the mock returns scripted text.
 - Recorded page fixture → P5 end-to-end determinism.
 
 ### 9.7 Acceptance criteria
@@ -984,7 +1007,7 @@ Parallelism note: regions within a page may be fitted with `rayon` (`par_iter().
 
 ### 10.6 Fixtures
 
-- `demo_bubbles/*_raw.png` + `*_clean.png` → the **calibration fixtures** (7 pairs; see the non-gating status of §10.7(B) above), driven by `tests/fixtures/recorded/<name>_raw_mask.png` + `<name>#raw.json` (§7.2) so no model runs in CI. Each fixture stresses a different case: `square` (trivial), `handwritten` (thin strokes, small canvas), `black` (dark bubble → non-white median colour → exercises the off-white snap *not* firing, and is the frozen gate in item 16), `ray`/`darkrays` (radial lines crossing the border → high border σ → exercises the improvement threshold), `spikey` (non-convex balloon → exercises growth clipping), `nightmare` (highest-σ stress case). Measured diffs show all 7 pairs have substantial changed-pixel counts (e.g. `nightmare` 16,873/75,117 px) — do not assume any demo fixture exercises the "leave it untouched, `failed: true`" path; that path is covered instead by the synthetic primary gate §10.7(A)9.
+- `demo_bubbles/*_raw.png` + `*_clean.png` → the **calibration fixtures** (7 pairs; see the non-gating status of §10.7(B) below), driven by `tests/fixtures/recorded/<name>_raw_mask.png` + `<name>#raw.json` (§7.2) so no model runs in CI. Each fixture stresses a different case: `square` (trivial), `handwritten` (thin strokes, small canvas), `black` (dark bubble → non-white median colour → exercises the off-white snap *not* firing, and is the frozen gate in item 16), `ray`/`darkrays` (radial lines crossing the border → high border σ → exercises the improvement threshold), `spikey` (non-convex balloon → exercises growth clipping), `nightmare` (highest-σ stress case). Measured diffs show all 7 pairs have substantial changed-pixel counts (e.g. `nightmare` 16,873/75,117 px) — do not assume any demo fixture exercises the "leave it untouched, `failed: true`" path; that path is covered instead by the synthetic primary gate §10.7(A)9.
 - Synthetic images for M1–M4 primary gates (below).
 
 ### 10.7 Acceptance criteria
@@ -1135,7 +1158,7 @@ Batching: `{N2, N3, N4}` one sequential call; `N1` isolated.
 
 12. Against the recorded OpenCV references (same `h = 10`, `template = 7`, `search = 21`): **SSIM ≥ 0.98**, **mean absolute difference ≤ 1.0**, **max per-channel difference ≤ 8**.
     **Tolerance justification.** OpenCV quantizes its weights into a fixed-point lookup table indexed by a *bucketed* distance (`almostDist2Weight`, with `WEIGHT_THRESHOLD = 0.001` truncating far weights to zero) and accumulates in integers; we accumulate in `f32` with exact `exp`. That alone produces small systematic differences concentrated on high-gradient pixels, where a handful of near-threshold weights get dropped by OpenCV but kept by us. `max Δ ≤ 8` (≈3 % of range) bounds those isolated pixels; `mean |Δ| ≤ 1.0` proves there is no systematic bias; `SSIM ≥ 0.98` proves no structural error (a wrong search radius or a border bug would blow through all three). This directly instantiates decisions-doc resolution #4 (perceptual, not bit-exact).
-13. End-to-end on a recorded page: `_noise_mask.png` and `_clean_denoised.png` are locked as size/mode/alpha-histogram assertions plus an SSIM ≥ 0.99 comparison against a committed snapshot of our own first accepted output (regression lock, refreshed only by explicit architect decision).
+13. End-to-end on a recorded page: `_noise_mask.png` and `_clean_denoised.png` are locked as size/mode/alpha-histogram assertions plus an SSIM ≥ 0.99 comparison against a committed reference **image file** (a golden PNG, not an `insta` snapshot — this is not a third snapshot site under §15.10(c)), refreshed only by explicit architect decision.
 
 ---
 
@@ -1153,10 +1176,11 @@ pub struct ExportInput {
     pub original_path: PathBuf,        // for metadata (dpi, mode) and naming
     pub export_path: PathBuf,          // logical output identity (differs from original for merged strips)
     pub output_dir: PathBuf,           // absolute => used as-is; relative => relative to export_path.parent()
-    pub outputs: Vec<Output>,          // requested + available (already resolved by precedence)
-    pub sources: ExportSources,
+    pub outputs: Vec<Output>,          // outputs requested by the user/CLI flags (NOT precedence-resolved — see §12.3 step 2)
+    pub sources: ExportSources,        // availability: which stage artifacts exist for this image (Some) vs were skipped/absent (None)
     pub preferred_file_type: Option<String>,       // None => keep original suffix
     pub preferred_mask_file_type: String,          // default ".png"
+    pub denoising_enabled: bool,       // config/--skip-denoise state; used by §12.3 step 2 to exclude denoise candidates
 }
 
 pub struct ExportSources {
@@ -1180,10 +1204,9 @@ pub struct ExportOutput { pub files_written: Vec<PathBuf> }
 - Text output: `base / {stem}_text{preferred_mask_file_type}`.
 (These reproduce upstream's `OutputPathGenerator(export_mode=True)` suffixes: `_clean`, `_mask`, `_text`.)
 
-**2 — Precedence.** Exactly one *cleaned* image and at most one *mask* image are exported, choosing the highest available stage:
-`cleaned: denoised > masked`; `mask: denoise_mask > final_mask`; `text: isolated_text` (independent).
-`--save-only-{cleaned,mask,text}` narrow the categories. `denoising_enabled == false` (or `--skip-denoise`) removes the denoise candidates.
-In `Disk` mode with `--skip-*` flags, availability is discovered by probing cache paths (upstream globs `*#clean.json`; we instead iterate the pipeline's own per-image `CachePaths`, which is deterministic and avoids re-parsing JSON — same outcome, less I/O).
+**2 — Precedence.** Ownership split, resolved: **`pc-pipeline` resolves availability**, **`pc-export`'s `discover.rs` (task E2) resolves precedence**. Concretely: before calling `pc_export::run`, the pipeline populates `ExportSources` — each field is `Some(handle)` if that stage artifact actually exists for this image (either just-produced, or found on disk via `CachePaths` when resuming/`--skip-*`; in `Disk` mode this means iterating the pipeline's own per-image `CachePaths`, which is deterministic and avoids re-parsing JSON, unlike upstream's `*#clean.json` glob) and `None` if it was skipped or never produced. `pc-export` itself never touches the cache directory or does path discovery — this is the one documented exception to §1 rule 1 (see the rule-1 amendment below), and even that exception is scoped to *destination* paths, not cache lookups.
+
+Given a populated `ExportSources`, `discover.rs` picks exactly one *cleaned* image and at most one *mask* image, preferring the highest available stage: `cleaned: denoised > masked`; `mask: denoise_mask > final_mask`; `text: isolated_text` (independent). `--save-only-{cleaned,mask,text}` (reflected in `ExportInput.outputs`) narrow the categories. `denoising_enabled == false` (or `--skip-denoise`) removes the denoise candidates from consideration regardless of whether `ExportSources.denoised`/`denoise_mask` happen to be populated (a stale cached denoise artifact from a previous run must not resurrect itself when denoising is now disabled).
 
 **3 — Cleaned image.** Load the chosen source, convert to the **original image's colour mode** (upstream: `image.convert(original.mode)` — so a grayscale input stays grayscale, a palette input is re-paletted), save with the format-specific options below, carrying over the original's `dpi` when present.
 

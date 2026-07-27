@@ -1,0 +1,66 @@
+[workspace]
+resolver = "2"
+# NOTE: glob members only match directories that exist. At F0 only `pc-core` exists;
+# `xtask` is added to this list by task F1, when the directory is created.
+members = ["crates/*"]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+license      = "GPL-3.0-only"
+repository   = "https://github.com/ducphamhoang/panel-ocr"
+rust-version = "1.94.1"
+authors      = ["panel-ocr contributors"]
+
+[workspace.dependencies]
+# --- serialization ---
+serde      = { version = "1.0.215", features = ["derive"] }
+serde_json = "1.0.133"
+toml_edit  = "0.22.22"
+
+# --- imaging ---
+# jp2 (§12.3) is intentionally absent: the `image` crate has no JPEG2000 codec.
+# Per §12.3 note 6 that suffix is rejected at config-validation time.
+image = { version = "0.25.5", default-features = false, features = [
+    "png", "jpeg", "webp", "tiff", "bmp", "pnm",
+] }
+imageproc = "0.25.0"
+ndarray   = "0.16.1"
+
+# --- concurrency ---
+rayon = "1.10.0"
+
+# --- cli / diagnostics ---
+clap               = { version = "4.5.21", features = ["derive"] }
+thiserror          = "2.0.3"
+anyhow             = "1.0.93"          # binary crates only (pc-cli, xtask)
+tracing            = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+indicatif          = "0.17.9"
+
+# --- ml (feature-gated; pinned exact per decisions doc #2) ---
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray"] }
+
+# --- model acquisition ---
+reqwest = { version = "0.12.9", default-features = false, features = ["rustls-tls", "blocking", "stream"] }
+sha2    = "0.10.8"
+hf-hub  = { version = "0.3.2", default-features = false, features = ["ureq"] }
+
+# --- misc ---
+regex = "1.11.1"
+csv   = "1.3.1"
+uuid  = { version = "1.11.0", features = ["v4", "serde"] }   # §4.2 CachePaths
+
+# --- dev only ---
+# `insta` is RESTRICTED (§1, §15.10): permitted at exactly two call sites
+# (§8.7(B)9 and §9.7(B)11). Every other numeric/algorithmic gate uses
+# hand-written assertions. Adding a third snapshot site requires §15-style sign-off.
+insta    = { version = "1.41.1", features = ["json", "redactions"] }
+approx   = "0.5.1"
+tempfile = "3.14.0"
+
+[profile.test]
+opt-level = 1        # the pixel-math tests are slow at opt-level 0
+
+[profile.bench]
+lto = "thin"
