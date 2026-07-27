@@ -10,14 +10,16 @@ unless the user explicitly overrides it for a given task.
 - **Technical Architecture (Opus subagent)**: designs the high-level approach for a
   spec — module boundaries, interfaces, data flow, sequencing of tasks.
 - **Senior Rust Engineer (Opus subagent)**: co-authors the plan with the architect,
-  and is responsible for writing the *test specifications* (what should be tested and
-  why, mapped back to the spec) for each planned task. Also performs the final
-  post-implementation review.
+  and is responsible for drafting the actual *test code* (not just descriptions) for
+  each planned task, mapped explicitly back to the spec requirement it verifies.
+  Also performs the final post-implementation review.
 - **Codex (via the `codex:rescue` skill / Codex CLI)**: implements tasks, task by
   task, strictly test-driven. Does not invent scope beyond the plan.
-- **Fable (Senior Rust Engineer, advisory-only)**: consulted only when a task/bug
-  resists a fix after more than 5 iterations. Gives advice only — never writes or
-  touches code.
+- **Fable (Senior Rust Engineer)**: normally advisory-only — consulted when a
+  task/bug resists a fix after more than 5 iterations, giving advice only, never
+  writing or touching code. Exception: Fable also acts as the tie-breaker when the
+  two Opus subagents disagree on the plan (see below) — in that specific case Fable
+  makes the final call, still without writing code.
 
 ## Pipeline
 
@@ -25,12 +27,14 @@ unless the user explicitly overrides it for a given task.
    Rust Engineer subagents together to produce a plan for the spec. The plan must
    include, per task:
    - Scope and interfaces touched
-   - The tests to write first (owned by the Rust Engineer), tied explicitly back to
-     the spec requirement they verify
+   - The actual test code to write first (drafted by the Rust Engineer), tied
+     explicitly back to the spec requirement it verifies
    - Whether the task is "simple" (safe to batch sequentially with related tasks in
      one Codex call) or "heavy" (needs its own isolated call)
    - If the two Opus subagents disagree on approach, the Orchestrator does not
-     silently pick one — it surfaces both views to the user for a decision.
+     pick one itself — it spawns a Fable Senior Rust Engineer subagent to review
+     both positions and make the final call (advisory role suspended for this one
+     decision; Fable still does not write code).
 
 2. **TDD implementation loop**, per task (or batch of related simple tasks):
    - Before Codex writes any implementation code, the Orchestrator checks the
@@ -53,7 +57,18 @@ unless the user explicitly overrides it for a given task.
 4. **Progress watch**: the Orchestrator checks in on any long-running subagent
    roughly every 5 minutes (via scheduled wake-ups, not busy polling) to confirm
    it's still making progress, separate from whatever task-completion notifications
-   already fire.
+   already fire. To catch a dead/stuck agent early rather than waiting out the full
+   interval:
+   - Treat any background-task or agent completion event carrying a failure/error
+     status (crash, non-zero exit, tool error) as an immediate check, not something
+     to defer to the next scheduled wake-up.
+   - On each scheduled check-in, verify there was actual observable progress since
+     the last one (new output, state change, partial result) — silence or an
+     unchanged state for a full interval is treated as a possible hang, not
+     assumed to be normal slow work, and gets investigated right away (e.g. check
+     task status/output directly) instead of waiting another 5 minutes.
+   - If an agent is confirmed dead or hung, restart/resume it rather than silently
+     waiting further.
 
 ## Notes
 
