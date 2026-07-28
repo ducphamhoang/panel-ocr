@@ -656,7 +656,7 @@ Write the scaled RGB image to `base_image_dest` as PNG (compression default) whe
   (`https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3/comictextdetector.pt.onnx`,
   sha256 `1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f`) — resolved/downloaded/verified by `pc-models`.
 - Preprocess (port of `inference.preprocess_img` + `letterbox`): letterbox to `1024×1024` with `stride=64, auto=false`, i.e. scale by `r = min(1024/h, 1024/w)` (no upscaling beyond `r=1`... upstream `letterbox` default `scaleup=True`; keep upstream behaviour: allow upscale), resize with bilinear, pad **right/bottom** with `(114,114,114)` to reach the padded size; record `(dw, dh)` = total padding in x/y. Channel order: RGB, NCHW, `f32 / 255.0`.
-- Outputs (3): `blks` `[1, N, 5 + n_classes]` (n_classes = 3), `mask` `[1, 1, H, W]`, `lines_map` `[1, 2, H, W]`. If the second output has 2 channels and the third has 1, swap them (upstream guards for this: `inference.py:181-185`). Bind by index, but log the actual output names/shapes once at `DEBUG` so a model swap is diagnosable.
+- Outputs (3): `blks` `[1, N, 5 + n_classes]` (n_classes = 2), with verified real shapes `blk` `[1, 64512, 7]`, `mask`/`seg` `[1, 1, 1024, 1024]`, and `lines_map`/`det` `[1, 2, 1024, 1024]`; `64512 = 3 × (128² + 64² + 32²)` for a 1024 input at strides 8/16/32. If the second output has 2 channels and the third has 1, swap them (upstream guards for this: `inference.py:181-185`). Bind by index, but log the actual output names/shapes once at `DEBUG` so a model swap is diagnosable.
 - Execution provider: CPU only, `intra_threads = 1` (parallelism is at the image level), session created once and shared.
 
 **4 — YOLO postprocess** (`src/yolo.rs`, port of `postprocess_yolo` + yolov5 `non_max_suppression`):
@@ -1365,6 +1365,9 @@ Fresh, idiomatic design per decision #6 — no docopt compatibility. Verbosity m
 11. **Per-image parallelism** instead of per-stage process pools.
 12. **Detector mask refinement** — v1 ships the "Simple" refinement, not upstream's `refine_mask`/`refine_undetected_mask` (§15.2).
 13. **Class-agnostic NMS** — upstream runs per-class NMS (`agnostic=False`, `inference.py:115` + `yolov5_utils.py:261`), which can emit duplicate boxes for one balloon across language classes; we run class-agnostic NMS instead (see §8.3 step 4, §15.1). `yolo.rs` must carry a `// DEVIATION(13): ...` comment at the NMS call site.
+14. **Letterbox minimum dimension clamp** — upstream can pass a zero-sized resize dimension to `cv2.resize` for sufficiently small inputs; v1 clamps each rounded dimension to at least `1`, keeping the resize valid and preventing `dw` or `dh` from reaching `1024` and making `mask::crop_letterbox` reject the geometry. The implementation comment is at `crates/pc-detect/src/onnx.rs::letterbox` as `DEVIATION(14)`.
+15. **One shared ONNX session** — upstream would honour `text_detector.concurrent_models` at provider construction; v1 shares one `Mutex`-guarded session, and a configured value greater than `1` is warned-and-ignored. The implementation comment is at `crates/pc-detect/src/onnx.rs::OnnxDetector` as `DEVIATION(15)`.
+16. **Lazy construct-and-latch** — upstream constructs the detector before its per-image loop; v1 defers construction until the first image that needs detection and latches that attempt's success or rendered refusal for the run, so §4.4 resume can bypass a model it will never read. The implementation site will carry `DEVIATION(16)`; the concurrent implementation pass has not added that comment yet.
 
 Each of these must appear as a `// DEVIATION(n): ...` comment at the implementation site referencing this section, so a future parity investigation finds them immediately.
 
@@ -2255,6 +2258,14 @@ stage crate's API below was traced against the **already-implemented, frozen** s
    * `mock` = zero blocks + blank mask: a page with no detected text, which §5.6 says
      must still export a byte-equivalent cleaned copy. That makes a genuine end-to-end
      CLI test possible today with no model and no recorded fixture.
+   * ONNX model resolution is lazy in the provider: a missing or unverifiable managed model
+     remains fatal for the run, but is detected at first use rather than startup because
+     §4.4 permits runs where stage 1 never executes. The `Model` carve-out keeps that
+     refusal a single run-fatal rather than N per-image failures. The outcome of the single
+     ONNX initialization attempt — successful construction or rendered refusal — is cached;
+     neither outcome is retried within a run. The `cfg(not(feature = "onnx"))` arm stays
+     eager by design, since that refusal can never be made successful by later configuration;
+     the two arms must not be unified.
    * Rejected alternative: making `--detector` mandatory. It would break the flag's
      forward compatibility — once D4 lands, `onnx` must be the default with no flag —
      and would hide the "why is there no detector" explanation behind a usage error.
@@ -2269,8 +2280,9 @@ stage crate's API below was traced against the **already-implemented, frozen** s
    ```
    `SharedDetector(Arc<dyn TextDetector>)` returns the same handle for every image (the
    §4.5 ONNX case, and the mock case); a replay provider constructs a stem-bound
-   detector per image. A provider error is a **per-image** `Failed { step: Detect }`, not
-   a fatal — a missing replay fixture for page 7 must not kill pages 1–6.
+   detector per image. A provider error is a per-image `Failed { step: Detect }`
+   **unless the provider declares its failures run-fatal** (§16.19 item 5) — a missing
+   replay fixture for page 7 must not kill pages 1–6.
 
 4. **OCR has no engine in v1, and that is not an error.** P7 (manga-ocr) is unstarted,
    so `PipelineCtx.ocr` is `Option<&dyn OcrEngineFactory>` (matching
@@ -2396,13 +2408,31 @@ stage crate's API below was traced against the **already-implemented, frozen** s
 
 21. **Two hidden flags beyond §13.1's surface**, both `hide = true` so the documented
     surface is unchanged: `--detector <SPEC>` (item 2) and `--cache-dir <DIR>`. The
-    latter exists because §13.1 gives no way to redirect the cache, which makes an
-    end-to-end CLI test either pollute the user's real cache directory or be
-    impossible; a hidden override is the smallest honest fix. Default cache location:
-    `$XDG_CACHE_HOME/panel-ocr` (Linux) or `~/Library/Caches/panel-ocr` (macOS),
-    falling back to `./.panel-ocr-cache` when neither `$XDG_CACHE_HOME` nor `$HOME` is
-    set. No new third-party dependency is taken for this (`dirs` is not in
-    `[workspace.dependencies]` and v1 is Linux + macOS only).
+    latter is accepted by `clean`/`ocr` and by every `models` and `cache` subcommand,
+    so `models download --cache-dir DIR` and `cache clear --models --cache-dir DIR`
+    are valid invocations. All of them route cache-root selection through the one
+    helper `paths::resolve_cache_root`, with precedence `--cache-dir > config.cache_dir
+    > platform default`. The flag exists because §13.1 gives no way to redirect the
+    cache, which makes an end-to-end CLI test either pollute the user's real cache
+    directory or be impossible; a hidden override is the smallest honest fix.
+    Default cache location: `$XDG_CACHE_HOME/panel-ocr` (Linux) or
+    `~/Library/Caches/panel-ocr` (macOS), falling back to `./.panel-ocr-cache` when
+    neither `$XDG_CACHE_HOME` nor `$HOME` is set. No new third-party dependency is
+    taken for this (`dirs` is not in `[workspace.dependencies]` and v1 is Linux +
+    macOS only). The recovery suggestion is derived from the resolved cache root used
+    by the failing operation, not from the presence of a `--cache-dir` flag. General
+    rule: a suggested recovery command must be computed from the state the failing
+    operation actually used, not from the flags it happened to receive, because a
+    flag-derived suggestion is silently wrong for every other way that state can be
+    reached. Any path interpolated into a command we tell the user to run must be
+    shell-quoted, because the entire justification for emitting the command is that
+    it can be pasted verbatim. Suggested recovery commands use POSIX single-quote
+    rules: wrap the path in single quotes and represent each embedded single quote
+    as `'\''` (close quote, escaped literal quote, reopen quote). Historically, the
+    prescribed bare `models download` provisioned a different root from the one the
+    failing `clean` had reported. Known limitation: `Path::display()` is lossy for
+    non-UTF-8 paths, so a suggestion for such a path can still name a mangled
+    directory; this pass records but does not fix that limitation.
 
 22. **Authorized frozen-test fix (2026-07-28): X1's suffix-validation profile
     construction.** `crates/pc-cli/tests/x1_cli.rs`'s
@@ -2425,7 +2455,7 @@ stage crate's API below was traced against the **already-implemented, frozen** s
 Resolved while executing §7.2's task **F1** and §7.3's task **F2**, applying the same
 verify-then-decide process as §16.5–§16.12. Each item is binding.
 
-1. **F1 is not one task — it is four independent recording groups, and they have
+1. **F1 is not one task — it is five independent recording groups, and they have
    different blockers.** §7.2 describes F1 as a single "record once, replay forever"
    step, which implicitly assumed all of it needed real ONNX weights. Tracing the
    actually-frozen tests shows otherwise: only *some* F1 outputs come from the detector.
@@ -2438,6 +2468,7 @@ verify-then-decide process as §16.5–§16.12. Each item is binding.
    | `inter-area` | `cv2.resize`/`INTER_AREA` | §8.7(A)2 | **recorded** |
    | `find-edges` | `PIL.ImageFilter.FIND_EDGES` | §10.3 step 2 cross-check (item 7) | **verified** |
    | `detector` | ONNX `comictextdetector` | §7.2, §7.2.1, §8.7(A)6, §8.7(B)9, §9.7(B)11, §10.7(B)15, §11.7(B)13 | **blocked** (item 8) |
+   | `model-signature` | dependency-free protobuf walk of the sha256-verified ONNX artifact | §16.16, `d4_signature.rs`, `pc-models`' D1 keystone | **recorded** |
 
    Consequence: the OpenCV/PIL-backed gates are unblocked *now*, without waiting on
    §8.5's D1/D4. That was not visible from §7.2's wording and is the main finding of
@@ -2659,6 +2690,379 @@ is binding.
    Comment-only change.
 
 ---
+
+## 16.15 Detector class-count correction (joint-architect process with Fable tie-break, 2026-07-28)
+
+1. **The detector model predicts two classes, not three, and the frozen D5 row tests were
+   amended accordingly.** The finding was that §8.3 step 3's `n_classes = 3` contradicted
+   the real `comictextdetector.pt.onnx` pinned there: its sha256 is
+   `1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f`, and it declares
+   `blk [1, 64512, 7]`, `seg [1, 1, 1024, 1024]`, and `det [1, 2, 1024, 1024]`. Thus the
+   block row is 7 wide, or `5 + 2`. Upstream `dmMaze/comic-text-detector`,
+   `utils/yolov5_utils.py:135`, computes `nc = prediction.shape[2] - 5`, so it likewise
+   computes `nc = 2`. Upstream `utils/textblock.py:9-15` defines
+   `LANG_LIST = ['eng', 'ja', 'unknown']` and
+   `LANGCLS2IDX = {'eng': 0, 'ja': 1, 'unknown': 2}`, while the `TextBlock` constructor
+   default is `language: str = 'unknown'`; therefore `unknown` is a third language state
+   assigned by Python code, never predicted by the model. The correction was resolved by
+   the joint-architect process with a Fable tie-break on 2026-07-28.
+
+   The exact frozen D5 amendments were: (1) `constants_match_the_spec` now asserts
+   `N_CLASSES == 2` and `ROW_STRIDE == 7`; (2) `a3_fixture()` row arrays A–D were
+   truncated to two classes and E/F were re-authored from class 2 to class 1, with their
+   fixture comment updated from `c2` to `c1` while preserving every score, coordinate,
+   IoU, and the cross-class A/B suppression proof; (3)
+   `filter_candidates_decodes_xywh_to_xyxy` uses a two-class row; (4)
+   `objectness_gate_is_strictly_greater` uses two-class rows; (5)
+   `class_score_gate_is_a_second_separate_strictly_greater_filter` uses two-class rows;
+   (6) `best_class_wins_and_sets_the_class_index` uses two classes and expects class index
+   1; (7) `filter_candidates_preserves_input_order` uses two-class rows; and (8)
+   `a3_class_agnostic_nms_with_both_confidence_gates` expects E's class index to be 1,
+   with survivor identity, order, count, and scores unchanged.
+
+   `class_to_language` and the §8.3 step 4 class-index-to-language mapping were
+   deliberately not amended: the `2 => None` arm remains as specified for the code-level
+   `unknown` state and for unexpected indices, although class 2 is unreachable from the
+   real model tensor. Finally, `64512 × 7 = 451_584` and `451_584 % 8 == 0`; that
+   coincidence is why the old stride mismatch silently reinterpreted the tensor as
+   56,448 misaligned rows instead of failing loudly.
+
+## 16.16 Recorded model signature and closure of the D4a self-reference (F3, 2026-07-28)
+
+F3 closes a self-reference found during stop-time review of D4a. Before this decision,
+`crates/pc-detect/tests/d4_onnx.rs` constructed the shipped `blk` output with
+`ROW_STRIDE as i64`, while `bind_outputs` checked that same dimension against
+`yolo::ROW_STRIDE`. Both sides therefore came from panel-ocr's own constant: the test
+proved only self-consistency and never proved that the constant matched the real model.
+The sanctioned D4a fixture now uses the measured literal `7`, with
+`d4_signature.rs::row_stride_matches_the_models_declared_blk_arity` as the independent leg.
+
+1. **Group and artifact.** `model-signature` is a recording group in the §16.13 capability
+   matrix. It verifies the model against `pc_models::COMIC_TEXT_DETECTOR.sha256`, then uses
+   a dependency-free protobuf walk to record the declared graph metadata. Its committed
+   signature is
+   `tests/fixtures/recorded/model_signature/comictextdetector.signature.json`, with a
+   sibling `tests/fixtures/recorded/model_signature/PROVENANCE.json`. The directory is
+   underscored to match the existing `nlm` and `inter_area` groups and is deliberately not
+   under `tests/fixtures/recorded/detector/`: the latter remains the unambiguous BLOCKED F1
+   detector group, which needs D1/D4 inference, weights and the separately licensed runtime
+   recording boundary.
+
+2. **The §16.13 item 4 carve-out.** A recorded value is legitimate only when it is causally
+   independent of panel-ocr's own code. Running the real third-party tool qualifies; reading
+   the real artifact's self-declared metadata through its published wire format qualifies;
+   computing the value from a panel-ocr constant does not. The recorder therefore verifies
+   the real artifact before emitting anything, subtracts initializer names from
+   `graph.input`, preserves declared output order, and rejects symbolic, dynamic, zero,
+   missing or otherwise unsupported metadata instead of recording a placeholder.
+
+3. **Parser scope fence.** The parser extracts name/element-type/dims from top-level
+   `graph.input`/`graph.output` `ValueInfoProto`s, skipping unknown fields by wire type. It
+   is not to grow into a general ONNX reader.
+
+4. **Why no Python.** This group intentionally uses no Python, `ort`, ONNX feature, ONNX
+   Runtime or general ONNX dependency: a dependency-free walk permanently lowers the
+   re-verification barrier. This decision does not change the existing `nlm`, `inter_area`
+   or `find-edges` groups, whose real `cv2`/`PIL`/`numpy` tools are required and whose §16.13
+   item 10 recording runs are documented. The `ort`-vs-walk cross-check in
+   `crates/pc-detect/tests/d4_session.rs` gives eventual, not ongoing, assurance: it runs
+   only when someone opts into that `#[ignore]`d, feature-gated test with weights and a
+   runtime, never in CI. At F3 completion, the walk's correctness rests on the frozen
+   expected values plus review; the cross-check is not a live gate.
+
+5. **Two load-bearing identity tests.** `d4_signature.rs` deliberately does not assert the
+   digest literal: the single source of truth for model identity lives in `pc-models`.
+   Consequently the added `pc-models/tests/d1_resolve.rs` keystone and the D4 signature
+   assertions are load-bearing together. If the keystone is deleted, `d4_signature.rs`
+   could silently describe a different export even while all of its shape assertions pass.
+
+6. **Boundaries and honest limits.** This records declared metadata only. It does not
+   measure column semantics, class identity, `PAD_VALUE`, padding side, or the bilinear
+   resize. The real-weights smoke test remains `#[ignore]`d because D4b needs maintainer
+   weights and a runtime; it must not be deleted or downgraded. D4b is not gated by F3,
+   while F1's `detector` group is gated/blocked independently. F3 does not implement
+   `OnnxDetector` or alter the pure D4a functions.
+
+## 16.17 ONNX CLI activation and fixture-provenance gap (2026-07-28)
+
+1. **D1/D4 are reachable from the shipped CLI.** `pc-cli` now has a non-default `onnx`
+   feature forwarding to `pc-detect/onnx`, plus a normal `pc-models` dependency. The
+   default build retains the truthful `ONNX_UNAVAILABLE` message: it says the detector is
+   "not available in this build", names D1 and D4, and points to `--detector replay` and
+   `replay`/`mock` alternatives. This was ordinary implementation work, not a frozen-test
+   amendment: the existing assertions pin five substrings, all five survive, and the
+   assertions remain true because the feature is non-default. In an `onnx` build that
+   message is unreachable; missing files, model-resolution failures, unavailable ONNX
+   Runtime, and session-construction failures report their own errors.
+
+2. **Provenance verification gap, accepted for now.** No runnable test verifies a
+   `PROVENANCE.json` hash except `model_signature`'s. The `nlm` group (two committed PNGs;
+   its recorder performs three renames) and `inter_area` (one committed PNG) are therefore
+   unverified. `inter_area`'s `jpeg_decode_diagnostic` hash is unverifiable by design because
+   it describes an uncommitted target/scratch file under §16.13 item 6; no future
+   "verify every sha256" sweep may be aimed at it naively. This is accepted because those
+   groups' fixtures are consumed by parity gates that compare pixels at tight tolerances,
+   so corruption fails the gate itself. The activation condition is the first future
+   recording group that ships a load-bearing fixture whose consuming tests read values
+   rather than compare pixels: before that group records, schedule a shared provenance
+   schema and shared checker, not after.
+
+## 16.18 No implicit model provisioning from processing commands (tie-break, 2026-07-28)
+
+1. **The auto-provisioning decision is reversed.** `clean` and every processing command
+   never provision a model. A missing or digest-mismatched managed model is a fatal error
+   naming the expected cache path and `panel-ocr models download`. An explicit model override
+   remains existence-checked but is not hash-verified, so a re-export or the candle escape
+   hatch remains usable. Provisioning lives only in the explicit `models download` and other
+   model-management subcommands. This reverses the earlier auto-download-on-first-use
+   decision, which was recorded as spec-silent and reversible; the tie-break reversed it
+   after a verified test-triggered ~90 MB download under `--all-features`.
+   The cache-root precedence is `--cache-dir > config.cache_dir > platform default`,
+   resolved by one shared helper used by every command. Previously, `clean`/`ocr`
+   skipped the config layer while `models`/`cache` skipped the CLI layer; the observable
+   symptom was `models download` succeeding into one root while `clean` reported the model
+   missing from another, a dead end made visible by the auto-download reversal. General
+   rule: any path-resolution precedence used by more than one command lives in exactly one
+   function; duplicating it is how the copies diverge.
+
+2. **The first-run convenience door stays open, but only explicitly.** If first-run
+   convenience is wanted later, propose a new spec item through the joint-architect process
+   for an interactive, TTY-gated prompt exactly of the form
+   `model missing — download 90 MB now? [y/N]`. It must never become an implicit download.
+
+3. **Binding general rule:** no test-reachable code path may perform network I/O. Artifact
+   provisioning is only ever an explicit dedicated command, or an interactive TTY-gated
+   prompt — never a side effect of a processing command.
+
+4. **Binding cfg-test rule:** any test asserting the behaviour or content of a cfg-gated
+   item carries the matching cfg. The complementary configuration gets its own test rather
+   than no test.
+
+5. **Standing test-hygiene note:** any test invoking `clean` must pass an explicit
+   `--detector` or an isolated cache directory, preferably both, so it is deterministic
+   against whatever is in a developer's real cache.
+
+## 16.19 Lazy detector initialization, outcome latch, and provider-declared fatality (joint architect + Rust Engineer review, 2026-07-28)
+
+Resolved against the upstream PanelCleaner construction shape, the current `pc-cli`,
+`pc-pipeline`, `pc-detect`, `pc-models`, and frozen-test sources. This entry is binding.
+
+1. **Lazy init is ratified — the deviation is in construction placement, not semantics.**
+   Upstream constructs once outside the per-image loop: external, non-vendored
+   `pcleaner/ctd_interface.py::process_image_batch` binds `model = TextDetector(...)`
+   before `for img_path in img_batch:`, and its single-process path constructs before
+   `for index, img_path in enumerate(tqdm(img_list))`. Neither site has a `try/except`;
+   construction failure propagates and ends the run. v1 therefore initializes lazily in
+   `pc-cli/src/detector.rs::OnnxProvider::detector_for`, because eager resolution
+   contradicts §4.4: a run whose `#raw.json` is cached never executes stage 1 and must
+   not be blocked by a model it will never read. This is a placement deviation only:
+   the missing, mismatched, or unloadable model remains a run-fatal refusal. Upstream is
+   not vendored (§7.1 vendors fixtures only), so the upstream citation is by file and
+   function shape, not by a repository line number. The rule is about **§4.4 resume**
+   (§16.12 item 7), not a new command-line surface.
+
+   (b) **The eager `cfg(not(feature = "onnx"))` arm stays eager.**
+   `pc-cli/src/detector.rs::build_provider` keeps the no-ONNX refusal at provider build
+   time per §16.12 item 2. That refusal can never be made successful by later
+   configuration, so the two arms must not be unified.
+
+   (c) **Unavailable ONNX Runtime is the fourth run-fatal condition.**
+   `"ONNX Runtime is not loadable in this environment"` is a whole-run environment
+   precondition failure, alongside §5.3's unreadable/invalid config, no inputs, model
+   missing or hash mismatch (and unavailable download), cache-dir, and output-dir cases;
+   §5.3 does not enumerate it separately, but is hereby read as covering an absent
+   shared library. It is not per-image. `runtime_available` produces no `StageError` of
+   its own; this decision assigns its refusal to `StageError::Model`.
+
+2. **The outcome latch is ratified, and §16.12 item 2 is amended.**
+   The sentence previously pinned in §16.12 item 2 — **"Only successful ONNX construction
+   is cached; failures are not cached."** — is SUPERSEDED. `OnnxProvider` latches the
+   **outcome** of its single attempt — either the session or the rendered refusal — in
+   `OnceLock<Result<Arc<dyn TextDetector>, String>>`, behind a double-checked
+   `Mutex<()>` gate. The gate recovers a poisoned lock with
+   `PoisonError::into_inner`.
+
+   (a) **The latch restores upstream's once-per-run guarantee under the lazy deviation.**
+   `pc-pipeline/src/batch.rs::run_batch` calls `detector_for` once per image from rayon
+   workers. Without the latch, a doomed run re-resolves the model, re-hashes roughly
+   90 MB through `pc_models::verify_sha256`, and rebuilds an ONNX session once per page.
+
+   (b) **The refusal cache is a determinism requirement, not only an optimization.**
+   `BatchSummary::fatal_model_message` takes the first run-fatal in input order through
+   `find_map`, and which outcome becomes that first one depends on how many workers pass
+   `batch.rs::run_batch`'s gate. One initialization attempt gives every worker one
+   byte-identical string, so the choice is immaterial. Without the latch, two workers
+   could render different text for the same cause — a TOCTOU on the model file or a
+   transient read error through `verify_sha256`'s `Err(error) => Err(error.into())` arm — and
+   stdout would become scheduling-dependent, violating §5.7.
+
+   (c) **Latching as `StageError::Model` promotes nothing.**
+   The mapping is exhaustive: `resolve_detector_model` emits only `Model`, including
+   its `impl From<ModelError> for StageError` in `crates/pc-models/src/lib.rs`, which
+   maps every `ModelError` variant to `Model`; `ensure_model_file` emits only `Model`;
+   and `OnnxDetector::from_path` plus `outlet_meta`, `bind_outputs`, and
+   `validate_output_shapes` emit only `Model`. The `InvalidInput` and `Inference`
+   variants in `crates/pc-detect/src/onnx.rs` occur on per-image paths (`detect`,
+   `decode_mask`, `decode_blocks`, and runtime output decoding/postprocessing). The
+   one exception is item 1(c)'s runtime probe: it produces no `StageError` of its own
+   and is assigned `Model` by decision here.
+
+   (d) **The latch stores the message, not the error.**
+   `StageError` is deliberately not `Clone` (`crates/pc-core/src/error.rs`); it wraps
+   `io::Error` and `image::ImageError`. Storing the rendered `String` is therefore not
+   a shortcut and must not be "fixed" by deriving `Clone`.
+
+3. **“Retry” means the user re-running `panel-ocr models download`.**
+   It never means an in-run loop. Upstream's external `pcleaner/model_downloader.py`
+   shape agrees: on a hash mismatch it unlinks the file, returns `None`, and prints
+   `Manually download the file and save the path to it in a profile's settings`; it does
+   not retry in a loop. v1's frozen `crates/pc-models/tests/d1_install.rs::ensure_available_fails_when_the_replacement_download_also_mismatches`
+   states the same rationale:
+
+   > One recovery attempt, not a loop: if the freshly downloaded bytes are also wrong, the problem is upstream (a re-tagged release asset, a corrupting proxy) and no amount of retrying inside one run will fix it. The message must therefore hand the user the deliberate, explicit retry path rather than implying a transient glitch.
+
+   §5.3 lists model-missing/hash-mismatch as fatal. Within one process, the inputs to the
+   decision — a path, a digest, and a loadable runtime — cannot change. No future review
+   may re-open this as “do not cache failures” without first overturning §5.3, §16.18,
+   and `d1_install.rs`'s frozen rationale.
+
+4. **Panics during init are deliberately not latched; the residual is accepted.**
+   There is no `catch_unwind` in `detector_for`; `process_image_isolated` owns panic
+   conversion per §5.2. A panic leaves the latch unset and poisons the initialization
+   gate. `PoisonError::into_inner` recovers mutual exclusion while discarding only the
+   “someone panicked” signal. The panic surfaces as per-image
+   `Failed { step: Detect, error: Inference("panicked: ...") }`, producing exit `2`
+   with N rows and full re-initialization per image — unbounded in batch size, not
+   “once more”. This is accepted with eyes open: a panic payload is not a refusal the
+   code may promote to a run-level verdict. Do not add `catch_unwind` to close the cost
+   gap.
+
+5. **Fatality is declared by the provider, never inferred from the variant.**
+   The confirmed defect was `single.rs` matching `StageError::Model(_) =>
+   PipelineError::RunFatal`, which made every `Model` from every provider run-fatal,
+   while `ReplayProvider::detector_for` returned `Model` for a missing fixture under a
+   comment stating the opposite intent. A 500-page replay batch missing page 3's
+   fixture consequently aborted at page 3, violating §16.12 item 3's closing sentence.
+   Root cause, retained so the lesson survives: the removed `RUN_FATAL_MODEL_PREFIX`
+   did two jobs — carrying the signal and discriminating which `Model` errors were
+   run-fatal. Replacing it with a variant match (correctly, per `outcome.rs`'s comment,
+   because control flow needs a type, not message text) kept the first job and silently
+   widened the second. §5.3 requires an ONNX refusal fatal; §16.12 item 3 requires a
+   replay miss per-image; both are `StageError::Model`.
+
+   (a) **One defaulted provider method is added.**
+   `DetectorProvider` gains:
+
+   ```rust
+   fn failures_are_run_fatal(&self) -> bool { false }
+   ```
+
+   The pinned `detector_for` signature in §16.12 item 3 remains unchanged VERBATIM:
+
+   ```rust
+   fn detector_for(&self, original: &Path) -> Result<Arc<dyn TextDetector>, StageError>;
+   ```
+
+   A provider error is a per-image `Failed { step: Detect }` **unless the provider
+   declares its failures run-fatal** — a missing replay fixture for page 7 must not kill
+   pages 1–6.
+
+   (b) **The criterion is causal, not textual.**
+   A provider declares `true` iff the failure is independent of `original`, so every
+   remaining image would fail identically. `OnnxProvider` is the only `true` provider
+   in v1 because its refusal is latched and therefore provably identical per page.
+   `ReplayProvider` is `false` because it is keyed by image stem. `SharedDetector`
+   never fails during provider resolution.
+
+   (c) **The default is deliberately and asymmetrically `false`.**
+   Forgetting to declare `true` degrades one fatal into N per-image failures (exit `2`
+   rather than `1`), the failure mode the `x1_cli.rs::a_batch_refuses_once_when_the_model_is_missing`
+   property catches. The opposite default kills a 500-page batch on page 3, the
+   regression this item fixes and which the old tests did not catch. The default errs
+   toward the already-covered failure mode.
+
+   (d) **REJECTED: changing the trait's error type to `ProviderError { Fatal, PerImage }`.**
+   It is more expressive and would force the choice rather than defaulting it, but it
+   rewrites the signature §16.12 item 3 pins verbatim and forces mechanical edits to
+   frozen test implementations in `crates/pc-pipeline/tests/common/mod.rs`. Wrong
+   trade. Revisit only if one provider ever needs both classifications.
+
+   (e) **REJECTED: moving `ReplayProvider` to a different `StageError` variant.**
+   That recreates exactly the defect class the prefix removal was meant to end —
+   fatality carried by an unenforced convention (“`Model` means provisioning only”)
+   that the next provider can silently break.
+
+6. **Run-fatal message extraction is generalized in the same change.**
+   Item 5 makes a latent hole reachable: `run_fatal_model_message` previously matched
+   only `RunFatal { error: Model(_) }`, which was total only while `RunFatal` and
+   `Model` were equivalent by construction. A provider may now declare a non-`Model`
+   failure run-fatal; if extraction stayed narrow, `exit_code()` could return `0` or
+   `2` despite a `RunFatal`, while `render()` printed no fatal — a silently successful
+   fatal run. It now matches `RunFatal { error, .. }` for any variant and renders
+   `error.to_string()`.
+
+   The detector provider's `map_err` sites likewise retain the inner model message
+   rather than stringifying the outer `StageError`, removing the redundant `model
+   error: ` segment that produced `error: model error: managed model is missing at '...'`.
+
+7. **`batch.rs`'s bare atomic load stays outside `start_gate`.**
+   Best-effort is correct; the asymmetry with `fail_fast` is deliberate. Moving the
+   load under the mutex cannot make refuse-once structural: a refusal is not observable
+   until at least one image has finished its detect attempt, so with `threads = N`, up
+   to N images legitimately start before any refusal exists to observe. The straggler
+   bound is the thread count, not the atomicity of the load; the mutex would close a
+   window that produces no stragglers. What stragglers cost is bounded by the latch:
+   each replays a latched `Err` in O(1), with no re-hash and no reload.
+
+   The asymmetry's reason is contractual. `fail_fast` promises **which images were
+   attempted**, so observe-and-decide must be atomic and earns the mutex. Run-fatal
+   promises nothing about attempt counts, only that the run ends fatally. Honest limit:
+   this invariant covers stdout and the exit code, not side effects. A straggler needing
+   no detector — a §4.4 resumed image — may still complete and write exports before the
+   refusal is reported, consistent with `batch.rs`'s frozen clause that in-flight work
+   is deliberately allowed to finish.
+
+8. **Test impact: frozen-test addition, not amendment.**
+   No existing test is amended. The two frozen tests remain byte-identical and are green
+   while the item 5 property is violated: `crates/pc-pipeline/tests/g1_chain.rs::a_refusing_detector_provider_fails_only_that_image`
+   names §16.12 item 3 exactly but asserts only `outcome.is_failed()` (true for both
+   `RunFatal` and `Failed`), and `crates/pc-cli/tests/x1_args.rs::a_missing_replay_fixture_is_a_per_image_error`
+   asserts only that the message contains `page01`. Neither contradicts the spec; both
+   under-test it, and the missing property is at a layer neither test reaches.
+
+   Add exactly these three tests:
+
+   (a) A `pc-cli` end-to-end mirror of `x1_cli.rs::a_batch_refuses_once_when_the_model_is_missing`,
+   using a replay detector and three pages with the middle fixture missing; it must
+   exit `2`, not `1`.
+
+   (b) A `pc-pipeline` `run_batch` test pinning both arms of `failures_are_run_fatal`,
+   matching on the `ImageOutcome` **variant** and never on `is_failed()` — that predicate
+   is exactly why this survived review.
+
+   (c) A test pinning that the trait default is `false`.
+
+   General rule: **a test whose name states a classification property must assert the
+   classification, not a predicate that both classifications satisfy.**
+
+   The structural finding was that the fatal path had no coverage under default
+   features: the review grep for `RunFatal`/`is_run_fatal`/`fatal_model_message` across
+   test directories returned zero, and `EXIT_FATAL` had no unit coverage. Because the
+   concurrent job has since added `RunFatal` and `EXIT_FATAL` assertions in
+   `crates/pc-pipeline/tests/g2_batch.rs`, that zero-result is recorded as the
+   pre-fix finding, not as a claim about the current snapshot.
+
+9. **§14 register hygiene.**
+   The code grep currently finds plain `DEVIATION(1, 2, 3, 5, 6, 8, 9, 10, 11, 12,
+   13, 14, 15)` coverage. §14 item 4 has a nonconforming test-only `DEVIATION §14.4`
+   note, but items 4 and 7 still lack implementation-site comments. The newly backfilled
+   register entries 14 and 15 use the plain form, as required. The three §16-qualified
+   comment families in the code conform to §16.14
+   item 5's convention: `DEVIATION(§16.11 item 5)`, `DEVIATION(§16.11 item 7)`, and
+   `DEVIATION(§16.14 item 3)`; §16-only deviations must remain qualified this way.
+   The lazy construct-and-latch implementation site is outstanding and will carry
+   `DEVIATION(16)` when the concurrent Rust job adds it; it is deliberately not added
+   by this documentation-only change.
 
 ## 16. Summary of what v1 is NOT
 
