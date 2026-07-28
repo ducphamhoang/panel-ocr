@@ -2404,6 +2404,20 @@ stage crate's API below was traced against the **already-implemented, frozen** s
     set. No new third-party dependency is taken for this (`dirs` is not in
     `[workspace.dependencies]` and v1 is Linux + macOS only).
 
+22. **Authorized frozen-test fix (2026-07-28): X1's suffix-validation profile
+    construction.** `crates/pc-cli/tests/x1_cli.rs`'s
+    `an_unsupported_output_suffix_fails_config_validation` built its malformed profile
+    by appending `\n[general]\npreferred_file_type = ".xyz"\n` to
+    `pc_config::DEFAULT_PROFILE_TOML`, which already opens with a `[general]` table.
+    That yields a duplicate root table — a TOML *parse* error — so the run failed
+    before §6/§12.7(A)9 validation ran, and never exercised the suffix check the test
+    is named for. `pc-config` has no last-wins overlay to rescue it: `ProfileDocument::
+    parse` is a single `toml_edit::DocumentMut` parse, by design (§6 round-trip). This
+    is a test-authoring bug, not a design gap. Codex correctly refused to edit the
+    frozen test; the two Opus roles jointly authorize changing **only** the profile
+    construction to a targeted `str::replace` of the default `preferred_file_type`
+    line, keeping `.xyz` and every assertion, doc comment and other test untouched.
+
 ---
 
 ## 16. Summary of what v1 is NOT

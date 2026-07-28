@@ -18,8 +18,10 @@ pub use args::{
     ReportFormatArg,
 };
 
-use anyhow::Result;
-use pc_pipeline::{EXIT_FATAL, EXIT_OK};
+use anyhow::{bail, Context, Result};
+use pc_pipeline::{Checkpointing, ImageOutcome, PipelineCtx, PipelineOptions, EXIT_FATAL, EXIT_OK};
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 
 /// Dispatch a parsed command line and return the process exit code (§5.5).
 ///
@@ -64,35 +66,292 @@ pub fn run(cli: Cli) -> i32 {
 ///      mode, where there is none);
 ///   7. return `summary.exit_code()`.
 pub fn run_clean(args: CleanArgs) -> Result<i32> {
-    let _ = args;
-    todo!("task X1 (spec §13.1): `clean` wiring")
+    let images = pc_pipeline::expand_inputs(&args.paths)?;
+    ensure_inputs(&images)?;
+
+    let config = setup::load_app_config()?;
+    let profile = setup::load_profile(
+        args.profile.as_deref(),
+        args.profile_path.as_deref(),
+        &config,
+    )?;
+    let options = setup::build_clean_options(&args, profile, images.len());
+    let provider = detector::build_provider(&args.detector, args.model_path.as_deref())?;
+    run_pipeline(&images, options, provider.as_ref(), !args.hide_analytics)
 }
 
 /// spec §13.1's `ocr` (task X1). Runs stages 1–2 with `performing_ocr = true` and
 /// renders `pc_export::render_ocr_report`. §16.12 item 4: with no engine in v1 the
 /// report is empty and a `WARN` says so.
 pub fn run_ocr(args: OcrArgs) -> Result<i32> {
-    let _ = args;
-    todo!("task X1 (spec §13.1): `ocr` wiring")
+    let images = pc_pipeline::expand_inputs(&args.paths)?;
+    ensure_inputs(&images)?;
+
+    let config = setup::load_app_config()?;
+    let profile = setup::load_profile(
+        args.profile.as_deref(),
+        args.profile_path.as_deref(),
+        &config,
+    )?;
+    if profile.preprocessor.ocr_enabled {
+        tracing::warn!(
+            "ocr_enabled is true but v1 ships no OCR engine (task P7); \
+             the OCR report will be empty (spec §16.12 item 4)"
+        );
+    }
+    let cache_dir = args
+        .cache_dir
+        .clone()
+        .unwrap_or_else(paths::default_cache_dir);
+    let options = PipelineOptions {
+        threads: pc_pipeline::resolve_threads(profile.general.max_threads, images.len()),
+        profile,
+        cache_dir,
+        performing_ocr: true,
+        ..PipelineOptions::default()
+    };
+    let provider = detector::build_provider(&args.detector, None)?;
+    let ctx = PipelineCtx::new(provider.as_ref());
+    let summary = pc_pipeline::run_batch(&images, &options, &ctx);
+    let report = ocr_report(&summary, args.format.into());
+    match args.output {
+        Some(path) => std::fs::write(&path, report)
+            .with_context(|| format!("failed to write OCR report `{}`", path.display()))?,
+        None => print!("{report}"),
+    }
+    print!("{}", summary.render());
+    cleanup_cache(&options)?;
+    Ok(summary.exit_code())
 }
 
 /// spec §13.1's `profile new|show|list|validate|edit` — thin wrappers over `pc-config`.
 pub fn run_profile(command: ProfileCommand) -> Result<i32> {
-    let _ = command;
-    todo!("task X1 (spec §13.1): `profile` subcommands")
+    match command {
+        ProfileCommand::New { path } => {
+            pc_config::ProfileDocument::new_default()
+                .save(&path)
+                .with_context(|| format!("failed to write profile `{}`", path.display()))?;
+        }
+        ProfileCommand::Show {
+            profile,
+            profile_path,
+        } => {
+            if profile.is_some() && profile_path.is_some() {
+                bail!("--profile and --profile-path cannot be used together");
+            }
+            let config = setup::load_app_config()?;
+            let loaded = setup::load_profile(profile.as_deref(), profile_path.as_deref(), &config)?;
+            print!(
+                "{}",
+                pc_config::ProfileDocument::from_profile(&loaded).to_toml_string()
+            );
+        }
+        ProfileCommand::List => {
+            let config = setup::load_app_config()?;
+            for name in config.saved_profiles.keys() {
+                println!("{name}");
+            }
+        }
+        ProfileCommand::Validate { path } => {
+            let config = pc_config::Config::default();
+            setup::load_profile(None, Some(&path), &config)?;
+            println!("valid: {}", path.display());
+        }
+        ProfileCommand::Edit { profile } => {
+            let config = setup::load_app_config()?;
+            let name = profile
+                .as_deref()
+                .or(config.default_profile.as_deref())
+                .context("no profile selected; pass --profile NAME or configure default_profile")?;
+            let path = config
+                .profile_path(name)
+                .with_context(|| format!("no profile named `{name}` in the app config"))?;
+            let editor = std::env::var("EDITOR").context("$EDITOR is not set")?;
+            let status = std::process::Command::new(editor)
+                .arg(path)
+                .status()
+                .context("failed to start $EDITOR")?;
+            if !status.success() {
+                bail!("$EDITOR exited with {status}");
+            }
+        }
+    }
+    Ok(EXIT_OK)
 }
 
 /// spec §13.1's `cache show|clear`.
 pub fn run_cache(command: CacheCommand) -> Result<i32> {
-    let _ = command;
-    todo!("task X1 (spec §13.1): `cache` subcommands")
+    let config = setup::load_app_config()?;
+    let cache_dir = config.cache_dir.unwrap_or_else(paths::default_cache_dir);
+    match command {
+        CacheCommand::Show => {
+            println!(
+                "{}\t{} bytes",
+                cache_dir.display(),
+                directory_size(&cache_dir)?
+            );
+        }
+        CacheCommand::Clear { models, images } => {
+            let clear_all = !models && !images;
+            if clear_all || images {
+                remove_dir_contents(&cache_dir)?;
+            }
+            if clear_all || models {
+                remove_dir_contents(&cache_dir.join("models"))?;
+            }
+        }
+    }
+    Ok(EXIT_OK)
 }
 
 /// spec §13.1's `models download|verify|path`. `download`/`verify` require task D1 and
 /// must fail with the same kind of explicit "not in this build" message as
 /// [`detector::ONNX_UNAVAILABLE`] (§16.12 item 2); `path` works today.
 pub fn run_models(command: ModelsCommand) -> Result<i32> {
-    let _ = command;
-    let _ = EXIT_OK;
-    todo!("task X1 (spec §13.1): `models` subcommands")
+    match command {
+        ModelsCommand::Download | ModelsCommand::Verify => bail!(
+            "model download and verification are not available in this build (task D1 is not implemented); {}",
+            detector::ONNX_UNAVAILABLE
+        ),
+        ModelsCommand::Path => {
+            let config = setup::load_app_config()?;
+            let cache_dir = config.cache_dir.unwrap_or_else(paths::default_cache_dir);
+            println!("{}", cache_dir.join("models").display());
+            Ok(EXIT_OK)
+        }
+    }
+}
+
+fn ensure_inputs(images: &[PathBuf]) -> Result<()> {
+    if images.is_empty() {
+        bail!("no input images found");
+    }
+    Ok(())
+}
+
+fn run_pipeline(
+    images: &[PathBuf],
+    options: PipelineOptions,
+    provider: &dyn pc_pipeline::DetectorProvider,
+    show_analytics: bool,
+) -> Result<i32> {
+    if options.checkpointing == Checkpointing::Disk {
+        std::fs::create_dir_all(&options.cache_dir).with_context(|| {
+            format!(
+                "failed to create cache directory `{}`",
+                options.cache_dir.display()
+            )
+        })?;
+    }
+    let progress = std::io::stderr().is_terminal().then(|| {
+        let bar = indicatif::ProgressBar::new(images.len() as u64);
+        bar.set_message("cleaning pages");
+        bar
+    });
+    let ctx = PipelineCtx::new(provider);
+    let summary = pc_pipeline::run_batch(images, &options, &ctx);
+    if let Some(bar) = progress {
+        bar.finish_with_message("cleaning complete");
+    }
+    print!("{}", summary.render());
+    if show_analytics {
+        render_analytics(&summary);
+    }
+    cleanup_cache(&options)?;
+    Ok(summary.exit_code())
+}
+
+fn cleanup_cache(options: &PipelineOptions) -> Result<()> {
+    if options.checkpointing == Checkpointing::Disk && !options.keep_cache {
+        std::fs::remove_dir_all(&options.cache_dir).with_context(|| {
+            format!(
+                "failed to remove cache directory `{}`",
+                options.cache_dir.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn render_analytics(summary: &pc_pipeline::BatchSummary) {
+    for outcome in &summary.outcomes {
+        let ImageOutcome::Completed { analytics, .. } = outcome else {
+            continue;
+        };
+        if let Some(detect) = &analytics.detect {
+            println!(
+                "detect\t{}\t{}\t{}",
+                detect.path.display(),
+                detect.blocks_detected,
+                detect.blocks_kept
+            );
+        }
+        if let Some(ocr) = &analytics.ocr {
+            println!("ocr\t{}\t{}", ocr.path.display(), ocr.num_boxes);
+        }
+        for mask in &analytics.mask_fitting {
+            println!(
+                "mask\t{}\t{}\t{}",
+                mask.path.display(),
+                mask.fit_found,
+                mask.std_deviation
+            );
+        }
+        if let Some(denoise) = &analytics.denoise {
+            println!(
+                "denoise\t{}\t{}",
+                denoise.path.display(),
+                denoise.boxes_denoised
+            );
+        }
+    }
+}
+
+fn ocr_report(summary: &pc_pipeline::BatchSummary, format: pc_export::ReportFormat) -> String {
+    let analytics = summary
+        .outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            ImageOutcome::Completed { analytics, .. } => analytics.ocr.as_ref(),
+            _ => None,
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    pc_export::render_ocr_report(format, &analytics)
+}
+
+fn directory_size(path: &Path) -> Result<u64> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let mut bytes = 0;
+    for entry in std::fs::read_dir(path)
+        .with_context(|| format!("failed to read cache directory `{}`", path.display()))?
+    {
+        let entry = entry?;
+        let child = entry.path();
+        if child.is_dir() {
+            bytes += directory_size(&child)?;
+        } else {
+            bytes += entry.metadata()?.len();
+        }
+    }
+    Ok(bytes)
+}
+
+fn remove_dir_contents(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(path)
+        .with_context(|| format!("failed to read cache directory `{}`", path.display()))?
+    {
+        let child = entry?.path();
+        if child.is_dir() {
+            std::fs::remove_dir_all(&child)?;
+        } else {
+            std::fs::remove_file(&child)?;
+        }
+    }
+    Ok(())
 }

@@ -123,14 +123,19 @@ fn an_unsupported_output_suffix_fails_config_validation() {
     let dir = tempfile::tempdir().unwrap();
     let page = write_page(dir.path(), "page01.png");
     let profile = dir.path().join("bad.toml");
-    std::fs::write(
-        &profile,
-        format!(
-            "{}\n[general]\npreferred_file_type = \".xyz\"\n",
-            pc_config::DEFAULT_PROFILE_TOML
-        ),
-    )
-    .unwrap();
+    // resolved 2026-07-28 (§16.12 item 22): DEFAULT_PROFILE_TOML already has a
+    // `[general]` table, so appending a second one is a TOML duplicate-table parse
+    // error that masks the suffix-validation failure this test exists to check.
+    // Override the existing key in place instead.
+    let bad = pc_config::DEFAULT_PROFILE_TOML.replace(
+        "preferred_file_type          = \"\"",
+        "preferred_file_type          = \".xyz\"",
+    );
+    assert!(
+        bad.contains("\".xyz\""),
+        "the default profile's preferred_file_type line changed shape"
+    );
+    std::fs::write(&profile, bad).unwrap();
 
     let output = run(&[
         "clean",
