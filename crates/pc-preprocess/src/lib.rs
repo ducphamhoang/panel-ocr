@@ -23,7 +23,7 @@ pub use ocr_filter::{compile_blacklist, run_ocr_pass, scale_to_original, OcrPass
 pub use order::{is_right_to_left, sort_key, sort_reading_order};
 
 use pc_config::PreprocessorConfig;
-use pc_core::{OcrAnalytic, PageData, PageDataRaw, Rect, StageError, Step};
+use pc_core::{MaskingRegion, OcrAnalytic, PageData, PageDataRaw, Rect, StageError, Step};
 use pc_ocr::OcrEngineFactory;
 use serde::{Deserialize, Serialize};
 
@@ -93,6 +93,63 @@ pub fn run(
     input: PreprocessInput,
     ocr: Option<&dyn OcrEngineFactory>,
 ) -> Result<PreprocessOutput, StageError> {
-    let _ = (input, ocr);
-    todo!("task P5: spec §9.3 steps 1-11")
+    input.page.validate()?;
+
+    let PreprocessInput {
+        page,
+        config,
+        performing_ocr,
+        ..
+    } = input;
+    let canvas = page.image_size;
+
+    let boxes = assign_languages(&page.blocks, config.ocr_language);
+    let mut boxes = filter_boxes(boxes, &config, performing_ocr);
+    let page_language = page_language(&boxes);
+    apply_page_language(&mut boxes, config.ocr_language, page_language);
+
+    let mut boxes = resolve_total_overlaps(boxes);
+    for text_box in &mut boxes {
+        text_box.rect = pad_tight(text_box.rect, &config, canvas);
+    }
+    sort_reading_order(&mut boxes, config.reading_order, page_language);
+
+    let (boxes, ocr_analytic) = match (ocr, config.ocr_enabled) {
+        (Some(factory), true) => {
+            let result = run_ocr_pass(boxes, &page, &config, factory)?;
+            (result.boxes, Some(result.analytic))
+        }
+        _ => (boxes, None),
+    };
+
+    let extended_boxes: Vec<Rect> = boxes
+        .iter()
+        .map(|text_box| extend(text_box.rect, &config, canvas))
+        .collect();
+    let masking_regions = resolve_overlaps(extended_boxes.clone(), config.box_overlap_threshold)
+        .into_iter()
+        .map(|masking| MaskingRegion {
+            reference: reference_of(masking, &config, canvas),
+            masking,
+        })
+        .collect();
+
+    let output_page = PageData {
+        schema_version: page.schema_version,
+        original_path: page.original_path,
+        base_image: page.base_image,
+        raw_mask: page.raw_mask,
+        scale: page.scale,
+        image_size: page.image_size,
+        page_language,
+        text_boxes: boxes,
+        extended_boxes,
+        masking_regions,
+    };
+    output_page.validate()?;
+
+    Ok(PreprocessOutput {
+        page: output_page,
+        ocr_analytic,
+    })
 }

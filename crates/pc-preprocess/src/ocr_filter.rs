@@ -7,9 +7,10 @@
 //! fully specified and hand-checkable.
 
 use pc_config::PreprocessorConfig;
-use pc_core::{OcrAnalytic, PageDataRaw, Rect, StageError, TextBox};
+use pc_core::{OcrAnalytic, PageDataRaw, Rect, RemovedBox, StageError, TextBox};
 use pc_ocr::OcrEngineFactory;
 use regex::Regex;
+use std::sync::Arc;
 
 /// What the pass returns: the surviving boxes (order preserved) plus the analytic.
 #[derive(Debug, Clone, PartialEq)]
@@ -71,6 +72,78 @@ pub fn run_ocr_pass(
     config: &PreprocessorConfig,
     factory: &dyn OcrEngineFactory,
 ) -> Result<OcrPassResult, StageError> {
-    let _ = (boxes, page, config, factory);
-    todo!("task P6: spec §9.3 step 7")
+    let blacklist = compile_blacklist(&config.ocr_blacklist_pattern)?;
+    let mut analytic = OcrAnalytic {
+        path: page.original_path.clone(),
+        num_boxes: boxes.len(),
+        box_areas_ocred: Vec::new(),
+        box_areas_removed: Vec::new(),
+        removed: Vec::new(),
+    };
+    let mut image: Option<Arc<image::DynamicImage>> = None;
+    let mut surviving = Vec::with_capacity(boxes.len());
+
+    for text_box in boxes {
+        let area = text_box.rect.area();
+        if area >= config.ocr_max_size {
+            surviving.push(text_box);
+            continue;
+        }
+
+        let Some(engine) = factory.engine_for(text_box.language) else {
+            tracing::debug!(
+                language = ?text_box.language,
+                "no OCR engine handles the text box language; keeping box"
+            );
+            surviving.push(text_box);
+            continue;
+        };
+
+        let Some((x, y, width, height)) = text_box.rect.to_crop(page.image_size) else {
+            tracing::debug!(
+                rect = ?text_box.rect,
+                "text box does not intersect the image canvas; keeping box"
+            );
+            surviving.push(text_box);
+            continue;
+        };
+
+        let base_image = match &image {
+            Some(image) => Arc::clone(image),
+            None => {
+                let loaded = page.base_image.load()?;
+                image = Some(Arc::clone(&loaded));
+                loaded
+            }
+        };
+        let crop = base_image.crop_imm(x, y, width, height);
+        analytic.box_areas_ocred.push(area);
+
+        match engine.recognize(&crop) {
+            Ok(text) => {
+                if blacklist.is_match(&text) {
+                    analytic.box_areas_removed.push(area);
+                    analytic.removed.push(RemovedBox {
+                        text,
+                        rect: scale_to_original(text_box.rect, page.scale),
+                    });
+                } else {
+                    surviving.push(text_box);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    rect = ?text_box.rect,
+                    "OCR recognition failed; keeping box"
+                );
+                surviving.push(text_box);
+            }
+        }
+    }
+
+    Ok(OcrPassResult {
+        boxes: surviving,
+        analytic,
+    })
 }
