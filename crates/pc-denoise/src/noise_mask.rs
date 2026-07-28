@@ -74,6 +74,11 @@ pub fn attach_alpha(rgb: &RgbImage, alpha: &GrayImage) -> RgbaImage {
 
 /// `NlmParams` from the profile (§11.3; §16.10 item 8: `colored_images` does not
 /// change the v1 code path, the cutout is always the 3-channel canvas crop).
+///
+/// DEVIATION(7): upstream's `colored_images` path splits RGB into Lab and uses
+/// `color_filter_strength`; v1 always sends RGB crops through joint-channel NLM and ignores
+/// that strength. The upstream default is `colored_images = false`, so this is an opt-in
+/// v1.5 deferral; §14.7, decided by §15.7 and ratified by §16.10 item 8.
 pub fn nlm_params(config: &DenoiserConfig) -> NlmParams {
     NlmParams {
         h: config.filter_strength as f32,

@@ -173,8 +173,11 @@ pub fn population_std(values: &[f64]) -> f64 {
     variance.sqrt()
 }
 
-/// Sample standard deviation (`ddof = 1`). **Deviation §14.4:** NumPy yields `NaN` for
-/// `n == 1`; a single border pixel is trivially uniform, so we yield `0.0`.
+/// Sample standard deviation (`ddof = 1`).
+///
+/// DEVIATION(4): upstream's `np.std(..., ddof=1)` yields `NaN` for a single border
+/// pixel; v1 yields `0.0`, treating that one-sample border as uniform instead of letting
+/// NumPy's warning/NaN poison candidate scoring. §14.4, ratified by §15.9.
 pub fn sample_std(values: &[f64]) -> f64 {
     if values.len() < 2 {
         return 0.0;
