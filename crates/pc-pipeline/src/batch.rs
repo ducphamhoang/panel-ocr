@@ -72,6 +72,7 @@ pub fn run_batch(
     // image one atomic operation.  Work which has passed this gate is in flight and is
     // deliberately allowed to finish.
     let failed = Arc::new(AtomicBool::new(false));
+    let run_fatal = Arc::new(AtomicBool::new(false));
     let start_gate = Arc::new(Mutex::new(()));
     let fail_fast = options.fail_fast;
     let threads = options.threads.max(1);
@@ -86,6 +87,13 @@ pub fn run_batch(
         images
             .par_iter()
             .filter_map(|original| {
+                // This bare load outside `start_gate` is deliberate (§16.19 item 7):
+                // stragglers are bounded by the thread count regardless of atomicity, since
+                // no refusal is observable until one image finishes; unlike fail_fast below,
+                // this gate promises nothing about which images were attempted.
+                if run_fatal.load(Ordering::Acquire) {
+                    return None;
+                }
                 if fail_fast {
                     let _gate = start_gate.lock().expect("fail-fast gate poisoned");
                     if failed.load(Ordering::Acquire) {
@@ -94,6 +102,9 @@ pub fn run_batch(
                 }
 
                 let outcome = process_image_isolated(original, options, ctx);
+                if outcome.is_run_fatal() {
+                    run_fatal.store(true, Ordering::Release);
+                }
                 if fail_fast && outcome.is_failed() {
                     // Synchronise with would-be starters before publishing the failure.
                     let _gate = start_gate.lock().expect("fail-fast gate poisoned");

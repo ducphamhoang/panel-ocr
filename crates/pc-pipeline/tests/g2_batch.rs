@@ -10,7 +10,7 @@ mod common;
 
 use pc_core::{Rect, StageError, Step};
 use pc_pipeline::outcome::{panic_message, BatchSummary, ImageAnalytics, ImageOutcome, SkipReason};
-use pc_pipeline::{PipelineCtx, SharedDetector, EXIT_OK, EXIT_PARTIAL};
+use pc_pipeline::{PipelineCtx, SharedDetector, EXIT_FATAL, EXIT_OK, EXIT_PARTIAL};
 use std::path::PathBuf;
 
 fn completed(name: &str) -> ImageOutcome {
@@ -68,6 +68,50 @@ fn the_summary_names_failed_and_skipped_images() {
     );
     assert!(text.contains('c') && text.contains("Mask"), "{text}");
     assert_eq!(summary.files_written().len(), 2);
+}
+
+/// §16.19 item 5: provider-declared fatality, not the `StageError` variant, controls the
+/// batch outcome. This deliberately uses the same `StageError::Model` for both arms.
+#[test]
+fn provider_declared_fatality_controls_batch_outcome() {
+    let dir = tempfile::tempdir().unwrap();
+    let images = ["a.png", "b.png", "c.png"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    let mut options = common::options(&dir.path().join("cache"), &dir.path().join("out"));
+    options.threads = 1;
+
+    let per_image = common::FatalityProvider::new(false);
+    let summary = pc_pipeline::run_batch(&images, &options, &PipelineCtx::new(&per_image));
+    assert_eq!(
+        per_image.attempts.load(std::sync::atomic::Ordering::SeqCst),
+        3
+    );
+    assert_eq!(summary.outcomes.len(), 3);
+    assert!(summary
+        .outcomes
+        .iter()
+        .all(|outcome| matches!(outcome, ImageOutcome::Failed { .. })));
+    assert_eq!(summary.exit_code(), EXIT_PARTIAL);
+
+    let run_fatal = common::FatalityProvider::new(true);
+    let summary = pc_pipeline::run_batch(&images, &options, &PipelineCtx::new(&run_fatal));
+    assert_eq!(summary.exit_code(), EXIT_FATAL);
+    assert!(!summary.outcomes.is_empty());
+    assert!(summary
+        .outcomes
+        .iter()
+        .all(|outcome| matches!(outcome, ImageOutcome::RunFatal { .. })));
+}
+
+/// §16.19 item 5(c): a provider which does not override the method gets the safe default.
+#[test]
+fn detector_provider_fatality_defaults_to_false() {
+    let provider = common::RefusingProvider;
+    assert!(!pc_pipeline::DetectorProvider::failures_are_run_fatal(
+        &provider
+    ));
 }
 
 /// §5.2 / §16.12 item 18 — the exact panic-message form.

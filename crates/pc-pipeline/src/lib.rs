@@ -43,8 +43,8 @@ pub use options::{
     SaveOnly, SkipFlags,
 };
 pub use outcome::{
-    panic_message, BatchSummary, ImageAnalytics, ImageOutcome, SkipReason, EXIT_FATAL, EXIT_OK,
-    EXIT_PARTIAL,
+    panic_message, BatchSummary, ImageAnalytics, ImageOutcome, PipelineError, SkipReason,
+    EXIT_FATAL, EXIT_OK, EXIT_PARTIAL,
 };
 pub use single::{process_image, process_image_with_splitting, run_stages, ChainOutputs};
 pub use strip::{should_split, SplitManifest};

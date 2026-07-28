@@ -7,6 +7,22 @@ use pc_core::{
 };
 use std::path::PathBuf;
 
+/// Errors crossing the pipeline's stage boundary retain whether they are run-fatal.
+#[derive(Debug)]
+pub enum PipelineError {
+    Stage(StageError),
+    RunFatal(StageError),
+}
+
+/// A run-fatal condition must be carried by a type, not by a string prefix on a
+/// user-facing message — message text is for humans, control flow needs a type.
+fn run_fatal_model_message(error: &ImageOutcome) -> Option<String> {
+    match error {
+        ImageOutcome::RunFatal { error, .. } => Some(error.to_string()),
+        _ => None,
+    }
+}
+
 /// spec §5.5.
 pub const EXIT_OK: i32 = 0;
 /// spec §5.5 — a fatal condition (§5.3).
@@ -56,6 +72,11 @@ pub enum ImageOutcome {
         reason: SkipReason,
         files_written: Vec<PathBuf>,
     },
+    RunFatal {
+        original: PathBuf,
+        step: Step,
+        error: StageError,
+    },
     Failed {
         original: PathBuf,
         step: Step,
@@ -68,6 +89,7 @@ impl ImageOutcome {
         match self {
             ImageOutcome::Completed { original, .. }
             | ImageOutcome::Skipped { original, .. }
+            | ImageOutcome::RunFatal { original, .. }
             | ImageOutcome::Failed { original, .. } => original,
         }
     }
@@ -76,12 +98,19 @@ impl ImageOutcome {
         match self {
             ImageOutcome::Completed { files_written, .. }
             | ImageOutcome::Skipped { files_written, .. } => files_written,
-            ImageOutcome::Failed { .. } => &[],
+            ImageOutcome::RunFatal { .. } | ImageOutcome::Failed { .. } => &[],
         }
     }
 
     pub fn is_failed(&self) -> bool {
-        matches!(self, ImageOutcome::Failed { .. })
+        matches!(
+            self,
+            ImageOutcome::RunFatal { .. } | ImageOutcome::Failed { .. }
+        )
+    }
+
+    pub(crate) fn is_run_fatal(&self) -> bool {
+        matches!(self, ImageOutcome::RunFatal { .. })
     }
 
     pub fn is_completed(&self) -> bool {
@@ -114,7 +143,15 @@ impl BatchSummary {
     }
 
     pub fn failed(&self) -> usize {
-        self.outcomes.iter().filter(|o| o.is_failed()).count()
+        self.outcomes
+            .iter()
+            .filter(|outcome| outcome.is_failed() && !outcome.is_run_fatal())
+            .count()
+    }
+
+    /// The first run-fatal error, if one occurred during detection.
+    pub fn fatal_model_message(&self) -> Option<String> {
+        self.outcomes.iter().find_map(run_fatal_model_message)
     }
 
     /// Every file any image wrote, in outcome order.
@@ -125,10 +162,12 @@ impl BatchSummary {
             .collect()
     }
 
-    /// spec §5.5 / §16.12 item 18. Fatal conditions never reach here — they abort
-    /// before or independently of per-image work.
+    /// spec §5.5 / §16.12 item 18. Fatal conditions abort the run at first detection use;
+    /// the provider-declared carve-out in `single.rs` routes them out of per-image reporting.
     pub fn exit_code(&self) -> i32 {
-        if self.failed() > 0 {
+        if self.fatal_model_message().is_some() {
+            EXIT_FATAL
+        } else if self.failed() > 0 {
             EXIT_PARTIAL
         } else {
             EXIT_OK
@@ -139,6 +178,10 @@ impl BatchSummary {
     /// with reasons".
     pub fn render(&self) -> String {
         use std::fmt::Write as _;
+
+        if let Some(message) = self.fatal_model_message() {
+            return format!("fatal: {message}\n");
+        }
 
         let mut text = String::new();
         let _ = writeln!(
@@ -156,6 +199,7 @@ impl BatchSummary {
                 } => {
                     let _ = writeln!(text, "  SKIPPED {}: {reason}", original.display());
                 }
+                ImageOutcome::RunFatal { .. } => {}
                 ImageOutcome::Failed {
                     original,
                     step,

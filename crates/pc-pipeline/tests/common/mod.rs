@@ -8,6 +8,7 @@ use pc_core::{ImageHandle, Rect, StageError};
 use pc_detect::{MockDetector, RawBlock, RawDetection, TextDetector};
 use pc_pipeline::{Checkpointing, DetectorProvider, PipelineCtx, PipelineOptions};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// A small RGB page with a dark rectangle in the middle, written as PNG.
@@ -120,6 +121,33 @@ pub struct RefusingProvider;
 impl DetectorProvider for RefusingProvider {
     fn detector_for(&self, _original: &Path) -> Result<Arc<dyn TextDetector>, StageError> {
         Err(StageError::Model("no detector for you".into()))
+    }
+}
+
+/// A provider whose declared fatality can be selected by the test, while the underlying
+/// provider error remains the same `StageError::Model` in both cases.
+pub struct FatalityProvider {
+    pub fatal: bool,
+    pub attempts: AtomicUsize,
+}
+
+impl FatalityProvider {
+    pub fn new(fatal: bool) -> Self {
+        Self {
+            fatal,
+            attempts: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl DetectorProvider for FatalityProvider {
+    fn detector_for(&self, _original: &Path) -> Result<Arc<dyn TextDetector>, StageError> {
+        self.attempts.fetch_add(1, Ordering::SeqCst);
+        Err(StageError::Model("stub provider refusal".into()))
+    }
+
+    fn failures_are_run_fatal(&self) -> bool {
+        self.fatal
     }
 }
 

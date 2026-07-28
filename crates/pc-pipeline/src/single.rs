@@ -13,7 +13,7 @@ use crate::cache::CachePaths;
 use crate::checkpoint;
 use crate::ctx::PipelineCtx;
 use crate::options::{Checkpointing, PipelineOptions};
-use crate::outcome::{ImageAnalytics, ImageOutcome, SkipReason};
+use crate::outcome::{ImageAnalytics, ImageOutcome, PipelineError, SkipReason};
 use pc_core::{ImageHandle, Output, Stage, StageError, Step};
 use pc_denoise::{DenoiseDests, DenoiseInput, DenoiseOutput, DenoiseStage};
 use pc_detect::{DetectInput, DetectStage};
@@ -140,7 +140,7 @@ pub fn run_stages(
     cache: Option<&CachePaths>,
     options: &PipelineOptions,
     ctx: &PipelineCtx<'_>,
-) -> Result<ChainOutputs, (Step, StageError)> {
+) -> Result<ChainOutputs, (Step, PipelineError)> {
     let original_buf = original.to_path_buf();
     let flags = options.skips.normalized();
     let source = ImageHandle::from_path(original);
@@ -150,18 +150,25 @@ pub fn run_stages(
         let Some(cache) = cache else {
             return Err((
                 Step::Detect,
-                StageError::InvalidInput(
+                PipelineError::Stage(StageError::InvalidInput(
                     "cannot resume text detection without disk checkpoints".into(),
-                ),
+                )),
             ));
         };
         checkpoint::read_page_raw(&cache.for_output(Output::RawJson))
-            .map_err(|error| (Step::Detect, error))?
+            .map_err(|error| (Step::Detect, PipelineError::Stage(error)))?
     } else {
-        let detector = ctx
-            .detectors
-            .detector_for(original)
-            .map_err(|error| (Step::Detect, error))?;
+        let detector = ctx.detectors.detector_for(original).map_err(|error| {
+            // Fatality is declared by the provider, never inferred from the `StageError`
+            // variant; both a provisioning refusal and a missing replay fixture arrive as
+            // `StageError::Model`.
+            let failure = if ctx.detectors.failures_are_run_fatal() {
+                PipelineError::RunFatal(error)
+            } else {
+                PipelineError::Stage(error)
+            };
+            (Step::Detect, failure)
+        })?;
         let (base_image_dest, raw_mask_dest) = detect_dests(cache);
         let output = DetectStage::run(
             DetectInput {
@@ -177,10 +184,10 @@ pub fn run_stages(
             },
             detector.as_ref(),
         )
-        .map_err(|error| (Step::Detect, error))?;
+        .map_err(|error| (Step::Detect, PipelineError::Stage(error)))?;
         if let Some(cache) = cache {
             checkpoint::write_page_raw(&output.page, &cache.for_output(Output::RawJson))
-                .map_err(|error| (Step::Detect, error))?;
+                .map_err(|error| (Step::Detect, PipelineError::Stage(error)))?;
         }
         analytics.detect = Some(output.analytics.clone());
         output.page
@@ -190,13 +197,13 @@ pub fn run_stages(
         let Some(cache) = cache else {
             return Err((
                 Step::Preprocess,
-                StageError::InvalidInput(
+                PipelineError::Stage(StageError::InvalidInput(
                     "cannot resume preprocessing without disk checkpoints".into(),
-                ),
+                )),
             ));
         };
         checkpoint::read_page(&cache.for_output(Output::CleanJson))
-            .map_err(|error| (Step::Preprocess, error))?
+            .map_err(|error| (Step::Preprocess, PipelineError::Stage(error)))?
     } else {
         let output = PreprocessStage::run(
             PreprocessInput {
@@ -207,10 +214,10 @@ pub fn run_stages(
             },
             ctx.ocr,
         )
-        .map_err(|error| (Step::Preprocess, error))?;
+        .map_err(|error| (Step::Preprocess, PipelineError::Stage(error)))?;
         if let Some(cache) = cache {
             checkpoint::write_page(&output.page, &cache.for_output(Output::CleanJson))
-                .map_err(|error| (Step::Preprocess, error))?;
+                .map_err(|error| (Step::Preprocess, PipelineError::Stage(error)))?;
         }
         analytics.ocr = output.ocr_analytic.clone();
         output.page
@@ -232,11 +239,13 @@ pub fn run_stages(
         let Some(cache) = cache else {
             return Err((
                 Step::Mask,
-                StageError::InvalidInput("cannot resume masking without disk checkpoints".into()),
+                PipelineError::Stage(StageError::InvalidInput(
+                    "cannot resume masking without disk checkpoints".into(),
+                )),
             ));
         };
         let mask_data = checkpoint::read_mask_data(&cache.for_output(Output::MaskDataJson))
-            .map_err(|error| (Step::Mask, error))?;
+            .map_err(|error| (Step::Mask, PipelineError::Stage(error)))?;
         cached_mask_output(cache, mask_data, options.extract_text)
     } else {
         let output = MaskStage::run(
@@ -251,10 +260,10 @@ pub fn run_stages(
             },
             (),
         )
-        .map_err(|error| (Step::Mask, error))?;
+        .map_err(|error| (Step::Mask, PipelineError::Stage(error)))?;
         if let Some(cache) = cache {
             checkpoint::write_mask_data(&output.mask_data, &cache.for_output(Output::MaskDataJson))
-                .map_err(|error| (Step::Mask, error))?;
+                .map_err(|error| (Step::Mask, PipelineError::Stage(error)))?;
         }
         analytics.mask_fitting = output.analytics.clone();
         output
@@ -272,7 +281,7 @@ pub fn run_stages(
             },
             (),
         )
-        .map_err(|error| (Step::Denoise, error))?;
+        .map_err(|error| (Step::Denoise, PipelineError::Stage(error)))?;
         analytics.denoise = Some(output.analytics.clone());
         Some(output)
     } else {
@@ -332,7 +341,8 @@ pub fn process_image(
 
     let chain = match run_stages(original, cache.as_ref(), options, ctx) {
         Ok(chain) => chain,
-        Err((step, error)) => return failed(original_buf, step, error),
+        Err((step, PipelineError::Stage(error))) => return failed(original_buf, step, error),
+        Err((step, PipelineError::RunFatal(error))) => return run_fatal(original_buf, step, error),
     };
 
     if options.performing_ocr {
@@ -432,7 +442,10 @@ pub fn process_image_with_splitting(
                 merge_analytics(&mut analytics, chain.analytics, &original_buf);
                 segment_sources.push(chain.sources);
             }
-            Err((step, error)) => return failed(original_buf, step, error),
+            Err((step, PipelineError::Stage(error))) => return failed(original_buf, step, error),
+            Err((step, PipelineError::RunFatal(error))) => {
+                return run_fatal(original_buf, step, error)
+            }
         }
     }
 
@@ -562,6 +575,14 @@ fn merge_analytics(into: &mut ImageAnalytics, segment: ImageAnalytics, original:
 
 fn failed(original: PathBuf, step: Step, error: StageError) -> ImageOutcome {
     ImageOutcome::Failed {
+        original,
+        step,
+        error,
+    }
+}
+
+fn run_fatal(original: PathBuf, step: Step, error: StageError) -> ImageOutcome {
+    ImageOutcome::RunFatal {
         original,
         step,
         error,

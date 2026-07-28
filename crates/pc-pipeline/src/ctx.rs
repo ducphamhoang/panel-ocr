@@ -15,6 +15,15 @@ use std::sync::Arc;
 /// detector per image.
 pub trait DetectorProvider: Send + Sync {
     fn detector_for(&self, original: &Path) -> Result<Arc<dyn TextDetector>, StageError>;
+
+    /// Whether a failure from [`Self::detector_for`] dooms the whole run (§16.19 item 5).
+    ///
+    /// The criterion is causal, not textual: `true` iff the failure is independent of
+    /// `original`, so every remaining image would fail identically for the same reason.
+    /// Default `false` per §16.12 item 3.
+    fn failures_are_run_fatal(&self) -> bool {
+        false
+    }
 }
 
 /// The §4.5 case: one detector, shared by every image.
