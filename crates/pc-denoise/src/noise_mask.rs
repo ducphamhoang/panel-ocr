@@ -123,10 +123,15 @@ pub fn build_noise_mask(
 ) -> (RgbaImage, usize) {
     let mut noise_mask = blank_noise_mask(cleaned.dimensions());
     let mut boxes_denoised = 0;
-    // Dilation reaches `noise_outline_size` pixels beyond the original mask and the
-    // Gaussian has non-zero support through `3 * noise_fade_radius`.  The working
-    // window must include that halo: otherwise the crop edge clips the alpha fade and
-    // leaves NLM with only the already-filled (often uniform) region to process.
+    // DEVIATION(§16.14 item 3): the working window is the region rect **padded** by
+    // `noise_outline_size + 3 * noise_fade_radius`, not §11.3 step 4.2's literal
+    // `cleaned.crop(rect)`. Dilation reaches `noise_outline_size` px beyond the fill and
+    // the Gaussian has non-zero support through `3 * noise_fade_radius`; cropping at the
+    // bare rect clips the alpha fade into a hard step at an arbitrary bounding-box edge —
+    // a visible seam in exactly the case the fade exists to prevent — and leaves NLM with
+    // only the already-filled (usually uniform) region as context. The padded reach is
+    // exactly the bound §11.7(A)8 already permits, so the containment guarantee is
+    // unchanged. Ratified in §16.14 item 3.
     let reach = config
         .noise_outline_size
         .saturating_add(config.noise_fade_radius.saturating_mul(3))

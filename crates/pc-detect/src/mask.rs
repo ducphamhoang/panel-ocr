@@ -147,6 +147,11 @@ pub fn rasterize_union(rects: &[Rect], size: (u32, u32)) -> GrayImage {
 ///   5. clip back to `in_bounds` (zero outside).
 ///
 /// With no blocks the refined mask is all-zero.
+///
+/// DEVIATION(12): v1 ships this "Simple" refinement instead of upstream's
+/// `refine_mask`/`refine_undetected_mask` (top-k grey/Otsu masks + XOR-minimising merge +
+/// hole filling). Decided in §15.2; `MaskRefineMode::Annotation` is the v1.5 door for a
+/// full port.
 pub fn refine_simple(
     mask: &GrayImage,
     geometry: &LetterboxGeometry,

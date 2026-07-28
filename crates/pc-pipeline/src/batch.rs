@@ -18,9 +18,11 @@ use std::sync::{
 
 /// spec §5.2 — one image, with panics contained.
 ///
-/// Contract Codex must satisfy:
-///   * on success/normal failure, returns exactly what [`crate::single::process_image`]
-///     returned;
+/// Contract:
+///   * on success/normal failure, returns exactly what
+///     [`crate::single::process_image_with_splitting`] returned — §16.14 item 1: the
+///     split-aware entry point, so `general.split_long_strips` (default **true**) is
+///     actually honoured by every batch;
 ///   * a panic anywhere inside becomes
 ///     `ImageOutcome::Failed { step, error: StageError::Inference(panic_message(..)) }`
 ///     using [`crate::outcome::panic_message`], and the panic does not propagate;
@@ -31,8 +33,11 @@ pub fn process_image_isolated(
     options: &PipelineOptions,
     ctx: &PipelineCtx<'_>,
 ) -> ImageOutcome {
+    // DEVIATION(10): upstream lets an exception from a worker abort the whole process
+    // pool; we isolate every image at this boundary so one bad page never kills a batch
+    // (§5).
     match catch_unwind(AssertUnwindSafe(|| {
-        crate::single::process_image(original, options, ctx)
+        crate::single::process_image_with_splitting(original, options, ctx)
     })) {
         Ok(outcome) => outcome,
         Err(payload) => ImageOutcome::Failed {
@@ -71,6 +76,8 @@ pub fn run_batch(
     let fail_fast = options.fail_fast;
     let threads = options.threads.max(1);
 
+    // DEVIATION(11): upstream parallelises *per stage* with Python process pools; we run
+    // whole-pipeline, per-image parallelism on a pipeline-owned rayon pool instead (§4.5).
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()

@@ -2547,6 +2547,119 @@ verify-then-decide process as §16.5–§16.12. Each item is binding.
 
 ---
 
+## 16.14 Post-review fixes (joint architect + Rust Engineer review, 2026-07-28)
+
+Resolved after the final v1 codebase audit against this document. Two MAJOR findings and
+one documentation gap; the same verify-then-decide process as §15/§16.5-§16.13. Each item
+is binding.
+
+1. **Long-strip splitting (D9) is v1 scope and is now wired into the live pipeline.**
+   Finding: `pc-pipeline`'s `strip.rs` was fully implemented and unit-tested (`d9_strip.rs`)
+   but had **no caller** outside its own tests — `single::process_image` went straight from
+   the input path to `DetectInput`, so a default `clean` of `long_strip.jpg` (1000x8000)
+   produced no `#splits.json` and no `_seg{NNN}.png` and processed the whole strip as one
+   page. Root cause: §16.12 item 20 pinned `process_image`'s contract without ever
+   mentioning splitting, so the `[split?]` box of §4.3's diagram had no owner.
+   **Decision: in scope, not deferred.** §4.3 and §13 row 26 both place it in v1, the
+   primitives (§16.6 item 8's `calculate_best_splits`/`split_image`/`stitch_images`) are
+   done and tested, and `general.split_long_strips` defaults to **true** — a default-on
+   config key silently doing nothing is not an acceptable v1 state, and deferring would
+   have required amending §4.3 *and* §13 *and* adding a runtime "not active in this build"
+   WARN, which is strictly more work than wiring the branch. Pinned shape, in `single.rs`:
+   * `run_stages(original, cache, options, ctx) -> Result<ChainOutputs, (Step, StageError)>`
+     is stages 1-4 for one image **or one strip segment**, with no export.
+     `ChainOutputs { sources: ExportSources, analytics: ImageAnalytics, no_text: bool }`.
+     Its contract is exactly the clauses §16.12 item 20 gave `process_image`, minus export.
+   * `process_image` = `run_stages` + one `pc_export::run` for that image. Its observable
+     behaviour is **unchanged**; every frozen `g1_chain.rs` test still applies to it
+     verbatim, and it stays the public per-image entry point.
+   * `process_image_with_splitting` sits **above** both and is §4.3's `[split?]` box:
+     decide via `strip::should_split` (on an `image::image_dimensions` header probe, so a
+     non-qualifying image is never decoded twice); if it does not qualify, delegate to
+     `process_image` unchanged; if it does, `strip::plan_and_write_segments`, then
+     `run_stages` per segment against that segment's own `CachePaths::new`, then
+     `strip::merged_strip_export` — **one** export call for the whole strip.
+   * `batch::process_image_isolated` calls `process_image_with_splitting`, which is what
+     makes `split_long_strips` reachable from `pc-cli`'s `clean`/`ocr` (both go through
+     `run_batch`). This is the only behavioural change to G2.
+   * **Splitting is skipped, with a `WARN` naming the reason, in exactly two cases**:
+     `Checkpointing::Memory` (segments must be materialised to cross five stage boundaries
+     and be stitched, and Memory mode writes nothing, §4.1) and a resumed run
+     (`options.start_step() != Step::Detect` — the cache entries belong to the earlier
+     run's segments and re-planning would orphan them). Never a silent no-op, per the same
+     principle as §14.7's `colored_images` WARN.
+   * Segment cache entries are ordinary entries keyed on the segment file name, so a
+     segment's stem is `{uuid}_{stem}_seg{NNN}` and `CachePaths::discover` for the strip
+     still resolves to the strip's own entry (`parse_cache_name` strips the longest known
+     suffix first, §16.12 item 9). The stitched intermediates `merged_strip_export` writes
+     land in the strip's entry, which is what lets `pc-export` receive materialised handles.
+
+2. **A split image collapses to exactly ONE `ImageOutcome`.** §5.1/§5.5 count *user
+   inputs*; a strip that happens to be cut into four segments must not become four rows in
+   the summary, four `files_written` sets or four failures. Pinned: `no_text` is the
+   conjunction over segments (all segments textless => `Skipped { NoTextDetected }`, per
+   §5.6), a failure in any segment is a single `Failed` naming that segment's step but
+   carrying the **original** path, and analytics merge as follows — per-page singletons
+   accumulate (`DetectAnalytic.blocks_detected`/`blocks_kept` and
+   `DenoiseAnalytic.boxes_denoised` add; `std_deviations`, the OCR area/removal lists and
+   `MaskFittingAnalytic` rows concatenate in segment order) with every `path` field
+   rewritten to the original strip. `Vec` order is segment order, so the printout is
+   deterministic (§5.7).
+
+3. **`pc-denoise`'s halo-padded region crop is RATIFIED as an authorized deviation from
+   §11.3 step 4.2's literal wording.** Finding: `noise_mask.rs`'s per-region loop crops
+   `scaled.pad(noise_outline_size + 3 * noise_fade_radius)` (~8 px at defaults), not
+   §11.3 step 4.2's bare `cleaned.crop(rect)`, and did so with no `DEVIATION` comment and
+   no §16.x item — an undocumented unilateral change during N3.
+   **Decision: keep the padding, document it.** Three pieces of evidence:
+   * §11.7(A)8, this stage's own acceptance criterion, already bounds the touched area at
+     `region.rect.pad(noise_outline_size + 3 * noise_fade_radius)` — *exactly* the padded
+     reach. The containment guarantee §11.3's "Explicitly out of scope" paragraph promises
+     is therefore satisfied unchanged; the literal crop is simply a tighter case of the
+     same bound, not a different guarantee.
+   * Without the padding the alpha fade is clipped into a hard step at an arbitrary
+     bounding-box edge, which is a visible seam in precisely the situation the fade exists
+     to prevent ("grow the mask and fade its edges", the `grow_mask` docstring §14.5
+     quotes), and NLM is left with only the already-painted (usually uniform) fill as
+     context.
+   * Reverting it breaks a frozen test on its own terms: `n4_run.rs`'s
+     `a8_run_changes_nothing_outside_the_padded_region` asserts `changed > 0` on a fixture
+     whose fill covers the whole region rect, where the unpadded crop provably changes
+     nothing at all. The frozen tests were drafted around the padded reach.
+   Accepted consequence, stated plainly: within that <= 8 px halo the layer's alpha is read
+   from the combined mask and can therefore overlap a neighbouring region's territory.
+   That is bounded by the same reach §11.7(A)8 permits, and region rects already overlap by
+   design (§16.10 item 16 pins the source-over tie-break for exactly that case).
+   Considered and rejected: zeroing the halo band's alpha outside the region's own rect —
+   it keeps the fade unclipped and removes the neighbour-alpha coupling, but it is new
+   unreviewed logic for a difference §11.7(A)8 already sanctions, and upstream's own
+   unpadded crop reads neighbour fills too, so it would not be closer to upstream either.
+   The deviation is marked `// DEVIATION(§16.14 item 3)` at the call site.
+   Verified after ratification: `cargo test -p pc-denoise` is fully green, including the
+   now-live `b12_recorded_opencv_parity` and `a2` gates (both live in `n1_nlm.rs` and
+   exercise `nlm::denoise` directly, so they are independent of this crop either way).
+
+4. **Frozen-test addition, not amendment: `crates/pc-pipeline/tests/g1_split_integration.rs`.**
+   `d9_strip.rs` unit-tested `strip.rs`'s pieces; nothing tested that the pipeline *calls*
+   them, which is why the gap survived to the final audit. The new file locks: a
+   default-configured strip run produces one `#splits.json` plus four `_seg{NNN}.png` and a
+   single full-size `long_strip_clean.png`; a split image is one outcome per original input
+   in `run_batch`, with no segment path ever appearing as an outcome's `original`; a normal
+   page produces byte-identical exports through `process_image_with_splitting` and
+   `process_image` and leaves no split artifacts; `split_long_strips = false` disables the
+   branch; and Memory mode processes the strip whole while still exporting. No existing test
+   was edited.
+
+5. **§14's `// DEVIATION(n)` comments completed.** §14's closing line requires one at every
+   implementation site; items 10, 11 and 12 had none. Added, in the codebase's existing
+   form (`DEVIATION(<plain §14 item number>)`, as `pc-detect`'s `DEVIATION(1)`/`DEVIATION(13)`
+   already use — `§16.x`-qualified numbers stay reserved for §16 deviations):
+   `DEVIATION(10)` at `pc-pipeline`'s `catch_unwind` site, `DEVIATION(11)` at its
+   `rayon::ThreadPoolBuilder` site, `DEVIATION(12)` at `pc-detect`'s `refine_simple`.
+   Comment-only change.
+
+---
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

@@ -12,8 +12,9 @@
 //!   * `outcome`    — `ImageOutcome`, `BatchSummary`, exit codes (§5.1, §5.5)
 //!   * `discovery`  — `<PATHS>...` → a deterministic image list
 //!   * `ctx`        — `DetectorProvider` (§16.12 item 3) and the injected OCR factory
-//!   * `single`     — the five-stage chain for one image (G1-chain, `todo!()`)
-//!   * `batch`      — rayon + `catch_unwind` + `--fail-fast` (G2, `todo!()`)
+//!   * `single`     — the five-stage chain for one image, plus §4.3's `[split?]` branch
+//!     above it (G1-chain + §16.14 item 1)
+//!   * `batch`      — rayon + `catch_unwind` + `--fail-fast` (G2)
 //!   * `strip`      — long-strip split orchestration and merged export (D9/E5)
 //!
 //! Two v1 realities this crate encodes, both decided in §16.12:
@@ -45,5 +46,5 @@ pub use outcome::{
     panic_message, BatchSummary, ImageAnalytics, ImageOutcome, SkipReason, EXIT_FATAL, EXIT_OK,
     EXIT_PARTIAL,
 };
-pub use single::process_image;
+pub use single::{process_image, process_image_with_splitting, run_stages, ChainOutputs};
 pub use strip::{should_split, SplitManifest};
