@@ -1,10 +1,8 @@
 //! Task M5 -- composition: the RGBA combined mask, the cleaned image, the text layer
 //! and the debug overlay (spec §10.3 step 4, §10.7(A)12/13, §15.3, §16.9 items 13-15).
 //!
-//! The small pure helpers are implemented (their arithmetic is fully pinned); the four
-//! composition entry points are `todo!()` skeletons for task M5, with signatures frozen
-//! by the tests.
-#![allow(unused_variables)]
+//! The small pure helpers have fully pinned arithmetic; the four composition entry points
+//! are built on them (task M5), with signatures frozen by the tests.
 
 use crate::fit::Fitment;
 use image::{DynamicImage, GenericImageView, Rgb, RgbImage, Rgba, RgbaImage};

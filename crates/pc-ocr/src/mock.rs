@@ -3,8 +3,8 @@
 //! `pc-testkit`'s panic policy misuse panics with a diagnostic rather than returning
 //! `Result`.
 //!
-//! Unlike the stage logic these are *implemented*, not `todo!()`: they are the test
-//! infrastructure everything else in Stage 2 is tested through.
+//! This is test infrastructure rather than shipped stage logic: everything else in Stage 2
+//! is tested through it, and it is compiled out of a normal build.
 
 use crate::engine::{OcrEngine, OcrEngineFactory};
 use image::DynamicImage;

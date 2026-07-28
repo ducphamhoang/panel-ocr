@@ -24,6 +24,15 @@ pub fn is_supported_input(path: &Path) -> bool {
     }
 }
 
+/// The suffix [`is_supported_input`] judged, normalised the same way, for
+/// [`crate::outcome::SkipReason::UnsupportedFormat`]. `""` when the path has no extension.
+pub fn input_suffix(path: &Path) -> String {
+    match path.extension() {
+        Some(extension) => format!(".{}", extension.to_string_lossy().to_ascii_lowercase()),
+        None => String::new(),
+    }
+}
+
 /// Expand the user's paths into images, in a deterministic order (§5.7):
 ///
 ///   * a file is taken as-is (even when its suffix is unsupported — the per-image

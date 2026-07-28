@@ -8,6 +8,27 @@ use std::path::PathBuf;
 pub const APP_DIR_NAME: &str = "panel-ocr";
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 
+/// Per-image cache artifacts (§4.2's `{uuid}_{stem}{suffix}` entries) live in this
+/// subdirectory of the cache root, **not** in the root itself: a `clean` run without
+/// `--keep-cache` deletes its whole cache directory, and the (future, task D1) model cache
+/// at [`MODELS_SUBDIR`] shares the same root. Keeping the two in sibling subdirectories is
+/// what stops an ordinary run from deleting downloaded model weights.
+pub const IMAGES_SUBDIR: &str = "images";
+
+/// Where task D1's downloaded models live, relative to the cache root. `models path`
+/// prints this, and only `cache clear [--models]` may remove it.
+pub const MODELS_SUBDIR: &str = "models";
+
+/// The pipeline's `PipelineOptions::cache_dir` for a run rooted at `cache_root`.
+pub fn image_cache_dir(cache_root: &std::path::Path) -> PathBuf {
+    cache_root.join(IMAGES_SUBDIR)
+}
+
+/// The model cache directory for a run rooted at `cache_root`.
+pub fn models_dir(cache_root: &std::path::Path) -> PathBuf {
+    cache_root.join(MODELS_SUBDIR)
+}
+
 /// `$XDG_CACHE_HOME/panel-ocr`, else `~/Library/Caches/panel-ocr` on macOS,
 /// else `~/.cache/panel-ocr`, else `./.panel-ocr-cache`.
 pub fn default_cache_dir() -> PathBuf {

@@ -1,10 +1,9 @@
 //! Task P6 (pc-preprocess half) — spec §9.3 step 7: the OCR discard pass and its
 //! analytics.
 //!
-//! Bodies that need the full pass are `todo!()` skeletons for the P6 Codex call; the
-//! signatures are frozen with the tests. The two pieces that are pure arithmetic
-//! ([`compile_blacklist`], [`scale_to_original`]) are implemented here because they are
-//! fully specified and hand-checkable.
+//! [`run_ocr_pass`] implements the full pass (task P6); the signatures are frozen with the
+//! tests, as are the two pure-arithmetic pieces ([`compile_blacklist`],
+//! [`scale_to_original`]), which are fully specified and hand-checkable.
 
 use pc_config::PreprocessorConfig;
 use pc_core::{OcrAnalytic, PageDataRaw, Rect, RemovedBox, StageError, TextBox};

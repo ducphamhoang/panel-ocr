@@ -4,9 +4,8 @@
 //! **Precision rule (§15.9): `f64` only, no `f32` in this module.** The comparison
 //! `dev_i <= best_dev * (1 - threshold)` decides which mask candidate paints the page.
 //!
-//! `select_candidate` (the policy) is implemented; `fit_region` (the wiring) is a
-//! `todo!()` skeleton for task M4 -- its signature is frozen with the tests.
-#![allow(unused_variables)]
+//! `select_candidate` holds the policy and `fit_region` the wiring around it (task M4);
+//! both signatures are frozen with the tests.
 
 use crate::border::{border_std_deviation, BlankMask, BorderStats};
 use crate::grow::build_candidates;

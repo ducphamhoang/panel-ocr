@@ -4,9 +4,8 @@
 //! stage is testable with mocks and replay fixtures and no ONNX runtime present. The
 //! `onnx` feature (task D4, not implemented in this pass) adds the real backend.
 //!
-//! Bodies here are `todo!()` skeletons for task D7; the signatures are frozen with the
-//! tests.
-#![allow(unused_variables)]
+//! [`DetectStage::run`]'s wiring is implemented here (task D7); the signatures are frozen
+//! with the tests.
 
 pub mod detector;
 pub mod mask;

@@ -19,8 +19,8 @@
 //! stage uses either module. Both are `pub` and config-free, so a v1.5 hoist is a move
 //! plus a re-export.
 //!
-//! `run()` is a `todo!()` skeleton for task N4; its signature is frozen with the tests.
-#![allow(unused_variables)]
+//! `run()`'s wiring, the 1-bit shortcut and the analytics are implemented here (N4); its
+//! signature is frozen with the tests.
 
 pub mod composite;
 pub mod gaussian;

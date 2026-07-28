@@ -2,10 +2,9 @@
 //! alpha attach and composition (spec §11.3 steps 3-5, §11.7(A)6/8/9/10, §16.10 items
 //! 14-16).
 //!
-//! The small pure helpers are implemented (their arithmetic is fully pinned by §11.3
-//! and §16.10); `build_noise_mask` -- the per-region loop plus composition -- is a
-//! `todo!()` skeleton for task N3, with its signature frozen by the tests.
-#![allow(unused_variables)]
+//! The small pure helpers are pinned by §11.3 and §16.10; `build_noise_mask` -- the
+//! per-region loop plus composition -- is implemented on top of them, with its signature
+//! frozen by the tests.
 
 use crate::{composite, gaussian, morph, nlm::NlmParams};
 use image::{GenericImageView, GrayImage, Luma, RgbImage, Rgba, RgbaImage};

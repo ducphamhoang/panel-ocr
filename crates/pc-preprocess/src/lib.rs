@@ -8,9 +8,9 @@
 //! Everything here is pure geometry over `pc-core` types; the only external resource is
 //! the injected [`OcrEngineFactory`] (§3's `Ctx`). Nothing in this crate touches a model.
 //!
-//! `run()` and the OCR pass are `todo!()` skeletons for tasks P5/P6; their signatures
-//! are frozen with the tests. `filter`/`merge`/`order` and the padding tiers are
-//! implemented — they are fully specified in §9.3 and hand-traceable.
+//! `run()` and the OCR pass are implemented here (tasks P5/P6); their signatures are
+//! frozen with the tests, as are `filter`/`merge`/`order` and the padding tiers, which are
+//! fully specified in §9.3 and hand-traceable.
 
 pub mod filter;
 pub mod merge;

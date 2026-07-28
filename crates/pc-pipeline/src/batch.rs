@@ -1,8 +1,8 @@
 //! spec §4.5 + §5 — the batch runner: per-image isolation, `catch_unwind`, rayon,
 //! `--fail-fast`, and the deterministic summary.
 //!
-//! Task G2, **heavy** (§16.12 item 19). Both functions are `todo!()` for Codex; the
-//! panic-message form they must produce is implemented in [`crate::outcome`].
+//! Task G2, **heavy** (§16.12 item 19). Both functions are implemented here; the
+//! panic-message form they produce lives in [`crate::outcome`].
 
 use crate::ctx::PipelineCtx;
 use crate::options::PipelineOptions;
@@ -52,7 +52,7 @@ pub fn process_image_isolated(
 
 /// spec §4.5/§5 — the whole batch.
 ///
-/// Contract Codex must satisfy:
+/// Contract (each clause is a frozen test):
 ///   * `summary.outcomes` is in **input order**, independent of `options.threads`
 ///     (§5.7 / §16.12 item 17);
 ///   * parallelism comes from a pipeline-owned `rayon::ThreadPoolBuilder` sized by

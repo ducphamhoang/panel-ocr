@@ -22,9 +22,8 @@
 //! `mkdir -p`). Cache-path resolution and artifact *availability* remain exclusively
 //! `pc-pipeline`'s job (§12.3 step 2).
 //!
-//! `run()` and its three per-category helpers are `todo!()` skeletons for task E3;
-//! their signatures are frozen with the tests.
-#![allow(unused_variables)]
+//! `run()` and its three per-category helpers are implemented here (task E3); their
+//! signatures are frozen with the tests.
 
 pub mod composite;
 pub mod discover;

@@ -1,9 +1,7 @@
 //! Task D2 -- spec §8.3 step 2: `ctd_interface.calculate_new_size_and_scale` plus an
 //! INTER_AREA (box-filter) resampler.
 //!
-//! Bodies are `todo!()` skeletons: the signatures are frozen alongside the tests, the
-//! implementations are task D2's job.
-#![allow(unused_variables)]
+//! Implemented (task D2); the signatures are frozen alongside the tests.
 
 use image::RgbImage;
 

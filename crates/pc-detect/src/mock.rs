@@ -2,8 +2,8 @@
 //! "testkit"))`), so per `pc-testkit`'s panic policy fixture problems panic with a
 //! diagnostic rather than returning `Result`.
 //!
-//! Unlike the rest of this crate these are *implemented*, not `todo!()`: they are test
-//! infrastructure that the frozen D3/D7 tests are written against.
+//! This is test infrastructure, not part of the shipped stage: the frozen D3/D7 tests are
+//! written against it, and it is compiled out of a normal build.
 
 use crate::detector::{RawBlock, RawDetection, TextDetector};
 use image::{GrayImage, Luma, RgbImage};

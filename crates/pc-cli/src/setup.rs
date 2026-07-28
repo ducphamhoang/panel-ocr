@@ -99,10 +99,14 @@ pub fn build_clean_options(
     let checkpointing = select_checkpointing(image_count, debug_outputs, args.no_cache);
     let configured_threads = args.threads.unwrap_or(profile.general.max_threads);
     let threads = resolve_threads(configured_threads, image_count);
-    let cache_dir = args
-        .cache_dir
-        .clone()
-        .unwrap_or_else(paths::default_cache_dir);
+    // Per-image artifacts go under `{root}/images` so that `cleanup_cache`'s
+    // `remove_dir_all` (and `cache clear --images`) can never reach `{root}/models`.
+    let cache_dir = paths::image_cache_dir(
+        &args
+            .cache_dir
+            .clone()
+            .unwrap_or_else(paths::default_cache_dir),
+    );
 
     PipelineOptions {
         profile,

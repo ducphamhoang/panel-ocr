@@ -6,7 +6,7 @@
 //! original file's (§16.11 item 1: `pc-export` knows nothing about any of this).
 //!
 //! Planning, the manifest and the segment naming are fully pinned (§16.6 item 8,
-//! §16.12 item 10) and implemented here. [`merged_strip_export`] is `todo!()` for Codex.
+//! §16.12 item 10) and implemented here. [`merged_strip_export`] stitches and exports.
 
 use crate::cache::CachePaths;
 use crate::options::PipelineOptions;
@@ -119,7 +119,7 @@ pub fn read_manifest(path: &Path) -> Result<SplitManifest, StageError> {
 /// `segment_sources[i]` is the availability set stage 3/4 produced for segment `i`
 /// (`crate::single::export_sources`), in manifest order.
 ///
-/// Contract Codex must satisfy:
+/// Contract (each clause is a frozen test):
 ///   * only the categories the run actually requests are stitched (§12.3's out-of-scope
 ///     note rules out the `stitch_all` debug variant); a category is stitched iff every
 ///     segment supplies it, otherwise it is dropped with a `WARN`;

@@ -4,8 +4,8 @@
 //! verbosity mapping and the config discovery are unit-testable without spawning a
 //! process. §1 rule 3: no algorithm code lives here.
 //!
-//! `run_clean` / `run_ocr` / the three management subcommands are `todo!()` skeletons
-//! for task X1; their signatures are frozen with the tests.
+//! `run_clean` / `run_ocr` / the three management subcommands are implemented here (task
+//! X1); their signatures are frozen with the tests.
 
 pub mod args;
 pub mod detector;
@@ -51,7 +51,7 @@ pub fn run(cli: Cli) -> i32 {
 
 /// spec §13.1's `clean` (task X1).
 ///
-/// Contract Codex must satisfy:
+/// Contract (each clause is a frozen test):
 ///   1. expand `paths` (`pc_pipeline::expand_inputs`); an empty result is fatal (§5.3);
 ///   2. load the app config + profile (`setup::load_app_config`/`load_profile`) and
 ///      build options (`setup::build_clean_options`) — all three already implemented;
@@ -83,6 +83,10 @@ pub fn run_clean(args: CleanArgs) -> Result<i32> {
 /// spec §13.1's `ocr` (task X1). Runs stages 1–2 with `performing_ocr = true` and
 /// renders `pc_export::render_ocr_report`. §16.12 item 4: with no engine in v1 the
 /// report is empty and a `WARN` says so.
+///
+/// `performing_ocr` stops the chain after preprocessing (see
+/// `pc_pipeline::process_image`), so the report — stdout or `--output FILE` — is the run's
+/// *only* product: `ocr` has no `--output-dir` and must never write cleaning artifacts.
 pub fn run_ocr(args: OcrArgs) -> Result<i32> {
     let images = pc_pipeline::expand_inputs(&args.paths)?;
     ensure_inputs(&images)?;
@@ -99,10 +103,12 @@ pub fn run_ocr(args: OcrArgs) -> Result<i32> {
              the OCR report will be empty (spec §16.12 item 4)"
         );
     }
-    let cache_dir = args
-        .cache_dir
-        .clone()
-        .unwrap_or_else(paths::default_cache_dir);
+    let cache_dir = paths::image_cache_dir(
+        &args
+            .cache_dir
+            .clone()
+            .unwrap_or_else(paths::default_cache_dir),
+    );
     let options = PipelineOptions {
         threads: pc_pipeline::resolve_threads(profile.general.max_threads, images.len()),
         profile,
@@ -193,11 +199,14 @@ pub fn run_cache(command: CacheCommand) -> Result<i32> {
         }
         CacheCommand::Clear { models, images } => {
             let clear_all = !models && !images;
+            // Per category, never the whole root: `--images` must not take `models/` with
+            // it (task D1's weights are expensive to re-download), and `--models` must not
+            // take the per-image artifacts.
             if clear_all || images {
-                remove_dir_contents(&cache_dir)?;
+                remove_dir_contents(&paths::image_cache_dir(&cache_dir))?;
             }
             if clear_all || models {
-                remove_dir_contents(&cache_dir.join("models"))?;
+                remove_dir_contents(&paths::models_dir(&cache_dir))?;
             }
         }
     }
@@ -216,7 +225,7 @@ pub fn run_models(command: ModelsCommand) -> Result<i32> {
         ModelsCommand::Path => {
             let config = setup::load_app_config()?;
             let cache_dir = config.cache_dir.unwrap_or_else(paths::default_cache_dir);
-            println!("{}", cache_dir.join("models").display());
+            println!("{}", paths::models_dir(&cache_dir).display());
             Ok(EXIT_OK)
         }
     }
@@ -261,8 +270,13 @@ fn run_pipeline(
     Ok(summary.exit_code())
 }
 
+/// Delete this run's per-image cache directory (`{root}/images`, never the root itself, so
+/// a future `{root}/models` survives an ordinary `clean`).
 fn cleanup_cache(options: &PipelineOptions) -> Result<()> {
-    if options.checkpointing == Checkpointing::Disk && !options.keep_cache {
+    if options.checkpointing == Checkpointing::Disk
+        && !options.keep_cache
+        && options.cache_dir.exists()
+    {
         std::fs::remove_dir_all(&options.cache_dir).with_context(|| {
             format!(
                 "failed to remove cache directory `{}`",

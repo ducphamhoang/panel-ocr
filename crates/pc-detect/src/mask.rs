@@ -1,8 +1,7 @@
 //! Task D6 -- spec §8.3 step 5: U-Net mask postprocess + the v1 "Simple" refinement
 //! (ported from koharu's `refine_segmentation_mask`).
 //!
-//! Bodies are `todo!()` skeletons: signatures are frozen with the tests, D6 fills them.
-#![allow(unused_variables)]
+//! Implemented (task D6); signatures are frozen with the tests.
 
 use crate::{detector::RawBlock, yolo::LetterboxGeometry};
 use image::{GrayImage, Luma};

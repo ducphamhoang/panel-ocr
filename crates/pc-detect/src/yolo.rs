@@ -1,8 +1,7 @@
 //! Task D5 -- spec §8.3 step 4: YOLO candidate filtering, decode, NMS, rescale,
 //! class -> language.
 //!
-//! Bodies are `todo!()` skeletons: signatures are frozen with the tests, D5 fills them.
-#![allow(unused_variables)]
+//! Implemented (task D5); signatures are frozen with the tests.
 
 use crate::detector::RawBlock;
 use pc_core::Language;

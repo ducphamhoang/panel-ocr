@@ -14,8 +14,8 @@
 //!
 //! `BinaryMask` and box-mask rasterisation live in `pc-imageops` (M1).
 //!
-//! `run()` is a `todo!()` skeleton for task M6; its signature is frozen with the tests.
-#![allow(unused_variables)]
+//! `run()`'s wiring, the `MaskData`/analytics emission and the debug writes are
+//! implemented here (task M6); its signature is frozen with the tests.
 
 pub mod border;
 pub mod combine;

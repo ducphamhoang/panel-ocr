@@ -217,6 +217,17 @@ pub fn run_stages(
     };
     let no_text = page.text_boxes.is_empty();
 
+    // §13.1: `panel-ocr ocr`'s job is "run OCR over the detected boxes and write a
+    // CSV/TXT report" — stages 1–2 plus a report, and it has no `--output-dir` to write
+    // images to. Stop here so an `ocr` run never masks, denoises or exports.
+    if options.performing_ocr {
+        return Ok(ChainOutputs {
+            sources: ExportSources::default(),
+            analytics,
+            no_text,
+        });
+    }
+
     let mask = if flags.mask {
         let Some(cache) = cache else {
             return Err((
@@ -289,12 +300,29 @@ pub fn run_stages(
 ///      `Skipped { NoTextDetected, files_written }` (§5.6, §16.12 item 12).
 ///   4. The returned `ImageOutcome::Failed.step` names the stage that actually failed.
 ///   5. No `catch_unwind` here — that is [`crate::batch`]'s boundary (§5.2).
+///   6. An input whose suffix is not in [`crate::discovery::SUPPORTED_INPUT_SUFFIXES`] is
+///      `Skipped { UnsupportedFormat, files_written: [] }` — §5.1/§5.6 make an unsupported
+///      format a graceful skip, so one stray non-image file among named inputs must not
+///      turn an otherwise-successful batch into exit code 2. This is the per-image
+///      boundary `crate::discovery::expand_inputs` defers to for explicitly named files.
+///   7. With `options.performing_ocr` (`panel-ocr ocr`, §13.1) the chain stops after
+///      preprocessing and **nothing is exported**: the run's only product is the report
+///      `pc-cli` renders from `ImageAnalytics::ocr`.
 pub fn process_image(
     original: &Path,
     options: &PipelineOptions,
     ctx: &PipelineCtx<'_>,
 ) -> ImageOutcome {
     let original_buf = original.to_path_buf();
+    if !crate::discovery::is_supported_input(original) {
+        return ImageOutcome::Skipped {
+            original: original_buf,
+            reason: SkipReason::UnsupportedFormat {
+                suffix: crate::discovery::input_suffix(original),
+            },
+            files_written: Vec::new(),
+        };
+    }
     warn_on_implied_skips(options);
 
     let cache = match prepare_cache(original, options) {
@@ -306,6 +334,10 @@ pub fn process_image(
         Ok(chain) => chain,
         Err((step, error)) => return failed(original_buf, step, error),
     };
+
+    if options.performing_ocr {
+        return outcome_for(original_buf, chain.no_text, Vec::new(), chain.analytics);
+    }
 
     let files_written = match export_once(&original_buf, chain.sources, options) {
         Ok(files_written) => files_written,
@@ -332,6 +364,10 @@ pub fn process_image(
 ///     `WARN` rather than silently no-oping;
 ///   * `options.start_step() != Step::Detect` — a resumed run's cache entries belong to
 ///     the segments of the earlier run, and re-planning would orphan them. Also a `WARN`.
+///   * `options.performing_ocr` — the whole point of the split path is
+///     [`crate::strip::merged_strip_export`]'s single stitched *export*, and an `ocr` run
+///     exports nothing (§13.1). Silent, because this is not a user-visible degradation:
+///     `ocr` reports boxes in original-image space either way.
 pub fn process_image_with_splitting(
     original: &Path,
     options: &PipelineOptions,
@@ -340,6 +376,9 @@ pub fn process_image_with_splitting(
     let original_buf = original.to_path_buf();
     let general = &options.profile.general;
 
+    if options.performing_ocr {
+        return process_image(original, options, ctx);
+    }
     if !general.split_long_strips {
         return process_image(original, options, ctx);
     }

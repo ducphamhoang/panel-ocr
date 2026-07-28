@@ -37,7 +37,7 @@ pub mod strip;
 pub use batch::{process_image_isolated, run_batch};
 pub use cache::{CachePaths, SEGMENT_INFIX, SPLITS_SUFFIX};
 pub use ctx::{DetectorProvider, PipelineCtx, SharedDetector};
-pub use discovery::{expand_inputs, is_supported_input, SUPPORTED_INPUT_SUFFIXES};
+pub use discovery::{expand_inputs, input_suffix, is_supported_input, SUPPORTED_INPUT_SUFFIXES};
 pub use options::{
     requested_outputs, resolve_threads, select_checkpointing, Checkpointing, PipelineOptions,
     SaveOnly, SkipFlags,
