@@ -1,0 +1,37 @@
+[package]
+name        = "pc-cli"
+description = "panel-ocr's command-line front end (spec §13.1): clap surface, config discovery, logging, exit codes."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[[bin]]
+name = "panel-ocr"
+path = "src/main.rs"
+
+[lib]
+name = "pc_cli"
+path = "src/lib.rs"
+
+[dependencies]
+pc-core     = { path = "../pc-core" }
+pc-config   = { path = "../pc-config" }
+pc-pipeline = { path = "../pc-pipeline" }
+pc-export   = { path = "../pc-export" }
+# §16.12 item 2: v1 ships the mock/replay backends because D1/D4 are deferred and the
+# `onnx` provider is not buildable yet. Drop the feature when D4 lands.
+pc-detect   = { path = "../pc-detect", features = ["testkit"] }
+
+anyhow             = { workspace = true }
+clap               = { workspace = true }
+indicatif          = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+pc-testkit = { path = "../pc-testkit" }
+image      = { workspace = true }
+tempfile   = { workspace = true }

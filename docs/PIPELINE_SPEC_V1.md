@@ -2223,6 +2223,189 @@ capability claim about the `image` crate below was verified against the pinned
 
 ---
 
+## 16.12 Pipeline orchestrator + CLI decisions (joint architect + Rust Engineer review, 2026-07-28)
+
+Resolved during test-drafting for `pc-pipeline` (G1, G2, D9/E5) and `pc-cli` (X1),
+applying the same verify-then-decide process as §15/§16.5–§16.11. Every claim about a
+stage crate's API below was traced against the **already-implemented, frozen** source in
+`crates/pc-*`, not against the spec prose. Each item is binding on Codex.
+
+1. **Two crates, and `pc-cli` is a lib + bin.** §1/§13 rows 24–27 keep `pc-pipeline`
+   (orchestration) and `pc-cli` (bin `panel-ocr`) separate; that stands. `pc-cli`
+   additionally exposes a `lib.rs` (`pc_cli`) so X1's `clap` surface is unit-testable
+   with `Cli::try_parse_from` instead of only through process spawns. §1 rule 3 still
+   holds: `pc_cli` contains argument parsing, config/path discovery, logging setup,
+   detector construction and calls into `pc-pipeline` — no algorithm code.
+
+2. **THE ONNX QUESTION — v1's CLI ships with no working default detector, and says so
+   loudly.** D1 (`pc-models`) and D4 (`ort` session) are deferred, `pc-detect`'s `onnx`
+   feature is not default, and nothing in §8/§13 makes a *working* detector a
+   precondition for G1/G2/X1 (§13 explicitly notes the model adapter is "deliberately
+   late on the critical path"). Decision:
+   * `panel-ocr clean` takes `--detector <SPEC>`, `SPEC ∈ { onnx | mock | replay:<DIR> }`,
+     default `onnx`.
+   * `onnx` is **not implemented in this milestone**: building the provider returns a
+     *fatal* error (exit code 1, §5.3) whose message names tasks D1/D4 and points at
+     `--detector replay:<DIR>`. It is a clean, diagnosable failure, never a panic and
+     never a silent empty-detection run.
+   * `mock` and `replay:<DIR>` are `hide = true` clap values, backed by `pc-detect`'s
+     `MockDetector`/`ReplayDetector`. `pc-cli` therefore depends on `pc-detect` with
+     `features = ["testkit"]` in v1 — a deliberate, documented consequence of shipping
+     before D4, to be dropped when `onnx` becomes real.
+   * `mock` = zero blocks + blank mask: a page with no detected text, which §5.6 says
+     must still export a byte-equivalent cleaned copy. That makes a genuine end-to-end
+     CLI test possible today with no model and no recorded fixture.
+   * Rejected alternative: making `--detector` mandatory. It would break the flag's
+     forward compatibility — once D4 lands, `onnx` must be the default with no flag —
+     and would hide the "why is there no detector" explanation behind a usage error.
+
+3. **Detector injection is per-image, via a provider.** §4.5 wants one shared `ort`
+   session; §7.2.1 binds `ReplayDetector` to **one fixture stem at construction**. A
+   single `&dyn TextDetector` cannot serve both. Pinned:
+   ```rust
+   pub trait DetectorProvider: Send + Sync {
+       fn detector_for(&self, original: &Path) -> Result<Arc<dyn TextDetector>, StageError>;
+   }
+   ```
+   `SharedDetector(Arc<dyn TextDetector>)` returns the same handle for every image (the
+   §4.5 ONNX case, and the mock case); a replay provider constructs a stem-bound
+   detector per image. A provider error is a **per-image** `Failed { step: Detect }`, not
+   a fatal — a missing replay fixture for page 7 must not kill pages 1–6.
+
+4. **OCR has no engine in v1, and that is not an error.** P7 (manga-ocr) is unstarted,
+   so `PipelineCtx.ocr` is `Option<&dyn OcrEngineFactory>` (matching
+   `pc_preprocess::run`'s `Ctx` exactly) and `pc-cli` passes `None`. When `None` is
+   passed while `preprocessor.ocr_enabled == true`, the pipeline logs one `WARN` per run
+   stating that OCR-based box discarding is inactive until P7. `pc_preprocess::run`
+   already treats `(None, _)` as "no OCR pass, `ocr_analytic: None`" — no stage change is
+   needed. Consequence: `panel-ocr ocr` (§13.1) can run its plumbing but produces empty
+   report text in v1; the subcommand stays in the surface (it is X1 scope) and emits the
+   same `WARN`.
+
+5. **`--skip-denoise` DISABLES denoising; the other three `--skip-*` flags mean
+   "load from cache".** §4.4 lists all four as load-from-cache, but §12.2/§12.3 step 2
+   and §16.11 item 3 both read `--skip-denoise` as the `denoising_enabled == false`
+   signal that must suppress even a *stale cached* denoise artifact. Those cannot both
+   be true. §12/§16.11 wins (it is the later, more specific resolution and the one the
+   frozen `pc-export` tests encode): `--skip-denoise` sets
+   `denoising_enabled = false`, stage 4 is not run, and its cached artifacts are ignored.
+   `PipelineOptions::denoising_enabled() = profile.denoiser.denoising_enabled && !skips.denoise`.
+
+6. **Skip flags are normalised to a prefix.** `--skip-mask` without `--skip-preprocess`
+   is nonsense (stage 3's input is stage 2's output). The three load-from-cache flags are
+   normalised so that skipping step *n* implies skipping every earlier step, with one
+   `WARN` naming the flags that were implied. `SkipFlags::start_step()` then returns the
+   first step actually executed: none → `Detect`, detection → `Preprocess`, preprocess →
+   `Mask`, mask → `Denoise`.
+
+7. **There is no `--resume` flag in v1.** §13.1's surface has none, and the skip flags
+   plus the cache are already the resume mechanism. `ImageHandle`'s disk-materialisation
+   guard (§2.3, §16.7) is what makes that safe, and it keeps its full force.
+
+8. **`CachePaths::discover` is added and specified** (§4.2 gave `from_existing`, which
+   needs a path that *already* contains the uuid — resuming has only the original image
+   path). `discover(cache_dir, original) -> Result<Option<CachePaths>, StageError>`:
+   scan `cache_dir`, parse each file name through the same `{uuid}_{stem}{suffix}` rule
+   as `from_existing`, keep entries whose `stem` equals `original.file_stem()`, and take
+   the **lexicographically smallest uuid string** among the survivors, `WARN`ing when
+   there is more than one. Ascending-uuid (not mtime) because §5.7 forbids clock- or
+   filesystem-order-dependent behaviour. `Ok(None)` when nothing matches; a start step
+   later than `Detect` that gets `None` is a per-image `Failed`, per §4.4.
+
+9. **`from_existing`'s suffix set is the union of `Output::cache_suffix()` and the two
+   pipeline-local suffixes below**, matched **longest-first** (`_clean.png` and
+   `_clean_denoised.png` both end a stem, and `_raw_mask.png` ends with `_mask.png`-ish
+   text; longest-match is the only rule that disambiguates them deterministically).
+
+10. **Split artifacts get pipeline-local suffix constants, not new `Output` variants.**
+    `pc-core` is frozen and §2.8's variant list is closed. `pc-pipeline` defines
+    `SPLITS_SUFFIX = "#splits.json"` and `segment_path(..., i) = {uuid}_{stem}_seg{i:03}.png`.
+    `SplitManifest { schema_version, original, image_size, split_rows, segments }` is the
+    §13-row-26 `splits.json`.
+
+11. **`ExportPaths` (§4.2's "separate type, no uuid") is deliberately NOT implemented.**
+    `pc_export::destinations` (frozen, §16.11 item 4) already resolves every export
+    destination from `export_path`/`output_dir`/suffixes, and §1 rule 1's documented
+    exception assigns that job to `pc-export`. A second implementation in `pc-pipeline`
+    could only drift. The pipeline supplies `export_path` (re-pointed for merged strips,
+    E5) and `output_dir`, nothing more.
+
+12. **`ImageOutcome::Skipped` carries `files_written`.** §5.1's sketch gives it only a
+    reason, but §5.6 requires a `NoTextDetected` page to still be exported. Without the
+    field the summary would under-report written files. `SkipReason` is closed at
+    `UnsupportedFormat { suffix: String }` and `NoTextDetected` — every other
+    non-completion is a `Failed`.
+
+13. **Checkpoint reads validate two things, and both are per-image errors** (§4.4):
+    `schema_version ∈ SUPPORTED_SCHEMA_VERSIONS` (`&[1]`), and every `ImageHandle` the
+    loaded struct references has an existing `path`. Writes go through
+    `ImageHandle::ensure_materialized()` first (§2.3's pre-flight), so a Memory-mode
+    struct fails before `serde_json` is even reached, with `UnmaterializedHandle` rather
+    than an opaque serde error.
+
+14. **`Checkpointing::Memory` selection, pinned** (§4.1's prose): Memory iff
+    `image_count == 1 && !debug_outputs && no_cache`; otherwise `Disk`. In Memory mode
+    every stage `dest` is `None`, `--cache-masks` is refused at argument-validation time
+    (`--no-cache` conflicts with `--cache-masks` and `--keep-cache` in clap), and no
+    checkpoint JSON is written or read.
+
+15. **Debug outputs** are on iff `--cache-masks || general.always_cache_masks`, and they
+    gate exactly `MaskDests::{box_mask, cut_mask, mask_overlay}` (the three v1 debug
+    artifacts, §16's font-free list).
+
+16. **Requested export categories.** A default run requests all three (§16.11 item 2's
+    "the pipeline is expected to populate all three categories"), with `IsolatedText`
+    included **only** when `--extract-text` (nothing produces `_text.png` otherwise).
+    `--save-only-cleaned|mask|text` narrow to exactly one category and are mutually
+    exclusive (clap group). Pinned mapping:
+    `Cleaned → [MaskedOutput, DenoisedOutput]`, `Mask → [FinalMask, DenoiseMask]`,
+    `Text → [IsolatedText]`.
+
+17. **Thread resolution:** `threads = clamp(cli --threads ?? general.max_threads, ...)`
+    where `0` means `std::thread::available_parallelism()`, then bounded to
+    `1..=image_count` (§4.5's `min(max_threads_or_cpus, images.len())`). Batch
+    parallelism uses `rayon`'s `par_iter().collect::<Vec<_>>()`, which preserves input
+    order — the `outcomes` vector is therefore in input order regardless of thread count
+    (§5.7), and the pipeline installs its own `rayon::ThreadPoolBuilder` rather than
+    touching the global pool.
+
+18. **Exit codes and panic containment** (§5.2, §5.5): `EXIT_OK = 0` (all completed;
+    skips allowed), `EXIT_PARTIAL = 2` (≥ 1 `Failed`, ≥ 0 others), `EXIT_FATAL = 1`
+    (config invalid, no inputs, detector provider unbuildable, cache/output dir not
+    creatable). A caught panic becomes
+    `StageError::Inference("panicked: {payload}")`, where `{payload}` is the
+    `&str`/`String` payload or `"<non-string panic payload>"`.
+
+19. **Task split and kinds.** §13 rows 24–27 stand, with one correction: **G2 is
+    `heavy`, not `simple`** (§13's table calls it simple; it is rayon + `catch_unwind` +
+    unwind-safety + fail-fast + deterministic ordering in one function), and **G1's
+    `process_image` is heavy** for the reason §13's own note gives — it threads five
+    stage contracts, two checkpointing modes and four skip levels. Batches:
+    `[G1-support]` (simple, everything in item 20's "implemented" list is already done,
+    so this batch is verification only) · `[G1-chain]` heavy · `[G2]` heavy ·
+    `[D9, E5]` simple · `[X1]` simple.
+
+20. **Implemented ahead of Codex during this pass** (fully pinned, no judgment left):
+    `pc-pipeline`'s `cache.rs`, `checkpoint.rs`, `options.rs`, `outcome.rs`,
+    `discovery.rs`, `ctx.rs`, the dest-builders in `single.rs`, and everything in
+    `strip.rs` except the merged export; `pc-cli`'s `args.rs`, `logging.rs`, `paths.rs`
+    and `detector.rs`. **Left as `todo!()` for Codex** (genuine multi-step wiring):
+    `single::process_image`, `batch::run_batch`, `batch::process_image_isolated`,
+    `strip::merged_strip_export`, and `pc_cli`'s `run_clean`, `run_ocr`, `run_profile`,
+    `run_cache`, `run_models`.
+
+21. **Two hidden flags beyond §13.1's surface**, both `hide = true` so the documented
+    surface is unchanged: `--detector <SPEC>` (item 2) and `--cache-dir <DIR>`. The
+    latter exists because §13.1 gives no way to redirect the cache, which makes an
+    end-to-end CLI test either pollute the user's real cache directory or be
+    impossible; a hidden override is the smallest honest fix. Default cache location:
+    `$XDG_CACHE_HOME/panel-ocr` (Linux) or `~/Library/Caches/panel-ocr` (macOS),
+    falling back to `./.panel-ocr-cache` when neither `$XDG_CACHE_HOME` nor `$HOME` is
+    set. No new third-party dependency is taken for this (`dirs` is not in
+    `[workspace.dependencies]` and v1 is Linux + macOS only).
+
+---
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

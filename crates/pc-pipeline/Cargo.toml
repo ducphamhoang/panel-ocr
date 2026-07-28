@@ -1,0 +1,39 @@
+[package]
+name        = "pc-pipeline"
+description = "panel-ocr orchestrator (spec §4, §5): cache paths, checkpoints, five-stage chaining, batch isolation."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+pc-core       = { path = "../pc-core" }
+pc-config     = { path = "../pc-config" }
+pc-imageops   = { path = "../pc-imageops" }
+# The orchestrator is the ONE crate allowed to depend on every stage (§1's graph);
+# §1 rule 2 only forbids stage-to-stage edges.
+pc-detect     = { path = "../pc-detect" }
+pc-preprocess = { path = "../pc-preprocess" }
+pc-ocr        = { path = "../pc-ocr" }
+pc-mask       = { path = "../pc-mask" }
+pc-denoise    = { path = "../pc-denoise" }
+pc-export     = { path = "../pc-export" }
+
+image      = { workspace = true }
+# §4.5: per-image parallelism, in the pipeline's own thread pool (§16.12 item 17).
+rayon      = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+tracing    = { workspace = true }
+# §4.2: CachePaths' clobber-protection uuid.
+uuid       = { workspace = true }
+
+[dev-dependencies]
+pc-testkit = { path = "../pc-testkit" }
+tempfile   = { workspace = true }
+# Feature-enabled re-declarations so the integration tests see the testkit-gated mocks
+# (the same self/peer dev-dependency trick `pc-detect` and `pc-preprocess` use).
+pc-detect  = { path = "../pc-detect", features = ["testkit"] }
+pc-ocr     = { path = "../pc-ocr", features = ["testkit"] }
