@@ -1510,6 +1510,110 @@ the frozen `pc-core` contract were therefore genuinely contradictory, not merely
 
 ---
 
+## 16.8 Stage 2 (preprocess) decisions, from joint architect + Rust Engineer review (2026-07-28)
+
+Resolved during test-drafting for `pc-preprocess`/`pc-ocr` (P1–P6), applying the same
+verify-then-decide process as §15/§16.6. Each item is binding on Codex.
+
+1. **`pc-ocr` stays a separate crate**, as §1/§9.5/§13 already say. Rationale re-verified rather
+   than assumed: P7 (manga-ocr) pulls `ort` behind an `onnx` feature, and folding that into
+   `pc-preprocess` would make an optional ONNX dependency reachable from a stage crate whose
+   every other line is pure geometry. `pc-ocr` v1 content: `engine.rs` (the two traits) and
+   `mock.rs` (`MockOcrEngine`/`MockOcrFactory`, `cfg(any(test, feature = "testkit"))`), mirroring
+   `pc-detect`'s `mock.rs`. The `onnx` feature is declared with an optional `ort` dep but has no
+   module yet — same shape `pc-detect` uses for the unimplemented D4.
+
+2. **`resolve_overlaps` / `resolve_total_overlaps` use SNAPSHOT partner selection.** §9.3 steps 4
+   and 9 say "pop front as `b`; find all remaining `q` with `b.overlaps(q)`; merge and remove".
+   Ambiguous: are later `q`s tested against the original `b` or against the progressively merged
+   `b`? **Decided: against the box as popped, before any merging** — the partner set is computed
+   once, then all partners are merged in. This is not a preference, it is forced by §9.7(A)4:
+   with `A(0,0,100,100)`, `B(90,0,190,100)`, `C(180,0,280,100)` and any threshold that makes
+   `A~B` and `B~C` true (necessarily `< 10%`), the merged `A∪B = (0,0,190,100)` overlaps `C` by
+   exactly the same 10%, so progressive testing would yield `[A∪B∪C]` — the very output §9.7(A)4
+   forbids. Snapshot semantics also matches the natural Python (`[q for q in queue if ...]` is
+   evaluated before the merge loop mutates `b`). §9.3 step 9's parenthetical "and C separately if
+   it no longer overlaps the merged box" is **superseded**: C is never re-tested at all.
+
+3. **`PreprocessOutput.ocr_analytic` is `Some` iff the OCR pass actually ran** — i.e. a factory
+   was supplied **and** `config.ocr_enabled`. §9.2's doc comment ("Some iff an OCR engine was
+   supplied") is amended. Rationale: with `ocr_enabled = false` an all-empty analytic is
+   indistinguishable from "ran and found no candidates", which would make the `ocr` report lie.
+   `OcrAnalytic.path` is `page.original_path` (§2.7's "original image path").
+
+4. **`OcrEngineFactory::engine_for` returning `None` keeps the box.** §9.3 step 7's `factory
+   .engine_for(box.language)?` is prose, not Rust — the `?` there is undefined for an `Option` in
+   a `Result` function. Decided: no engine for that language ⇒ the box is **kept**, is **not**
+   OCR'd, and its area is **not** recorded in `box_areas_ocred`; logged at `DEBUG`. This is the
+   same fail-open stance as §14.9, and the "discard what OCR can't handle" case is already
+   covered explicitly and separately by §9.3 step 2's `performing_ocr && ocr_strict_language`
+   rule.
+
+5. **DOTALL blacklist matching is `pc-preprocess`'s own concern.** §9.3 step 7 requires a full
+   match "with `(?s)` (DOTALL)", but the already-frozen `PreprocessorConfig::compile_blacklist`
+   builds `^(?:{pat})$` **without** `(?s)`. `pc-config` is frozen and its version is only ever
+   used as a *validation-time compile check*, so: `pc_preprocess::ocr_filter::compile_blacklist`
+   builds `(?s)^(?:{pat})$` and is the only compiler used at stage time. Any pattern that compiles
+   under one compiles under the other, so §6's validation rule still means what it says.
+
+6. **A blacklist pattern that fails to compile at stage time is `StageError::InvalidInput`**,
+   raised once before the pass (not per box). Config validation normally prevents this, but a
+   `PreprocessorConfig` can be hand-built or arrive from a hand-edited checkpoint.
+
+7. **Image access during the OCR pass.** `page.base_image.load()` is attempted **lazily**, only
+   once at least one candidate box exists, and a load failure **propagates** as a `StageError`
+   (it is not fail-open — §14.9 is about *engine* failures, and a base image that cannot be
+   decoded makes the page unprocessable per §2.9). A box whose `Rect::to_crop(image_size)` is
+   `None` (degenerate/out-of-bounds) is kept, not OCR'd, and not counted — same treatment as
+   item 4.
+
+8. **`run()` validates both ends.** §2.5 says "assert in debug"; v1 upgrades this to an
+   unconditional check: `run()` calls `PageDataRaw::validate()` on the input page at entry and
+   `PageData::validate()` on the assembled output before returning, mapping either failure to
+   `StageError::InvalidInput`. Cost is O(boxes); the benefit is that a corrupt `#raw.json` becomes
+   a clean per-image failure (§5.1) instead of a debug-only panic or a silently broken mask stage.
+
+9. **An empty page is a success, not an error.** Zero detector blocks — or every block filtered
+   away — yields `Ok` with empty `text_boxes`/`extended_boxes`/`masking_regions` and
+   `page_language: None`. The `Skipped { NoTextDetected }` decision belongs to `pc-pipeline`
+   (§5.6); the stage never returns `StageError::Empty` here.
+
+10. **`RemovedBox` coordinate scaling is guarded.** §9.3 step 7's `rect.scale(1.0 / page.scale)`
+    is undefined for `scale <= 0.0` or a non-finite `scale` (it would saturate to `i32::MAX` via
+    `Rect::scale`'s `as i32`). Decided: if `page.scale` is not finite or is `<= 0.0`, use a factor
+    of `1.0` and log `WARN`. Well-formed pages are unaffected.
+
+11. **OCR candidacy is judged on the padded, reading-order-sorted boxes.** §9.3's step numbering
+    (5 pad → 6 sort → 7 OCR) is normative: the `rect.area() < ocr_max_size` test (strict `<`) and
+    the crop both use the post-padding rect, and `RemovedBox.rect` is that same rect scaled.
+    `OcrAnalytic.num_boxes` is the number of tight boxes at *entry* to step 7 (pre-removal), per
+    §9.3 step 7's own wording.
+
+12. **`performing_ocr` only affects step 2.** It gates the strict-language drop and nothing else;
+    it does **not** by itself enable the step-7 pass (that needs a factory + `ocr_enabled`).
+
+13. **§9.7(A)10's determinism gate compares canonical JSON, and that is legal here** — unlike the
+    §16.7 detect case. `pc-preprocess` never *creates* an `ImageHandle`; it passes the input
+    page's `base_image`/`raw_mask` straight through, and those are path-bearing in every run that
+    could be checkpointed. `PageData` therefore keeps its §2 derive set (no `PartialEq`) and
+    `pc-core` is not touched.
+
+14. **Reading-order sorting uses `f64::total_cmp`** on the key `x_factor * x1 + y_factor * y1`
+    (`x_factor = -0.4` for RTL, `+0.4` otherwise; `y_factor = 1.0`), with `slice::sort_by` for
+    stability (§9.3 step 6). No `partial_cmp().unwrap()` anywhere — keys are always finite, but
+    an unwrap on ordering is exactly the kind of latent panic §5.2 has to `catch_unwind` around.
+
+15. **Module layout is §9.1's five modules exactly**: `lib.rs`, `filter.rs`, `merge.rs`,
+    `order.rs`, `ocr_filter.rs`. The three padding tiers (`pad_tight`, `extend`, `reference_of`)
+    are free functions in `lib.rs` — they are three two-line `Rect` calls and do not earn a
+    module.
+
+16. **Two merge functions, not one generic one.** Step 4 merges `TextBox`es (language of the
+    earliest box wins, §14.3) and step 9 merges bare `Rect`s (no language exists at that point).
+    Sharing them through a trait would obscure the one behaviour §14.3 exists to pin down.
+
+---
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

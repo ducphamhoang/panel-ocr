@@ -1,0 +1,30 @@
+[package]
+name        = "pc-ocr"
+description = "panel-ocr OCR boundary (spec §9.2): the OcrEngine / OcrEngineFactory traits and their mocks."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[features]
+# `onnx` is NOT default, for the same reason it is not default in `pc-detect`: the
+# whole point of the trait (§1 rule 4) is that the preprocess stage and every test
+# below it run with mocks and no model files at all. Task P7 adds the real backend
+# behind this feature; spec §16.8 item 1.
+default = []
+onnx    = ["dep:ort"]
+# Exposes MockOcrEngine / MockOcrFactory to other crates' tests (§7.2 pattern).
+testkit = []
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+image   = { workspace = true }
+tracing = { workspace = true }
+ort     = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Self dev-dependency so integration tests (which link this crate as an external lib,
+# without `cfg(test)`) can see the `testkit`-gated mocks. Same trick as `pc-detect`.
+pc-ocr = { path = ".", features = ["testkit"] }

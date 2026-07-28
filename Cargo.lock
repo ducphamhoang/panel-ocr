@@ -387,6 +387,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-ocr"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "ort",
+ "pc-core",
+ "pc-ocr",
+ "tracing",
+]
+
+[[package]]
+name = "pc-preprocess"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "pc-config",
+ "pc-core",
+ "pc-ocr",
+ "pc-testkit",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "pc-testkit"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,31 @@
+[package]
+name        = "pc-preprocess"
+description = "panel-ocr STAGE 2: preprocessing (spec §9) -- filtering, overlap resolution, reading order, padding tiers, OCR discard."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+pc-core   = { path = "../pc-core" }
+# §16.5 item 1: every stage crate depends on pc-config -- the stage's config travels
+# by value inside its Input (§3).
+pc-config = { path = "../pc-config" }
+# §9.1: a dependency for the `OcrEngine`/`OcrEngineFactory` traits ONLY; the concrete
+# engine is injected as the stage's Ctx. No default features => no `ort` anywhere here.
+pc-ocr    = { path = "../pc-ocr" }
+image     = { workspace = true }
+serde     = { workspace = true }
+# §16.8 item 5: this stage compiles the blacklist itself, with `(?s)`.
+regex     = { workspace = true }
+tracing   = { workspace = true }
+
+[dev-dependencies]
+pc-testkit = { path = "../pc-testkit" }
+serde_json = { workspace = true }
+tempfile   = { workspace = true }
+# Feature-enabled re-declaration so the integration tests can see the testkit-gated
+# mocks (same pattern as `pc-detect`'s self dev-dependency).
+pc-ocr     = { path = "../pc-ocr", features = ["testkit"] }
