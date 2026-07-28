@@ -1772,6 +1772,197 @@ verify-then-decide process as §15/§16.6/§16.8. Each item is binding on Codex.
 
 ---
 
+## 16.10 Stage 4 (denoise) decisions, from joint architect + Rust Engineer review (2026-07-28)
+
+Resolved during test-drafting for `pc-denoise` (N1–N4), applying the same
+verify-then-decide process as §15/§16.6/§16.8/§16.9. Each item is binding on Codex.
+
+1. **Module ownership: `nlm` and `gaussian` live in `pc-denoise`, not `pc-imageops`.**
+   §11.1 and §11.5's N1/N2 rows place them in `pc-imageops`; that is superseded, for the
+   same reason §16.9 item 2 moved the growth kernels into `pc-mask`. `pc-imageops` was
+   frozen and committed at the end of Stage 3, and re-opening a frozen crate to bolt on
+   two Stage-4-only modules buys nothing: neither module is used by any other stage in
+   v1 (`grep` confirms no other §-section references `nlm` or a Gaussian blur). Both stay
+   `pub` (`pc_denoise::nlm`, `pc_denoise::gaussian`) and free of any `pc-config`
+   dependency, so §11.1's "independently benchmarkable" property is preserved and a v1.5
+   hoist into `pc-imageops` is a mechanical move plus a re-export. Considered and
+   rejected: adding them to `pc-imageops` now — it reopens frozen, reviewed code for a
+   purely notional sharing benefit.
+
+2. **`pc-denoise` gets its own `morph.rs` (`kernel` + `dilate`).** §11.3 step 4 says to use
+   "the **same** `kernel()` from `pc-imageops`", but per §16.9 item 2 `kernel`/`dilate`
+   actually live in `pc_mask::grow`, and §1 rule 2 forbids a stage crate depending on
+   another stage crate. Rule 2 outranks §11.3's wording. `pc_denoise::morph::{kernel,
+   dilate}` is a verbatim restatement of `pc_mask::grow::{kernel, dilate}` (itself a
+   restatement of OpenCV `getStructuringElement(MORPH_ELLIPSE)`), including §16.9 item 5
+   (`kernel(0)` is the single centre pixel → dilation is the identity) and §16.9 item 6
+   (stamp formulation, out-of-bounds writes dropped). A frozen test pins the full 11×11
+   cell matrix for `noise_outline_size = 5` so the two copies cannot drift silently.
+   v1.5 consolidation ticket: hoist the shared morphology into `pc_imageops::morph` and
+   have both stage crates re-export it.
+
+3. **`pc-denoise` likewise gets its own `composite.rs`.** Same rule-2 reason. `blend_channel`,
+   `alpha_composite_over`, `composite_rgb` and `resize_nearest_rgba` are pinned
+   **identically** to §16.9 items 13 and 15 (`out = round(base·(1−a) + colour·a)`,
+   source-over with `alpha_out = max(base_a, layer_a)`, nearest resampling as
+   `src = floor(dst · src_len / dst_len)`), so Stage 3's composite and Stage 4's agree
+   pixel-for-pixel — which §11.3 step 2 depends on, since it *reproduces* Stage 3's clean
+   output rather than reading `_clean.png`.
+
+4. **`DenoiseDests`' second field is `denoised`,** per §11.2. §4.3's diagram spells it
+   `clean_denoised`; that is a typo, read `denoised` there (same treatment as §16.6 item 2).
+   Both fields are `Option<PathBuf>`, `None` meaning "keep it in memory only" (§4.1
+   `Checkpointing::Memory`), exactly like `MaskDests`.
+
+5. **`DenoiseAnalytic.path = mask_data.original_path`.** §11.3 step 1's literal
+   (`DenoiseAnalytic { std_deviations: vec![], boxes_denoised: 0 }`) omits the `path`
+   field that `pc_core::DenoiseAnalytic` actually carries (§2.7). One `DenoiseAnalytic`
+   is produced per page (not per region), mirroring `OcrAnalytic`/`DetectAnalytic`.
+   `DenoiseOutput.analytics` is therefore a single value, not a `Vec` — as §11.2 already
+   writes it.
+
+6. **"1-bit mode" is read from the file header, by a direct magic-byte probe.** §11.3
+   step 1's "`image` reports `L1`/`Gray(1)`" is not expressible: the `image` crate has no
+   1-bit `DynamicImage` variant (a 1-bit PNG decodes to `Luma8` with values `0`/`255`),
+   **and** — verified against `image` 0.25.10 — its PNG decoder's
+   `ImageDecoder::original_color_type()` also reports `L8` for a 1 bpp file, so that API
+   cannot carry the signal either. Pinned instead as
+   `pc_denoise::is_one_bit(handle) -> Result<bool, StageError>`, a 26-byte header read:
+   * PNG (magic `\x89PNG\r\n\x1a\n`): `true` iff the `IHDR` bit depth is `1` **and**
+     the colour type is `0` (greyscale) — exactly PIL's mode `"1"`. Colour type `3`
+     (1 bpp palette) is PIL mode `"P"`, not `"1"`, so it is `false`.
+   * PBM (magic `P1` / `P4`): `true` — also PIL mode `"1"`.
+   * everything else, and any path-less (memory-only) handle: `false`. An in-memory
+     `DynamicImage` cannot represent 1 bpp, and no other v1 input format reaches this
+     stage as a bilevel image in practice.
+   An I/O failure here is a real `StageError::Io` (the file is about to be read anyway).
+   The frozen test builds a genuine 1 bpp PNG from a byte literal, because `image` cannot
+   *encode* one either.
+
+7. **1-bit shortcut copy semantics.** When `masked_image.path` and `dests.denoised` are
+   both `Some` **and differ**, the shortcut is a byte-level `std::fs::copy` (§11.7(A)7's
+   "byte-identical" is only meaningful on disk); otherwise the loaded `masked_image` is
+   written as PNG / kept in memory and the returned handle is pixel-identical to
+   `masked_image`. Either way the noise mask is a fully transparent RGBA image at the
+   **original image's** size, analytics are `{ path, std_deviations: vec![],
+   boxes_denoised: 0 }`, and `nlm::denoise` is called **zero** times.
+
+8. **`colored_images` has no effect on the v1 code path at all.** §11.3 step 2 builds the
+   canvas with `original.to_rgb8()`, so the NLM cutout is always 3-channel and always
+   goes through the joint-channel path (§15.7). Verified numerically harmless for
+   grayscale pages: with `r == g == b`, `d(p,q) = Σ_c Σ_o Δ² / (C·t²)` has both the sum
+   and the divisor scaled by `C`, so a `C = 3` replicated-gray image yields *exactly* the
+   same distances — and therefore the same weights and the same output — as the `C = 1`
+   image. This is what makes §11.7(B)12's grayscale OpenCV reference
+   (`fastNlMeansDenoising`, which is itself joint-channel over whatever channel count it
+   is handed) a valid parity target for our RGB path. `pc-config`'s one-time WARN
+   (§14.7) is still the user-facing notice; the stage itself never branches on the flag.
+
+9. **NLM arithmetic, pinned exactly** (§11.3's NLM spec, made unambiguous):
+   - `t = template_window / 2`, `s = search_window / 2` (integer division; both windows
+     are odd and `>= 3` by config validation, §6).
+   - Border: `reflect101(i, n)` = `0` when `n == 1`, else `m = i.rem_euclid(2n − 2)` then
+     `if m >= n { 2n − 2 − m } else { m }`. Applied when materialising a padded plane of
+     margin `s + t` per channel, once, before the main loop.
+   - `d(p,q) = ( Σ_{o∈template} Σ_{c<C} (I_c(p+o) − I_c(q+o))² ) / (C · template_window²)`,
+     `w = exp(−d / h²)`, no noise-variance subtraction (`σ²_est = 0`).
+   - Offsets are iterated in a fixed order (`dy` ascending, then `dx` ascending) so the
+     f32 accumulation order — and hence the result — is reproducible.
+   - Accumulators `acc_c` and `wtot` are `f32`; the self term (`dy = dx = 0`, `w = 1`) is
+     included, so `wtot > 0` always and there is no divide-by-zero branch.
+   - Output `= clamp(floor(acc_c / wtot + 0.5), 0, 255)` (round half away from zero;
+     the quotient is non-negative, so `+0.5` then `floor` is exactly that).
+   - Return type mirrors the input variant: `ImageLuma8` in → `ImageLuma8` out
+     (`C = 1`), anything else → `ImageRgb8` (`C = 3`).
+
+10. **NLM parallelisation is over output row bands with per-band scratch**, using
+    `rayon`'s `par_chunks_mut` over the output rows. Each band recomputes the squared-
+    difference summed-area table it needs (including a `t`-row halo) instead of sharing
+    one, so every output pixel is produced by exactly one thread from exactly one
+    arithmetic sequence — which is what makes §11.7(A)5's "bit-identical across 1 and 8
+    threads" a structural property rather than a hope. The summed-area table is §11.3's
+    mandatory "incremental distance update" in its simplest exact form: for each search
+    offset, one `f32` SAT over the band's squared-difference plane turns the per-pixel
+    template sum into four lookups, giving `O(W·H·s²)` instead of `O(W·H·s²·t²)`.
+
+11. **The NLM invocation counter is always on, not `cfg`-gated.** §11.7(A)7 requires an
+    "instrumented counter", and integration tests in `tests/` do not see the library's
+    `cfg(test)`. `nlm::denoise` increments a process-global `AtomicU64`
+    (`Ordering::Relaxed`), exposed as `nlm::denoise_call_count()` and
+    `nlm::reset_denoise_call_count()`. One relaxed increment per call is free next to the
+    filter itself. Tests that read it must not run concurrently with other NLM users;
+    the counter test asserts `== 0` after a reset, which is robust to that.
+
+12. **Gaussian blur, pinned** (§11.3 step 5, §14.6): `sigma = radius as f64`;
+    `radius == 0` is the identity (clone). Kernel half-width `k = ceil(3·sigma)`, taps
+    `exp(−j²/(2σ²))` for `j ∈ −k..=k`, normalised to sum 1 in `f64`. Separable: a
+    horizontal pass into an `f32` intermediate (no rounding), then a vertical pass, then
+    `clamp(floor(v + 0.5), 0, 255)`. Border handling is **replicate/clamp-to-edge**,
+    matching PIL's `GaussianBlur` (which extends the edge pixel), not the reflect-101
+    used inside NLM — the two are different upstream operators and the difference is
+    deliberate.
+
+13. **`scale_up` is recomputed from actual loaded sizes** (§11.3 step 2, reaffirming
+    §16.6 item 3 and §16.9 item 13): `scale_up = cleaned.width() as f64 / mask.width() as
+    f64`, and the mask is nearest-resized to `cleaned`'s **dimensions**, never to a size
+    derived from `mask_data.scale`. `mask_data.scale` is not read by this stage at all.
+    When the sizes already match, `scale_up == 1.0` exactly and no resize happens.
+
+14. **A degenerate region rect is a skip, not an error.** If `rect.scale(scale_up)`
+    produces a rect whose `to_crop(cleaned.dimensions())` is `None` (empty or fully
+    out-of-bounds — reachable from a hand-edited `#mask_data.json`, or from a rect that
+    scales to zero width), the region is skipped with a `WARN` and contributes **no**
+    layer and **no** increment to `boxes_denoised`. Mirrors §16.9 item 11; §5.6 keeps
+    sub-image conditions out of `StageError`.
+
+15. **`boxes_denoised` counts layers actually produced**, i.e. selected regions minus
+    item 14's skips. `std_deviations` is the σ of **all** `mask_data.regions` in region
+    order, including failed ones (§11.3 step 6) — the two numbers are deliberately not
+    the same length.
+
+16. **Region selection is `!r.failed && r.std_deviation > noise_min_standard_deviation`**,
+    strictly greater, order preserved (§11.3 step 3). Layers are composited source-over
+    in that same order, so a later region wins in an overlap — the same tie-break as
+    §16.9's `build_combined_mask`.
+
+17. **Output colour mode of `denoised`:** `ImageLuma8` iff the loaded original is
+    `L`/`LA` **and** every pixel of the final composite is achromatic (`r == g == b`),
+    else `ImageRgb8`. This mirrors §16.9 item 14's user-visible outcome without needing
+    Stage 3's fill colours, is an `O(W·H)` check that is free next to NLM, and is
+    deterministic. It is reliably `L` on a grayscale page: joint-channel NLM over a
+    replicated-gray cutout returns a replicated-gray cutout (item 8), and the mask
+    composite is the one Stage 3 already produced. `noise_mask` is **always** RGBA.
+
+18. **`denoising_enabled` is not consulted by this stage.** It is a pipeline-level skip
+    (`Step::Denoise` is simply not run) and an export-level input (§12.2's
+    `ExportInput.denoising_enabled`). A `run()` that silently no-oped on a config flag
+    would make the stage's own tests untrustworthy.
+
+19. **§11.6/§11.7(B)12's recorded NLM reference is the *whole* raw bubble image**, not an
+    unspecified sub-crop. Pinned so the F1 recording script and the frozen test cannot
+    disagree: input `tests/fixtures/upstream/demo_bubbles/<name>_bubble_raw.png` loaded as
+    `luma8` (`name ∈ {nightmare, ray}`), reference
+    `tests/fixtures/recorded/nlm/<name>_h10_t7_s21.png`, produced by
+    `cv2.fastNlMeansDenoising(img, h=10, templateWindowSize=7, searchWindowSize=21)`.
+    Thresholds come from `GoldenThresholds::nlm_parity()` (already defined in
+    `pc-testkit`). The test is `#[ignore]`d with an `unimplemented!("blocked on F1")`
+    body until F1 lands, following the `a6_pending_insta_snapshot_of_recorded_page`
+    precedent; §7.3 still requires F2 to run before it is unignored.
+
+20. **§11.7(B)13's end-to-end golden is likewise F1-blocked** and is a committed
+    reference **PNG** compared with `pc_testkit::metrics::ssim_gray` (≥ 0.99) plus
+    size/mode/alpha-histogram assertions — explicitly not an `insta` site (§15.10(c)).
+
+21. **Task split and kinds are unchanged from §11.5**, with N1's crate corrected to
+    `pc-denoise` per item 1: `{N2, N3, N4}` batch sequentially in one Codex call, `N1`
+    is isolated and heavy. Implemented ahead of Codex during this pass (fully pinned
+    arithmetic, no judgment left): `morph.rs`, `gaussian.rs`, `composite.rs`, `nlm.rs`,
+    and `noise_mask.rs`'s pure helpers (`select_regions`, `alpha_binary`, `fade_mask`,
+    `attach_alpha`). Left as `todo!()` for Codex (multi-step wiring): `noise_mask.rs`'s
+    `build_noise_mask` and `lib.rs`'s `run`.
+
+---
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

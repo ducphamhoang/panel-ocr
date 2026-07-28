@@ -1,0 +1,29 @@
+[package]
+name        = "pc-denoise"
+description = "panel-ocr STAGE 4: denoising (spec §11) -- joint-channel NLM, separable Gaussian, noise-mask build."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+pc-core     = { path = "../pc-core" }
+# §16.5 item 1: every stage crate depends on pc-config -- the stage's config travels
+# by value inside its Input (§3).
+pc-config   = { path = "../pc-config" }
+# `BinaryMask` (M1). NOTE (§16.10 items 1-3): `nlm`, `gaussian`, `morph` and
+# `composite` live in THIS crate, not in pc-imageops -- pc-imageops was frozen at the
+# end of Stage 3 and none of those modules is used by another stage in v1.
+pc-imageops = { path = "../pc-imageops" }
+image       = { workspace = true }
+# §11.3: NLM parallelises over output row bands (§16.10 item 10).
+rayon       = { workspace = true }
+serde       = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+pc-testkit = { path = "../pc-testkit" }
+serde_json = { workspace = true }
+tempfile   = { workspace = true }
