@@ -1,0 +1,23 @@
+[package]
+name        = "pc-config"
+description = "TOML profile + app config for panel-ocr: spec §6 defaults, validation, round-trip."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+pc-core   = { path = "../pc-core" }
+serde     = { workspace = true }
+# `serde` is NOT a default feature of toml_edit 0.22 -- we need it for
+# toml_edit::de / toml_edit::ser on top of the format-preserving DocumentMut.
+toml_edit = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+regex     = { workspace = true }   # §6: ocr_blacklist_pattern must compile
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
+tempfile           = { workspace = true }

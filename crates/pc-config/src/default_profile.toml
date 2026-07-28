@@ -1,0 +1,55 @@
+[general]
+preferred_file_type          = ""        # empty = keep original suffix
+preferred_mask_file_type     = ".png"
+input_height_lower_target    = 1000
+input_height_upper_target    = 4000
+split_long_strips            = true
+preferred_split_height       = 2000
+split_tolerance_margin       = 500
+long_strip_aspect_ratio      = 0.33
+merge_after_split            = true
+max_threads                  = 0         # 0 = all cores
+always_cache_masks           = false
+
+[text_detector]
+model_path                   = ""        # empty = use managed cache
+concurrent_models            = 1
+mask_refine_mode             = "simple"  # simple | annotation ("annotation" is rejected by pc-detect in v1: §8.3 step 5 / §15.2)
+
+[preprocessor]
+box_min_size                 = 400       # 20*20
+suspicious_box_min_size      = 40000     # 200*200
+box_overlap_threshold        = 20.0
+ocr_enabled                  = true
+ocr_language                 = "detect_box"   # detect_box | detect_page | jpn | eng
+reading_order                = "auto"         # auto | manga | comic
+ocr_max_size                 = 3000      # 30*100
+ocr_blacklist_pattern        = "[～．ー！？０-９~.!?0-9-]*"
+ocr_strict_language          = false
+box_padding_initial          = 2
+box_right_padding_initial    = 3
+box_padding_extended         = 5
+box_right_padding_extended   = 5
+box_reference_padding        = 20
+
+[masker]
+mask_growth_step_pixels      = 2
+mask_growth_steps            = 11
+min_mask_thickness           = 4
+allow_colored_masks          = true
+off_white_max_threshold      = 240
+mask_max_standard_deviation  = 15.0
+mask_improvement_threshold   = 0.1
+mask_selection_fast          = false
+debug_mask_color             = [108, 30, 240, 127]
+
+[denoiser]
+denoising_enabled            = true
+noise_min_standard_deviation = 0.25
+noise_outline_size           = 5
+noise_fade_radius            = 1
+colored_images                = false
+filter_strength               = 10
+color_filter_strength         = 10
+template_window_size          = 7
+search_window_size            = 21

@@ -1,0 +1,22 @@
+[package]
+name        = "pc-testkit"
+description = "Dev-only test helpers for panel-ocr: fixture paths, image metrics (SSIM/IoU/delta), golden compare."
+# NEVER shipped: this crate is a dev-dependency of every other crate (spec §1) and is
+# not part of the published artifact.
+publish     = false
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+# §7.2: recorded PageDataRaw / MaskData JSON carries ImageHandle paths relative to the
+# fixtures root, which pc-testkit rebases on load.
+pc-core    = { path = "../pc-core" }
+image      = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }

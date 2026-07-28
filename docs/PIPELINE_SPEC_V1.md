@@ -1383,6 +1383,64 @@ All 10 items below were reviewed and decided by Fable (Senior Rust Engineer advi
 
 ---
 
+## 16.5 C3/C4 decisions (config + testkit), from Rust Engineer review
+
+Resolved during test-drafting for `pc-config`/`pc-testkit`, applying the same
+verify-then-decide process as §15:
+
+1. **§1's dependency graph is corrected**: every stage crate (`pc-detect`, `pc-preprocess`,
+   `pc-mask`, `pc-denoise`, `pc-export`) depends on `pc-config`, since the per-stage config
+   structs (`GeneralConfig`, `TextDetectorConfig`, `PreprocessorConfig`, `MaskerConfig`,
+   `DenoiserConfig`) live in `pc-config` and are embedded by value in each stage's `Input`
+   (§4.3). The original graph omitted this edge.
+2. **The app-level `Config`** (§6 named it, specified nothing) is provisional: `default_profile:
+   Option<String>`, `saved_profiles: BTreeMap<String, PathBuf>` (sorted for determinism, §5.7),
+   `cache_dir: Option<PathBuf>`. Confirm or revise before treating its tests as frozen.
+3. **`mask_refine_mode = "annotation"` is accepted by config, rejected by `pc-detect`**
+   (`StageError::InvalidInput`) — config validation and stage validation are deliberately
+   separate layers here; matches §8.3 step 5 / §15.2.
+4. **Config defaults are frozen by value**, not by re-serialized text: §6's default TOML mixes
+   integer (`filter_strength = 10`) and float (`mask_max_standard_deviation = 15.0`) literals
+   for `f64` fields, so a round-tripped default won't be byte-identical to the spec block.
+   `DEFAULT_PROFILE_TOML` is `include_str!`-ed from one file so `profile new` and the defaults
+   test can never drift apart.
+5. **Four range rules are unrepresentable in their natural Rust types** (`off_white_max_threshold:
+   u8`, `min_mask_thickness`/`noise_outline_size`/`noise_fade_radius: u32` with a `>= 0` rule) —
+   out-of-range values fail at deserialization, not at a separate `validate()` call. Tests assert
+   the observable behavior ("load fails, error names the field") rather than a specific error
+   variant, so this is resolved without a types decision being forced now.
+6. **`preferred_mask_file_type` may not be empty** (unlike `preferred_file_type`, where empty
+   means "keep the original suffix" — there is no "original" mask file to default to). Suffix
+   matching is ASCII-case-insensitive; the leading dot is required (`"png"` is rejected, not
+   normalized).
+7. **SSIM estimator is pinned** (frozen by `pc-testkit` tests, needed wherever the spec says
+   "SSIM (8×8 windows)" — §10.7(B), §11.7(B)12/13, §12.7(A)2): **non-overlapping** 8×8 tiles
+   (not a sliding window), **uniform** window, **population** variance/covariance (÷N, not
+   ÷N−1), partial edge tiles included at their real size, global score is the **unweighted**
+   mean over tiles, `K1=0.01, K2=0.03, L=255`. This is the one item most worth a second look
+   before Codex implements `pc-testkit`, since the §11.7(B) gate numbers are only meaningful
+   relative to this exact definition — flag back if a different estimator (e.g. sliding-window,
+   unbiased variance) is actually intended.
+8. **Shape-metric dilation uses a Chebyshev (square) structuring element**, clamped to image
+   bounds, for `O ⊆ dilate(G, 2px)` in §10.7(B).
+9. **`IoU(empty, empty) = 1.0`** (perfect agreement — this case is reachable: an image neither
+   upstream nor we changed at all). One-empty-one-not is `0.0`.
+10. **RGBA metric functions include the alpha channel** in both mean and max (documented, not
+    incidental) — separate typed functions per colour model (`_gray`/`_rgb`/`_rgba`) rather than
+    one polymorphic entry point, so this choice is explicit at every call site.
+11. An unrecognized TOML **table** (not just an unrecognized key) is a `WARN` + preserved,
+    same treatment as an unknown key.
+12. The §15.7 "one-time" `colored_images=true` WARN is **once per process** (`std::sync::Once`),
+    isolated in its own integration-test binary so no other test's profile load can consume it
+    first; the structured `ConfigWarning` is still returned on every parse regardless.
+13. No validation rules were invented for fields §6 doesn't mention (`concurrent_models`,
+    `max_threads`, `input_height_lower/upper_target`, `preferred_split_height`,
+    `split_tolerance_margin`, `noise_min_standard_deviation`) even though some combinations are
+    reachable nonsense (e.g. `lower_target > upper_target`). Left unvalidated in v1; revisit if
+    it causes real problems.
+
+---
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:
