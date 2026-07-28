@@ -8,13 +8,16 @@
 //! four skip levels meet.
 
 use crate::cache::CachePaths;
+use crate::checkpoint;
 use crate::ctx::PipelineCtx;
 use crate::options::{Checkpointing, PipelineOptions};
-use crate::outcome::ImageOutcome;
-use pc_core::{Output, StageError};
-use pc_denoise::{DenoiseDests, DenoiseOutput};
-use pc_export::ExportSources;
-use pc_mask::{MaskDests, MaskOutput};
+use crate::outcome::{ImageAnalytics, ImageOutcome, SkipReason};
+use pc_core::{ImageHandle, Output, Stage, StageError, Step};
+use pc_denoise::{DenoiseDests, DenoiseInput, DenoiseOutput, DenoiseStage};
+use pc_detect::{DetectInput, DetectStage};
+use pc_export::{ExportInput, ExportSources, ExportStage};
+use pc_mask::{MaskDests, MaskInput, MaskOutput, MaskStage};
+use pc_preprocess::{PreprocessInput, PreprocessStage};
 use std::path::{Path, PathBuf};
 
 /// spec §4.3 / §8.2 — `(base_image_dest, raw_mask_dest)`. Both `None` in Memory mode.
@@ -121,6 +124,237 @@ pub fn process_image(
     options: &PipelineOptions,
     ctx: &PipelineCtx<'_>,
 ) -> ImageOutcome {
-    let _ = (original, options, ctx);
-    todo!("task G1-chain (spec §4.3): five-stage orchestration, checkpoints, skips")
+    let original_buf = original.to_path_buf();
+    let flags = options.skips.normalized();
+    if options.skips.implies_more() {
+        tracing::warn!("normalising skip flags so resumed stages have their predecessors");
+    }
+
+    let cache = match cache_paths_for(original, options) {
+        Ok(cache) => cache,
+        Err(error) => return failed(original_buf, options.start_step(), error),
+    };
+    if let Some(cache) = cache.as_ref() {
+        if let Err(source) = std::fs::create_dir_all(cache.cache_dir()) {
+            return failed(
+                original_buf,
+                options.start_step(),
+                StageError::Io {
+                    path: cache.cache_dir().to_path_buf(),
+                    source,
+                },
+            );
+        }
+    }
+    let source = ImageHandle::from_path(original);
+    let mut analytics = ImageAnalytics::default();
+
+    let raw = if flags.text_detection {
+        let Some(cache) = cache.as_ref() else {
+            return failed(
+                original_buf,
+                Step::Detect,
+                StageError::InvalidInput(
+                    "cannot resume text detection without disk checkpoints".into(),
+                ),
+            );
+        };
+        match checkpoint::read_page_raw(&cache.for_output(Output::RawJson)) {
+            Ok(page) => page,
+            Err(error) => return failed(original_buf, Step::Detect, error),
+        }
+    } else {
+        let detector = match ctx.detectors.detector_for(original) {
+            Ok(detector) => detector,
+            Err(error) => return failed(original_buf, Step::Detect, error),
+        };
+        let (base_image_dest, raw_mask_dest) = detect_dests(cache.as_ref());
+        let output = match DetectStage::run(
+            DetectInput {
+                schema_version: pc_core::SCHEMA_VERSION,
+                source: source.clone(),
+                original_path: original_buf.clone(),
+                target_height_lower: options.profile.general.input_height_lower_target,
+                target_height_upper: options.profile.general.input_height_upper_target,
+                base_image_dest,
+                raw_mask_dest,
+                min_mask_coverage: pc_detect::DEFAULT_MIN_MASK_COVERAGE,
+                config: options.profile.text_detector.clone(),
+            },
+            detector.as_ref(),
+        ) {
+            Ok(output) => output,
+            Err(error) => return failed(original_buf, Step::Detect, error),
+        };
+        if let Some(cache) = cache.as_ref() {
+            if let Err(error) =
+                checkpoint::write_page_raw(&output.page, &cache.for_output(Output::RawJson))
+            {
+                return failed(original_buf, Step::Detect, error);
+            }
+        }
+        analytics.detect = Some(output.analytics.clone());
+        output.page
+    };
+
+    let page = if flags.preprocess {
+        let Some(cache) = cache.as_ref() else {
+            return failed(
+                original_buf,
+                Step::Preprocess,
+                StageError::InvalidInput(
+                    "cannot resume preprocessing without disk checkpoints".into(),
+                ),
+            );
+        };
+        match checkpoint::read_page(&cache.for_output(Output::CleanJson)) {
+            Ok(page) => page,
+            Err(error) => return failed(original_buf, Step::Preprocess, error),
+        }
+    } else {
+        let output = match PreprocessStage::run(
+            PreprocessInput {
+                schema_version: pc_core::SCHEMA_VERSION,
+                page: raw,
+                config: options.profile.preprocessor.clone(),
+                performing_ocr: options.performing_ocr,
+            },
+            ctx.ocr,
+        ) {
+            Ok(output) => output,
+            Err(error) => return failed(original_buf, Step::Preprocess, error),
+        };
+        if let Some(cache) = cache.as_ref() {
+            if let Err(error) =
+                checkpoint::write_page(&output.page, &cache.for_output(Output::CleanJson))
+            {
+                return failed(original_buf, Step::Preprocess, error);
+            }
+        }
+        analytics.ocr = output.ocr_analytic.clone();
+        output.page
+    };
+    let no_text = page.text_boxes.is_empty();
+
+    let mask = if flags.mask {
+        let Some(cache) = cache.as_ref() else {
+            return failed(
+                original_buf,
+                Step::Mask,
+                StageError::InvalidInput("cannot resume masking without disk checkpoints".into()),
+            );
+        };
+        let mask_data = match checkpoint::read_mask_data(&cache.for_output(Output::MaskDataJson)) {
+            Ok(mask_data) => mask_data,
+            Err(error) => return failed(original_buf, Step::Mask, error),
+        };
+        cached_mask_output(cache, mask_data, options.extract_text)
+    } else {
+        let output = match MaskStage::run(
+            MaskInput {
+                schema_version: pc_core::SCHEMA_VERSION,
+                page,
+                original_image: source.clone(),
+                config: options.profile.masker.clone(),
+                extract_text: options.extract_text,
+                debug_outputs: options.debug_outputs_active(),
+                dests: mask_dests(
+                    cache.as_ref(),
+                    options.extract_text,
+                    options.debug_outputs_active(),
+                ),
+            },
+            (),
+        ) {
+            Ok(output) => output,
+            Err(error) => return failed(original_buf, Step::Mask, error),
+        };
+        if let Some(cache) = cache.as_ref() {
+            if let Err(error) = checkpoint::write_mask_data(
+                &output.mask_data,
+                &cache.for_output(Output::MaskDataJson),
+            ) {
+                return failed(original_buf, Step::Mask, error);
+            }
+        }
+        analytics.mask_fitting = output.analytics.clone();
+        output
+    };
+
+    let denoise = if options.denoising_enabled() {
+        match DenoiseStage::run(
+            DenoiseInput {
+                schema_version: pc_core::SCHEMA_VERSION,
+                mask_data: mask.mask_data.clone(),
+                original_image: source.clone(),
+                masked_image: mask.cleaned.clone(),
+                config: options.profile.denoiser.clone(),
+                dests: denoise_dests(cache.as_ref(), true),
+            },
+            (),
+        ) {
+            Ok(output) => {
+                analytics.denoise = Some(output.analytics.clone());
+                Some(output)
+            }
+            Err(error) => return failed(original_buf, Step::Denoise, error),
+        }
+    } else {
+        None
+    };
+
+    let files_written = match ExportStage::run(
+        ExportInput {
+            schema_version: pc_core::SCHEMA_VERSION,
+            original_path: original_buf.clone(),
+            export_path: original_buf.clone(),
+            output_dir: options.output_dir.clone(),
+            outputs: options.requested_outputs(),
+            sources: export_sources(Some(&mask), denoise.as_ref()),
+            preferred_file_type: options.profile.general.cleaned_suffix(),
+            preferred_mask_file_type: options.profile.general.preferred_mask_file_type.clone(),
+            denoising_enabled: options.denoising_enabled(),
+        },
+        (),
+    ) {
+        Ok(output) => output.files_written,
+        Err(error) => return failed(original_buf, Step::Export, error),
+    };
+
+    if no_text {
+        ImageOutcome::Skipped {
+            original: original_buf,
+            reason: SkipReason::NoTextDetected,
+            files_written,
+        }
+    } else {
+        ImageOutcome::Completed {
+            original: original_buf,
+            files_written,
+            analytics: Box::new(analytics),
+        }
+    }
+}
+
+fn failed(original: PathBuf, step: Step, error: StageError) -> ImageOutcome {
+    ImageOutcome::Failed {
+        original,
+        step,
+        error,
+    }
+}
+
+fn cached_mask_output(
+    cache: &CachePaths,
+    mask_data: pc_core::MaskData,
+    extract_text: bool,
+) -> MaskOutput {
+    let text_path = cache.for_output(Output::IsolatedText);
+    MaskOutput {
+        combined_mask: mask_data.combined_mask.clone(),
+        cleaned: ImageHandle::from_path(cache.for_output(Output::MaskedOutput)),
+        text_layer: (extract_text && text_path.exists()).then(|| ImageHandle::from_path(text_path)),
+        mask_data,
+        analytics: Vec::new(),
+    }
 }
