@@ -87,7 +87,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # §15.10(c): reject pending snapshots and any `.snap` outside the two
+      # §15.10(c): reject pending file snapshots (`*.snap.new`) and pending
+      # inline snapshots (`*.pending-snap`); insta uses two forms because file
+      # snapshots and inline snapshots persist pending output differently.
+      # Also reject any `.snap` outside the two
       # sanctioned paths below. Zero snapshots is intentionally valid while both
       # sanctioned snapshots remain blocked on F1; once F1 lands, presence of
       # exactly these two paths can be asserted here.
@@ -105,7 +108,7 @@ jobs:
         run: |
           if find . \
             \( -type d \( -name .git -o -name target -o -name vendor -o -name node_modules \) -prune \) \
-            -o -type f -name '*.snap.new' -print -quit | grep -q .; then
+            -o \( -type f \( -name '*.snap.new' -o -name '*.pending-snap' \) -print -quit \) | grep -q .; then
             echo "::error::pending .snap.new files present; snapshots are frozen tests (§15.10)"
             exit 1
           fi

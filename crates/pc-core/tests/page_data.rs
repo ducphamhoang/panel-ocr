@@ -109,24 +109,63 @@ fn all_rects_must_lie_within_image_size() {
     let mut p = valid_page_data();
     p.text_boxes[0].rect = Rect::new(0, 0, 101, 10);
     assert!(matches!(p.validate(), Err(StageError::InvalidInput(_))));
+    assert!(p
+        .validate()
+        .expect_err("a right-edge overflow must be rejected")
+        .to_string()
+        .contains("all page rects must lie within image_size"));
 
     // negative origin is not
     let mut p = valid_page_data();
     p.text_boxes[0].rect = Rect::new(-1, 0, 10, 10);
     assert!(matches!(p.validate(), Err(StageError::InvalidInput(_))));
+    assert!(p
+        .validate()
+        .expect_err("a negative origin must be rejected")
+        .to_string()
+        .contains("all page rects must lie within image_size"));
 
     // the check covers extended_boxes too, not only text_boxes
     let mut p = valid_page_data();
     p.extended_boxes[0] = Rect::new(0, 0, 10, 201);
     assert!(matches!(p.validate(), Err(StageError::InvalidInput(_))));
+    assert!(p
+        .validate()
+        .expect_err("an extended-box overflow must be rejected")
+        .to_string()
+        .contains("all page rects must lie within image_size"));
 
     // ...and both rects of every masking region
     let mut p = valid_page_data();
     p.masking_regions[0].masking = Rect::new(0, 0, 10, 201);
     assert!(matches!(p.validate(), Err(StageError::InvalidInput(_))));
+    assert!(p
+        .validate()
+        .expect_err("a masking-rect overflow must be rejected")
+        .to_string()
+        .contains("every masking region reference must contain its masking rect"));
     let mut p = valid_page_data();
     p.masking_regions[0].reference = Rect::new(0, 0, 10, 201);
     assert!(matches!(p.validate(), Err(StageError::InvalidInput(_))));
+    assert!(p
+        .validate()
+        .expect_err("a reference-rect overflow must be rejected")
+        .to_string()
+        .contains("every masking region reference must contain its masking rect"));
+
+    // The masking rect is contained by its reference, so invariant 3 is the
+    // first failing invariant even though both masking rects exceed image_size.
+    let mut p = valid_page_data();
+    p.masking_regions[0] = MaskingRegion {
+        masking: Rect::new(0, 0, 10, 201),
+        reference: Rect::new(0, 0, 10, 205),
+    };
+    assert!(matches!(p.validate(), Err(StageError::InvalidInput(_))));
+    assert!(p
+        .validate()
+        .expect_err("contained masking rects beyond image_size must be rejected")
+        .to_string()
+        .contains("all page rects must lie within image_size"));
 }
 
 #[test]
