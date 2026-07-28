@@ -8,7 +8,8 @@
 //! `todo!()` skeleton for task M4 -- its signature is frozen with the tests.
 #![allow(unused_variables)]
 
-use crate::border::{BlankMask, BorderStats};
+use crate::border::{border_std_deviation, BlankMask, BorderStats};
+use crate::grow::build_candidates;
 use pc_config::MaskerConfig;
 use pc_core::Rect;
 use pc_imageops::BinaryMask;
@@ -130,5 +131,70 @@ pub fn fit_region(
     reference: Rect,
     config: &MaskerConfig,
 ) -> Option<Fitment> {
-    todo!("task M4: spec §10.3 step 3")
+    let image_size = base.dimensions();
+    if reference.to_crop(image_size).is_none() || masking.to_crop(image_size).is_none() {
+        tracing::warn!(
+            ?masking,
+            ?reference,
+            ?image_size,
+            "skipping degenerate or out-of-canvas masking region"
+        );
+        return None;
+    }
+
+    let x_offset = masking.x1 - reference.x1;
+    let y_offset = masking.y1 - reference.y1;
+    let base_crop = base
+        .crop(reference)
+        .expect("reference was validated against the base canvas");
+    let crop_size = base_crop.dimensions();
+    let precise_cut = cut.crop_into(masking, crop_size, (x_offset, y_offset));
+    if precise_cut.is_blank() {
+        tracing::warn!(
+            ?masking,
+            ?reference,
+            "skipping masking region with a blank precise cut"
+        );
+        return None;
+    }
+
+    let box_candidate = box_mask.crop_into(masking, crop_size, (x_offset, y_offset));
+    let candidates = build_candidates(&precise_cut, box_candidate, config);
+    let selected = match select_candidate(
+        candidates.len(),
+        config.mask_selection_fast,
+        config.mask_improvement_threshold,
+        |index| {
+            border_std_deviation(
+                &base_crop,
+                &candidates[index].mask,
+                config.off_white_max_threshold,
+                config.allow_colored_masks,
+            )
+        },
+    ) {
+        Ok(selected) => selected,
+        Err(BlankMask) => {
+            tracing::warn!(
+                ?masking,
+                ?reference,
+                "skipping masking region with an edgeless candidate"
+            );
+            return None;
+        }
+    };
+
+    let chosen = &candidates[selected.index];
+    let mask =
+        (selected.std_deviation <= config.mask_max_standard_deviation).then(|| chosen.mask.clone());
+
+    Some(Fitment {
+        mask,
+        median_color: selected.median_color,
+        coords: (reference.x1, reference.y1),
+        std_deviation: selected.std_deviation,
+        candidate_index: selected.index,
+        thickness: chosen.thickness,
+        masking_rect: masking,
+    })
 }
