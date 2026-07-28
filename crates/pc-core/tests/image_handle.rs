@@ -23,9 +23,18 @@ fn write_png(dir: &Path, name: &str, img: &DynamicImage) -> PathBuf {
 // exist yet is a legal handle (the pipeline names destinations before writing them)
 fn from_path_records_path_without_decoding() {
     let h = ImageHandle::from_path("/definitely/does/not/exist.png");
-    assert_eq!(h.path.as_deref(), Some(Path::new("/definitely/does/not/exist.png")));
-    assert!(!h.is_materialized(), "a nonexistent path is not materialized");
-    assert!(h.load().is_err(), "loading a missing file must fail, not panic");
+    assert_eq!(
+        h.path.as_deref(),
+        Some(Path::new("/definitely/does/not/exist.png"))
+    );
+    assert!(
+        !h.is_materialized(),
+        "a nonexistent path is not materialized"
+    );
+    assert!(
+        h.load().is_err(),
+        "loading a missing file must fail, not panic"
+    );
 }
 
 #[test]
@@ -139,7 +148,9 @@ fn unmaterialized_handle_cannot_be_checkpointed() {
 // spec §2.3: a handle that names a path is checkpointable even before the file has
 // been written — checkpointing records intent, and the pipeline writes the bytes
 fn handle_with_a_path_is_checkpointable() {
-    assert!(ImageHandle::from_path("/tmp/planned.png").ensure_materialized().is_ok());
+    assert!(ImageHandle::from_path("/tmp/planned.png")
+        .ensure_materialized()
+        .is_ok());
     assert!(ImageHandle::with_both("/tmp/planned.png", rgb(1, 1))
         .ensure_materialized()
         .is_ok());

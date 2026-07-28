@@ -2,6 +2,7 @@
 
 use crate::error::StageError;
 use image::DynamicImage;
+use serde::ser::{Error as _, SerializeStruct};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,40 +19,73 @@ pub struct ImageHandle {
 /// path-less (in-memory-only) handle can never be written into a JSON checkpoint —
 /// see `ensure_materialized`'s doc comment for why this is enforced at two points.
 impl Serialize for ImageHandle {
-    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
-        todo!()
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let path = self
+            .path
+            .as_ref()
+            .ok_or_else(|| S::Error::custom("image handle is not materialized on disk"))?;
+        let mut state = serializer.serialize_struct("ImageHandle", 1)?;
+        state.serialize_field("path", path)?;
+        state.end()
     }
 }
 
 impl ImageHandle {
-    pub fn from_path(_p: impl Into<PathBuf>) -> Self {
-        todo!()
+    pub fn from_path(p: impl Into<PathBuf>) -> Self {
+        Self {
+            path: Some(p.into()),
+            cached: None,
+        }
     }
 
     /// `path: None` — an in-memory-only handle. Cannot be checkpointed (see
     /// `ensure_materialized`).
-    pub fn from_memory(_img: DynamicImage) -> Self {
-        todo!()
+    pub fn from_memory(img: DynamicImage) -> Self {
+        Self {
+            path: None,
+            cached: Some(Arc::new(img)),
+        }
     }
 
-    pub fn with_both(_p: impl Into<PathBuf>, _img: DynamicImage) -> Self {
-        todo!()
+    pub fn with_both(p: impl Into<PathBuf>, img: DynamicImage) -> Self {
+        Self {
+            path: Some(p.into()),
+            cached: Some(Arc::new(img)),
+        }
     }
 
     /// Cached image if present, else decode from `path`.
     /// `path: None` and no cache => `StageError::UnmaterializedHandle`.
     pub fn load(&self) -> Result<Arc<DynamicImage>, StageError> {
-        todo!()
+        if let Some(image) = &self.cached {
+            return Ok(Arc::clone(image));
+        }
+
+        let path = self.path.as_ref().ok_or(StageError::UnmaterializedHandle)?;
+        image::open(path)
+            .map(Arc::new)
+            .map_err(|source| StageError::Decode {
+                path: path.clone(),
+                source,
+            })
     }
 
     /// Decode-free size query: cache if present, else the image *header* only.
     pub fn dimensions(&self) -> Result<(u32, u32), StageError> {
-        todo!()
+        if let Some(image) = &self.cached {
+            return Ok((image.width(), image.height()));
+        }
+
+        let path = self.path.as_ref().ok_or(StageError::UnmaterializedHandle)?;
+        image::image_dimensions(path).map_err(|source| StageError::Decode {
+            path: path.clone(),
+            source,
+        })
     }
 
     /// True iff `path` is `Some` and that path exists on disk.
     pub fn is_materialized(&self) -> bool {
-        todo!()
+        self.path.as_ref().is_some_and(|path| path.exists())
     }
 
     /// spec §2.3 invariant, in callable form: `Ok(())` iff this handle can survive a
@@ -63,7 +97,10 @@ impl ImageHandle {
     /// `path.is_none()` — so no code path can silently smuggle a path-less handle
     /// into a JSON checkpoint, even one that forgets to call this method first.
     pub fn ensure_materialized(&self) -> Result<(), StageError> {
-        todo!()
+        self.path
+            .as_ref()
+            .map(|_| ())
+            .ok_or(StageError::UnmaterializedHandle)
     }
 }
 
@@ -74,4 +111,3 @@ impl PartialEq for ImageHandle {
         self.path == other.path
     }
 }
-

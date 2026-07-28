@@ -91,7 +91,7 @@ fn merge_is_bounding_union() {
     let b = Rect::new(20, 5, 30, 40);
     assert_eq!(a.merge(&b), Rect::new(0, 0, 30, 40));
     assert_eq!(b.merge(&a), Rect::new(0, 0, 30, 40)); // commutative
-    // a contained box changes nothing
+                                                      // a contained box changes nothing
     assert_eq!(a.merge(&Rect::new(2, 2, 4, 4)), a);
 }
 
@@ -105,7 +105,10 @@ fn overlaps_threshold_is_strictly_greater_at_the_boundary() {
     // => intersection 2_000; min area 10_000 => ratio exactly 0.20
     let a = Rect::new(0, 0, 100, 100);
     let b = Rect::new(80, 0, 180, 100);
-    assert!(!a.overlaps(&b, 20.0), "ratio 0.20 must not exceed threshold 20.0");
+    assert!(
+        !a.overlaps(&b, 20.0),
+        "ratio 0.20 must not exceed threshold 20.0"
+    );
     assert!(!b.overlaps(&a, 20.0), "must be symmetric");
     // nudge the threshold below the ratio: now strictly greater holds
     assert!(a.overlaps(&b, 19.99));
@@ -121,7 +124,7 @@ fn overlaps_threshold_is_strictly_greater_at_the_boundary() {
 fn overlaps_divides_by_the_smaller_area() {
     let big = Rect::new(0, 0, 1000, 1000); // area 1_000_000
     let small = Rect::new(0, 0, 10, 10); // area 100, fully inside
-    // intersection 100 / min area 100 = 1.0
+                                         // intersection 100 / min area 100 = 1.0
     assert!(big.overlaps(&small, 99.0));
     assert!(small.overlaps(&big, 99.0));
 }
@@ -162,7 +165,7 @@ fn overlaps_disjoint_boxes_never_overlap() {
 // self.contains(other.center()) — the OR makes it asymmetric-tolerant
 fn overlaps_center_is_a_disjunction() {
     let a = Rect::new(0, 0, 100, 100); // center (50,50)
-    // b contains a's center but a does not contain b's center
+                                       // b contains a's center but a does not contain b's center
     let b = Rect::new(40, 40, 400, 400); // center (220,220)
     assert!(b.contains(a.center()));
     assert!(!a.contains(b.center()));
@@ -186,7 +189,7 @@ fn overlaps_center_mutual_and_disjoint() {
 // landing exactly on the far edge counts
 fn overlaps_center_edge_hit_counts() {
     let a = Rect::new(0, 0, 10, 10); // center (5,5)
-    // b's x1,y1 == a's center: a's center is on b's inclusive boundary
+                                     // b's x1,y1 == a's center: a's center is on b's inclusive boundary
     let b = Rect::new(5, 5, 25, 25);
     assert!(a.overlaps_center(&b));
 }
@@ -302,13 +305,25 @@ fn translate_shifts_without_clamping() {
 // with x2/y2 treated as EXCLUSIVE (the cropping convention)
 fn to_crop_clamps_to_canvas() {
     // fully interior: w/h come straight from the exclusive coordinates
-    assert_eq!(Rect::new(10, 20, 30, 50).to_crop((100, 100)), Some((10, 20, 20, 30)));
+    assert_eq!(
+        Rect::new(10, 20, 30, 50).to_crop((100, 100)),
+        Some((10, 20, 20, 30))
+    );
     // negative origin clamps up to 0 and shrinks the extent
-    assert_eq!(Rect::new(-5, -5, 5, 5).to_crop((100, 100)), Some((0, 0, 5, 5)));
+    assert_eq!(
+        Rect::new(-5, -5, 5, 5).to_crop((100, 100)),
+        Some((0, 0, 5, 5))
+    );
     // far edge clamps down to the canvas
-    assert_eq!(Rect::new(90, 90, 110, 110).to_crop((100, 100)), Some((90, 90, 10, 10)));
+    assert_eq!(
+        Rect::new(90, 90, 110, 110).to_crop((100, 100)),
+        Some((90, 90, 10, 10))
+    );
     // exactly flush is a full-canvas crop, not an error
-    assert_eq!(Rect::new(0, 0, 100, 100).to_crop((100, 100)), Some((0, 0, 100, 100)));
+    assert_eq!(
+        Rect::new(0, 0, 100, 100).to_crop((100, 100)),
+        Some((0, 0, 100, 100))
+    );
 }
 
 #[test]

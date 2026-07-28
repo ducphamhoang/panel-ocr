@@ -43,7 +43,9 @@ fn valid_page_data() -> PageData {
 #[test]
 // spec §2.5: a well-formed PageData satisfies all three invariants
 fn valid_page_data_passes_validation() {
-    valid_page_data().validate().expect("baseline fixture must be valid");
+    valid_page_data()
+        .validate()
+        .expect("baseline fixture must be valid");
 }
 
 #[test]
@@ -100,7 +102,8 @@ fn all_rects_must_lie_within_image_size() {
         masking: Rect::new(0, 0, 100, 200),
         reference: Rect::new(0, 0, 100, 200),
     };
-    p.validate().expect("canvas-flush rects are within image_size");
+    p.validate()
+        .expect("canvas-flush rects are within image_size");
 
     // one pixel past the right edge is not
     let mut p = valid_page_data();
@@ -202,7 +205,8 @@ fn page_data_round_trips_and_stays_valid() {
     assert_eq!(back.extended_boxes, p.extended_boxes);
     assert_eq!(back.masking_regions, p.masking_regions);
     assert_eq!(back.page_language, Some(Language::Japanese));
-    back.validate().expect("a round-tripped checkpoint must still be valid");
+    back.validate()
+        .expect("a round-tripped checkpoint must still be valid");
 }
 
 #[test]
@@ -273,7 +277,11 @@ fn mask_data_round_trips_including_failures_and_null_thickness() {
     let back: MaskData = serde_json::from_str(&json).unwrap();
     assert_eq!(serde_json::to_string(&back).unwrap(), json);
     assert_eq!(back.regions, m.regions);
-    assert_eq!(back.regions.len(), 2, "failed regions stay in MaskData (§2.6)");
+    assert_eq!(
+        back.regions.len(),
+        2,
+        "failed regions stay in MaskData (§2.6)"
+    );
     assert!(back.regions[1].failed);
     assert_eq!(back.regions[1].thickness, None);
 }

@@ -32,7 +32,20 @@ impl PageDataRaw {
     /// Every block rect lies within `image_size` (canvas-flush is legal: x1>=0, y1>=0,
     /// x2<=width, y2<=height).
     pub fn validate(&self) -> Result<(), StageError> {
-        todo!()
+        let rect_within = |rect: Rect| {
+            rect.x1 >= 0
+                && rect.y1 >= 0
+                && i64::from(rect.x2) <= i64::from(self.image_size.0)
+                && i64::from(rect.y2) <= i64::from(self.image_size.1)
+        };
+
+        if self.blocks.iter().any(|block| !rect_within(block.rect)) {
+            return Err(StageError::InvalidInput(
+                "detected block rect lies outside image_size".into(),
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -73,8 +86,48 @@ impl PageData {
     ///   2. every `MaskingRegion.reference` contains its `masking` (`Rect::contains_rect`)
     ///   3. all rects (text_boxes, extended_boxes, and both rects of every
     ///      masking_region) lie within `image_size`, canvas-flush being legal
+    ///
     /// Returns `StageError::InvalidInput` naming the violated invariant.
     pub fn validate(&self) -> Result<(), StageError> {
-        todo!()
+        let rect_within = |rect: Rect| {
+            rect.x1 >= 0
+                && rect.y1 >= 0
+                && i64::from(rect.x2) <= i64::from(self.image_size.0)
+                && i64::from(rect.y2) <= i64::from(self.image_size.1)
+        };
+
+        if self.extended_boxes.len() != self.text_boxes.len() {
+            return Err(StageError::InvalidInput(
+                "extended_boxes.len() must equal text_boxes.len()".into(),
+            ));
+        }
+
+        if self
+            .masking_regions
+            .iter()
+            .any(|region| !region.reference.contains_rect(&region.masking))
+        {
+            return Err(StageError::InvalidInput(
+                "every masking region reference must contain its masking rect".into(),
+            ));
+        }
+
+        let text_boxes_within = self
+            .text_boxes
+            .iter()
+            .all(|text_box| rect_within(text_box.rect));
+        let extended_boxes_within = self.extended_boxes.iter().all(|rect| rect_within(*rect));
+        let masking_regions_within = self
+            .masking_regions
+            .iter()
+            .all(|region| rect_within(region.masking) && rect_within(region.reference));
+
+        if !text_boxes_within || !extended_boxes_within || !masking_regions_within {
+            return Err(StageError::InvalidInput(
+                "all page rects must lie within image_size".into(),
+            ));
+        }
+
+        Ok(())
     }
 }

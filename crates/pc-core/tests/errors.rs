@@ -17,7 +17,10 @@ fn error_display_strings() {
         StageError::UnsupportedFormat("jp2".into()).to_string(),
         "unsupported image format: jp2"
     );
-    assert_eq!(StageError::Model("missing".into()).to_string(), "model error: missing");
+    assert_eq!(
+        StageError::Model("missing".into()).to_string(),
+        "model error: missing"
+    );
     assert_eq!(
         StageError::Inference("panicked: boom".into()).to_string(),
         "inference failed: panicked: boom"

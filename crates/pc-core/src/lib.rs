@@ -24,7 +24,9 @@ pub mod output;
 pub mod page;
 pub mod stage;
 
-pub use analytics::{DenoiseAnalytic, DetectAnalytic, MaskFittingAnalytic, OcrAnalytic, RemovedBox};
+pub use analytics::{
+    DenoiseAnalytic, DetectAnalytic, MaskFittingAnalytic, OcrAnalytic, RemovedBox,
+};
 pub use error::StageError;
 pub use geometry::Rect;
 pub use image_handle::ImageHandle;

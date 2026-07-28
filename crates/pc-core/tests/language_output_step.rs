@@ -5,8 +5,14 @@ use pc_core::{Language, Output, Step, RTL_BOX_ORDER_LANGUAGES};
 #[test]
 // spec §2.2: Language serializes lowercase; "unknown" is modelled as Option::None
 fn language_json_is_lowercase_and_unknown_is_null() {
-    assert_eq!(serde_json::to_string(&Language::Japanese).unwrap(), r#""japanese""#);
-    assert_eq!(serde_json::to_string(&Language::English).unwrap(), r#""english""#);
+    assert_eq!(
+        serde_json::to_string(&Language::Japanese).unwrap(),
+        r#""japanese""#
+    );
+    assert_eq!(
+        serde_json::to_string(&Language::English).unwrap(),
+        r#""english""#
+    );
     let unknown: Option<Language> = None;
     assert_eq!(serde_json::to_string(&unknown).unwrap(), "null");
     let back: Option<Language> = serde_json::from_str("null").unwrap();
@@ -107,17 +113,35 @@ fn output_step_mapping() {
 // #[serde(rename_all = "snake_case")]).
 fn step_and_output_json_are_snake_case() {
     assert_eq!(serde_json::to_string(&Step::Detect).unwrap(), r#""detect""#);
-    assert_eq!(serde_json::to_string(&Step::Preprocess).unwrap(), r#""preprocess""#);
-    assert_eq!(serde_json::to_string(&Output::BaseImage).unwrap(), r#""base_image""#);
-    assert_eq!(serde_json::to_string(&Output::MaskDataJson).unwrap(), r#""mask_data_json""#);
-    assert_eq!(serde_json::to_string(&Output::DenoisedOutput).unwrap(), r#""denoised_output""#);
+    assert_eq!(
+        serde_json::to_string(&Step::Preprocess).unwrap(),
+        r#""preprocess""#
+    );
+    assert_eq!(
+        serde_json::to_string(&Output::BaseImage).unwrap(),
+        r#""base_image""#
+    );
+    assert_eq!(
+        serde_json::to_string(&Output::MaskDataJson).unwrap(),
+        r#""mask_data_json""#
+    );
+    assert_eq!(
+        serde_json::to_string(&Output::DenoisedOutput).unwrap(),
+        r#""denoised_output""#
+    );
 }
 
 #[test]
 // spec §2.8: every Step and Output round-trips through JSON regardless of the
 // chosen wire representation (representation-agnostic companion to the test above)
 fn step_and_output_round_trip() {
-    for s in [Step::Detect, Step::Preprocess, Step::Mask, Step::Denoise, Step::Export] {
+    for s in [
+        Step::Detect,
+        Step::Preprocess,
+        Step::Mask,
+        Step::Denoise,
+        Step::Export,
+    ] {
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(serde_json::from_str::<Step>(&json).unwrap(), s);
     }
