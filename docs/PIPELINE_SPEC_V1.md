@@ -1976,6 +1976,253 @@ verify-then-decide process as §15/§16.6/§16.8/§16.9. Each item is binding on
 
 ---
 
+## 16.11 Stage 5 (export) decisions, from joint architect + Rust Engineer review (2026-07-28)
+
+Resolved during test-drafting for `pc-export` (E1–E4), applying the same
+verify-then-decide process as §15/§16.5–§16.10. Each item is binding on Codex. Every
+capability claim about the `image` crate below was verified against the pinned
+`image` 0.25.10 source in the local registry, not from memory.
+
+1. **Stage 5's scope in this pass is E1–E4 only; E5 is `pc-pipeline` work.** §12.5 lists
+   E5 ("merged-strip export") in the stage-5 table, but §13 row 26 places it in
+   `pc-pipeline` batched with `D9`, depending on `G1`/`D8`/`E3`. §13 is authoritative
+   (§0: "§13 is what the TDD loop is driven from"). `pc-export` therefore knows nothing
+   about `splits.json`, stitching, or `export_path` re-pointing — it receives an already
+   re-pointed `export_path` (§12.2). §12.6's `long_strip.jpg` stitch fixture and
+   §12.7(B)11 belong to E5 and are **not** frozen here. §12.7(A)3's dpi gate *is* frozen
+   here, since it only reads `long_strip.jpg`'s header.
+   **PSD / layered export is confirmed out of scope for v1** (§12.3's out-of-scope
+   paragraph and §16's global list agree); no type, feature flag, or `todo!()` for it
+   appears in the crate.
+
+2. **`ExportInput.outputs: Vec<Output>` is interpreted through a three-valued
+   category map.** §12.2 types the field as `Vec<Output>` while §12.3 step 2 reasons in
+   terms of *categories* (`cleaned` / `mask` / `text`), and §2.8's `Output` has no
+   export-side variants at all (`Output::step()` is non-surjective, by design). Pinned
+   mapping (`discover::Category::of`):
+   * `MaskedOutput`, `DenoisedOutput` → `Category::Cleaned`
+   * `FinalMask`, `DenoiseMask` → `Category::Mask`
+   * `IsolatedText` → `Category::Text`
+   * every other variant → `None` (silently ignored; they are cache artifacts).
+   A category is *requested* iff `outputs` contains at least one variant mapping to it.
+   `outputs: []` requests nothing and yields `files_written: []` — that is a valid, non-
+   error outcome (§5.6), and the pipeline is expected to populate all three categories
+   for a default run. `--save-only-mask` is therefore `outputs = [FinalMask,
+   DenoiseMask]` (§12.7(A)6). Considered and rejected: adding export variants to
+   `pc_core::Output` — `pc-core` is frozen, and §2.8 explicitly documents the
+   non-surjectivity as intentional.
+
+3. **Precedence, pinned exactly** (`discover::resolve`, §12.3 step 2):
+   * `cleaned = if denoising_enabled { denoised.or(masked) } else { masked }`.
+     A populated `sources.denoised` with `denoising_enabled == false` is a stale cached
+     artifact and is ignored (§12.3 step 2's explicit requirement).
+   * `mask`: `WithDenoise { final_mask, denoise_mask }` iff `denoising_enabled` and both
+     are `Some`; else `FinalOnly(final_mask)` iff `final_mask` is `Some`; else `None`.
+     A `denoise_mask` **without** a `final_mask` yields `None` plus a `WARN`, not an
+     error: §12.3 step 4's denoise branch composites the noise mask *over* the resized
+     combined mask, so there is no defined output without the combined mask.
+   * `text = isolated_text` (independent of both).
+   * A category that is not requested (item 2) is forced to `None` **after** the above,
+     so precedence and narrowing cannot interact.
+   Exactly one cleaned file and at most one mask file are ever written (§12.7(A)5).
+
+4. **Destination resolution** (`destinations`, §12.3 step 1, §12.7(A)4):
+   * `base = if output_dir.is_absolute() { output_dir } else { export_path.parent()
+     .unwrap_or(Path::new("")) .join(output_dir) }`.
+   * `stem = export_path.file_stem()`; a missing stem is
+     `StageError::InvalidInput("export_path has no file stem")`.
+   * cleaned suffix = `preferred_file_type` normalised, when `Some` and non-empty;
+     otherwise `original_path.extension()` normalised. A missing extension on both is
+     `StageError::InvalidInput`.
+   * mask and text suffix = `preferred_mask_file_type`, normalised.
+   * Normalisation (`formats::normalize_suffix`) = ASCII-lowercase plus a leading `.` if
+     absent — matching `pc_config::validate::validate_output_suffix`'s normalisation.
+   * `mkdir -p base` happens in `run()`, once, before any file is written, and is an
+     `StageError::Io` on failure.
+   * Names are `{stem}_clean{suffix}`, `{stem}_mask{mask_suffix}`,
+     `{stem}_text{mask_suffix}` (upstream `OutputPathGenerator(export_mode=True)`).
+   * `files_written` is ordered **cleaned, mask, text** — the fixed category order, not
+     filesystem or hash order (§5.7 determinism).
+
+5. **Colour-mode handling** (`formats::ColorMode`, §12.3 step 3). "Convert to the
+   original image's colour mode" is pinned as a four-valued mode — `L`, `La`, `Rgb`,
+   `Rgba` — derived from the original's **decoder header** (`ImageReader::into_decoder()
+   .color_type()`), never by decoding the pixels: `original_path` may be an 8000 px
+   strip and only its mode is wanted. Mapping is by `ColorType::has_alpha()` and
+   `channel_count() <= 2`, so `image`'s `#[non_exhaustive]` `ColorType` needs no
+   catch-all guess; 16-bit and float variants collapse onto their 8-bit counterparts
+   (v1 writes 8-bit only). **DEVIATION:** upstream's `image.convert(original.mode)`
+   can re-palette a mode-`P` input; the `image` crate expands palettes at decode time
+   and has no palette encoder, so a palette PNG exports as `Rgb8`/`Rgba8`. Documented
+   at the call site as `// DEVIATION(§16.11 item 5)`.
+   The mode conversion applies to the **cleaned** output only. The mask and text
+   outputs are mask artifacts and stay `Rgba8` (subject to item 6's coercion).
+
+6. **Per-format colour coercion, from the encoders `image` 0.25.10 actually has**
+   (`formats::coerce_for_format`). Verified support:
+   | format | accepted | coercion applied |
+   |---|---|---|
+   | PNG | L8, La8, Rgb8, Rgba8 | none |
+   | JPEG | L8, Rgb8 | `flatten_onto_white` (La8→L8, Rgba8→Rgb8) |
+   | WebP | L8, La8, Rgb8, Rgba8 | none |
+   | TIFF | L8, Rgb8, Rgba8 | La8→Rgba8 |
+   | BMP | L8, La8, Rgb8, Rgba8 | none |
+   | PPM | Rgb8 only (P6) | `flatten_onto_white`, then →Rgb8 |
+   `flatten_onto_white(px) = round(c·a + 255·(1−a))` per channel, alpha dropped — the
+   same rounding form as §16.9 item 15's `blend_channel`, with the base fixed at 255.
+   This is also §12.3 step 5's "warn and flatten onto white" for a text export to a
+   non-alpha target: `run()` emits one `WARN` naming the suffix, then relies on this
+   same coercion (§12.7(A)8) — flattening is never an error.
+
+7. **Format options** (`formats::encode_to_vec`, §12.3 step 6), with three
+   `image`-imposed deviations, each carrying a `// DEVIATION(§16.11 item 7)` comment:
+   * PNG: `PngEncoder::new_with_quality(w, CompressionType::Best, FilterType::Adaptive)`.
+     `Best` is `image`'s max-compression setting; PNG has no interlace here (the crate
+     never interlaces). Lossless, so §12.7(A)1's pixel-identity gate holds.
+   * JPEG: `JpegEncoder::new_with_quality(w, 95)`. **DEVIATION:** baseline, not
+     progressive — `image`'s JPEG encoder has no progressive mode. Quality and chroma
+     handling are unaffected, so §12.7(A)2's Δ≤6 / SSIM≥0.99 gate is unchanged.
+   * WebP: `WebPEncoder::new_lossless`. **DEVIATION:** §12.3's "quality 95 for images"
+     is unreachable — `image`'s WebP encoder is lossless-only (it says so in its own
+     doc comment); v1 writes lossless WebP for both images and masks. Strictly
+     higher fidelity than specified.
+   * TIFF: `TiffEncoder`. **DEVIATION:** `image` exposes no compression selector, so
+     "LZW (or the original's compression)" is not expressible; v1 writes the crate's
+     default. Purely a file-size matter.
+   * BMP: `BmpEncoder`. PPM: `PnmEncoder::with_subtype(Pixmap(Binary))` — P6 binary,
+     pinned rather than left to the crate's "dynamic header" default, which may pick
+     PAM (P7) and is documented as arbitrary.
+   * `.jp2` never reaches this code: `pc-config` rejects it at load (§6,
+     `SUPPORTED_OUTPUT_SUFFIXES`). `OutputFormat::from_suffix` still rejects any unknown
+     suffix with `StageError::UnsupportedFormat`, whose message reuses
+     `pc_config::validate::supported_suffix_list()` so the two lists cannot drift
+     (§12.7(A)9).
+   * Encoding errors surface as `StageError::Io { path, source: io::Error::other(e) }`,
+     the same idiom `pc_denoise::write_png` uses. `encode_to_vec` itself returns
+     `image::ImageError` (it has no path to name); `save` adds the path.
+
+8. **DPI carry-over is read from the file header and written for JPEG only**
+   (§12.3 steps 3/6, §12.7(A)3). `image` 0.25.10 exposes pixel density on exactly one
+   encoder (`JpegEncoder::set_pixel_density`) and on **no** decoder, so:
+   * `formats::read_dpi(path)` parses the header itself: JPEG via the JFIF `APP0`
+     segment (`units == 1` → dpi verbatim; `units == 2` → `round(v · 2.54)`;
+     `units == 0` → `None`), PNG via the `pHYs` chunk (`unit == 1` → dpi =
+     `round(ppm · 0.0254)`; `unit == 0` → `None`). Scanning stops at `SOS` / `IDAT`.
+     Any other format, or an absent segment/chunk, is `None`. Reads at most the first
+     64 KiB; a short/truncated header is `None`, not an error.
+   * Writing: `OutputFormat::supports_dpi()` is `true` for `Jpeg` and `false` for every
+     other format — PNG `pHYs` insertion would mean hand-patching the encoder's byte
+     stream, which is not worth it for a metadata field §12.3 calls "when the target
+     format supports it". A density outside `1..=u16::MAX` is dropped.
+   * DPI applies to the **cleaned** output only, and is read from `original_path`.
+   §12.7(A)3 (`long_strip.jpg`'s 300×300 surviving a JPEG→JPEG export) is frozen and
+   passes against this implementation.
+
+9. **Mask export** (§12.3 step 4, §14.8/§15.8). Both branches resize the combined mask
+   to the **original image's size** with nearest-neighbour, pinned identically to
+   §16.9 item 13 / §16.10 item 3 as `src = floor(dst · src_len / dst_len)`; the denoise
+   branch then alpha-composites the noise mask (itself nearest-resized to the same size
+   if it differs) source-over, with `alpha_out = max(base_a, layer_a)`. Uniform
+   nearest is the §15.8 decision; the call site carries `// DEVIATION(8)`. The exported
+   mask is `Rgba8` before item 6's coercion, which is what makes §12.7(A)7's
+   "every exported pixel's colour occurs in the source mask" assertion exact.
+   "Original image's size" is `ExportInput.original_path`'s dimensions, read with
+   `image::image_dimensions` (header only) — the same reason as item 5.
+
+10. **`pc-export` restates nearest resampling and source-over in its own
+    `composite.rs`.** Same reasoning as §16.10 item 3: §1 rule 2 forbids depending on
+    `pc-mask`/`pc-denoise`, and `pc-imageops` (frozen at the end of Stage 3) owns
+    neither operation. `resize_nearest_rgba` and `alpha_composite_over` are pinned
+    byte-identically to `pc_denoise::composite`'s, so a mask exported at scale matches
+    the one the denoiser saw. Same v1.5 consolidation ticket.
+
+11. **The OCR report reads `OcrAnalytic.removed`, and returns a `String`**
+    (`ocr_report`, §12.3 step 7, §12.6, §15.5). `pc_core::OcrAnalytic` carries per-box
+    text only in `removed: Vec<RemovedBox>` — and that is correct rather than a gap:
+    §15.5 verified that upstream's `run_ocr` path forces `ocr_blacklist_pattern = ".*"`
+    and `ocr_max_size = 10**10` (`main.py:866-868`), so in the report code path *every*
+    box is "removed" and `removed` is the complete, ordered box list. Rows are emitted
+    in `analytics` order, then `removed` order. `filename` is
+    `analytic.path.file_name()` (lossy UTF-8), not the full path — the fixtures show
+    bare `img1.jpg` / `page1.jpg`.
+    The writers return `String` and never touch the filesystem: `--output FILE` is
+    `pc-cli`'s business, and §12.3 step 1's filesystem exception is scoped to *image*
+    destinations. `ReportFormat::{Csv, Txt}` + `render(format, &[OcrAnalytic])`.
+
+12. **Report formats, pinned to the fixtures** (§12.6, §12.7(B)10). Both end with a
+    single trailing `\n`; the vendored fixtures lack it, so the frozen tests compare
+    with `trim_end_matches('\n')` on both sides, exactly as §12.6 instructs.
+    * CSV: header `filename,startx,starty,endx,endy,text`; one row per box with
+      `rect.x1,rect.y1,rect.x2,rect.y2` (§2.1's exclusive `x2/y2`, unmodified — the
+      fixture's `100,100,300,200` is upstream's own `startx..endy` dump);
+      RFC 4180 **minimal** quoting, hand-written rather than via the `csv` crate: a
+      field is quoted iff it contains `,`, `"`, `\r` or `\n`, and an embedded `"` is
+      doubled. Line terminator is `\n` (the fixture is LF; the `csv` crate defaults to
+      CRLF, which is the concrete reason for hand-writing it).
+    * TXT: per file, `"{filename}: \n"` — note the space **before** the newline, which
+      the fixture has — then one line per box text, then a blank line before the next
+      file. No blank line after the last file.
+    * An empty `analytics` slice renders `""` for both formats (not a bare CSV header):
+      "no OCR was run" must not look like "OCR found nothing".
+
+13. **`ExportInput` carries `schema_version` and its `sources` may be memory-only.**
+    Per §2 every top-level persisted struct starts with `schema_version`; §12.2 already
+    shows it. Because `ExportSources` holds `ImageHandle`s, an `ExportInput` built in
+    `Checkpointing::Memory` mode is deliberately **not** serializable (§2.3's
+    `Serialize` guard), so determinism/equality tests over export inputs compare
+    structurally (`PartialEq`), never through JSON — the §16.7 rule. `ExportSources`,
+    `Destinations` and `ExportOutput` all derive `PartialEq` for that reason;
+    `ExportInput` does not (it contains no non-`PartialEq` field, but its handles make
+    equality path-only, so tests compare the fields they mean).
+
+14. **`run()` never errors on "nothing to do".** No requested categories, or every
+    source `None`, returns `ExportOutput { files_written: vec![] }` (§5.6 — export of a
+    page with no detected text is a normal outcome, and §5.6 already says such a page is
+    still exported when the cleaned artifact exists). Errors are reserved for: an
+    unresolvable destination (item 4), an unsupported suffix, a failed `mkdir -p`, a
+    source handle that cannot be loaded, and an encode/write failure.
+
+15. **Task split and kinds are unchanged from §12.5**, minus E5 (item 1):
+    `{E1, E2, E3}` in one sequential Codex call, `{E4}` in another. All four are
+    "simple" — there is no numerical algorithm here, only wiring and byte formats.
+    Implemented ahead of Codex during this pass (fully pinned, no judgment left):
+    `formats.rs` in full, `discover.rs` in full, `composite.rs` in full,
+    `ocr_report.rs` in full, and `lib.rs`'s `destinations`. Left as `todo!()` for Codex
+    (genuine multi-step wiring): `lib.rs`'s `export_cleaned`, `export_mask`,
+    `export_text` and `run`.
+
+16. **§12.7(A)2's `max delta <= 6` is corrected to `<= 10`, with `mean |delta| <= 1.5`
+    added; the `SSIM >= 0.99` half stands.** Measured, not guessed: encoding all 14
+    demo-bubble PNGs (7 `_raw`, 7 `_clean`) through this crate's q95 JPEG path and
+    comparing against the source gives max deltas of **7–10** and mean |Δ| of
+    0.22–1.00, with SSIM 0.9962–0.9993. §12.7(A)2's justification ("q95 on flat manga
+    art is near-lossless") mis-describes the fixtures: they are hard black-on-white
+    line art, whose step edges are the worst case for DCT ringing, and the peak delta
+    lands on exactly those edges. The bound still does the job it was written for —
+    the same measurement at q85 gives max **30** / mean 2.59 / SSIM 0.9844, and at q75
+    max 46 / mean 3.86 — so `max <= 10` **and** `mean <= 1.5` **and** `SSIM >= 0.99`
+    each separate q95 from a one-notch quality regression by a wide margin.
+    `pc-testkit` is frozen and committed, so `GoldenThresholds::jpeg_q95()` is **not**
+    edited; the frozen test spreads it and overrides the two fields
+    (`GoldenThresholds { max_delta: Some(10), max_mean_abs_diff: Some(1.5),
+    ..GoldenThresholds::jpeg_q95() }`) and asserts that the inherited `min_ssim` is
+    still `0.99`, so a future edit to the shared helper cannot silently weaken this
+    gate. Considered and rejected: raising the encoder's quality above 95 to fit the
+    number — the quality is upstream's (`save_optimized`) and the number is the thing
+    that was wrong.
+
+17. **Using `demo_bubbles/*_clean.png` as a *source image* is not a §15.2 parity
+    assertion.** §15.2 / `ATTRIBUTION.md` forbid pass/fail assertions **against**
+    upstream's `_clean.png` outputs, because their producing version and profile are
+    unverifiable. §12.6 nonetheless assigns `square_bubble_clean.png` to the E1/E3
+    codec gates, and that is legitimate and stays: those tests compare the file
+    against *our own re-encoding of that same file*, so the fixture is an arbitrary
+    piece of representative manga art and no claim about upstream's masking algorithm
+    is made. The rule remains in force for anything that compares our *pipeline
+    output* to a `_clean.png`.
+
+---
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

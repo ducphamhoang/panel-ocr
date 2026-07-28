@@ -1,0 +1,30 @@
+[package]
+name        = "pc-export"
+description = "panel-ocr STAGE 5: export (spec §12) -- format/quality options, artifact precedence, destination resolution, OCR reports."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+pc-core   = { path = "../pc-core" }
+# §16.5 item 1: every stage crate depends on pc-config. Here it is also the single
+# source of truth for the supported output-suffix list (§12.7(A)9): `from_suffix`'s
+# error message reuses `pc_config::validate::supported_suffix_list()` so the runtime
+# message and the config-validation message can never drift.
+pc-config = { path = "../pc-config" }
+image     = { workspace = true }
+serde     = { workspace = true }
+tracing   = { workspace = true }
+# NOTE (§16.11 item 10): no `pc-imageops` dependency. The only pixel math this stage
+# needs is nearest resampling + source-over, neither of which `pc-imageops` owns; per
+# §1 rule 2 (and the §16.10 item 3 precedent) they are restated in `composite.rs`.
+# NOTE: no `rayon` -- export is I/O bound and runs inside the pipeline's per-image
+# rayon task already (§4.5).
+
+[dev-dependencies]
+pc-testkit = { path = "../pc-testkit" }
+serde_json = { workspace = true }
+tempfile   = { workspace = true }
