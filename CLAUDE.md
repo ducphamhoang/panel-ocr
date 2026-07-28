@@ -73,4 +73,18 @@ unless the user explicitly overrides it for a given task.
 ## Notes
 
 - Specs are the source of truth; the plan and tests must trace back to them.
-- Do not commit or push without being asked, per standing repo conventions.
+- **Committing is pre-authorized once work is ready** — no need to ask first. "Ready"
+  means all of the following have been verified by actually running them, not assumed:
+  `cargo test --workspace` green, the `onnx` feature tier green
+  (`cargo test --workspace --all-targets --features pc-cli/onnx`),
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean,
+  `cargo fmt --all --check` clean, and any open review-gate finding either fixed or
+  explicitly recorded as a ratified decision (§16.x) rather than left silently open.
+  Commit along task/spec boundaries so each commit is reviewable on its own; state in
+  the message what was verified.
+- **Pushing still requires being asked**, per standing repo conventions.
+- One exception to pre-authorized committing: an `insta` snapshot may not be committed
+  until §15.10(a)'s hand-traced review is recorded in `docs/GOLDEN_CALIBRATION.md` with
+  reviewer/date/method. That review needs a human reviewer independent of whoever
+  produced the snapshot — the same self-reference rule as §16.13 item 4. Derive and
+  present the expected values; do not self-attest them.

@@ -35,7 +35,11 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      # Clippy never links, so skipping the ~100+ MB fetch is free; ort-sys's
+      # link_error cfg is harmless for this check-only pass.
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        env:
+          ORT_SKIP_DOWNLOAD: "1"
 
   test:
     name: test (${{ matrix.os }})
@@ -55,24 +59,77 @@ jobs:
       - name: doc tests
         run: cargo test --workspace --doc
 
+  test-onnx:
+    name: test (onnx, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # ort-sys stores downloaded native runtimes in the platform cache directory.
+          cache-directories: |
+            ~/.cache/ort.pyke.io
+            ~/Library/Caches/ort.pyke.io
+      # The onnx feature's tests were previously type-checked by all-features clippy but
+      # never executed. §7.2 line 551 forbids running models; this tier honours that because
+      # its tests are model-free, while the only weights-dependent smoke test self-skips
+      # unless PANEL_OCR_ONNX_MODEL and a loadable ONNX Runtime are both present.
+      - name: cargo test (onnx feature)
+        run: cargo test --workspace --all-targets --features pc-cli/onnx
+
   frozen-snapshot-guard:
     name: frozen snapshot guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # §15.10(c): only the two sanctioned snapshot sites may exist. Any additional
-      # `.snap` file, or any pending `.snap.new`, fails the build.
+      # §15.10(c): reject pending snapshots and any `.snap` outside the two
+      # sanctioned paths below. Zero snapshots is intentionally valid while both
+      # sanctioned snapshots remain blocked on F1; once F1 lands, presence of
+      # exactly these two paths can be asserted here.
+      #
+      # CAVEAT: the two allowed paths are UNVERIFIED. No `assert_json_snapshot!`
+      # invocation exists yet (both sites are `#[ignore]`d `unimplemented!()`
+      # placeholders, and `insta` is not yet a dependency of any crate), so the
+      # names below are derived from insta's default convention
+      # `<test-target>__<test-fn>.snap`, not read from real macro calls. If F1
+      # lands and this step fails on a legitimately-placed snapshot, the fix is to
+      # correct these paths to whatever insta actually emits -- NOT to relax the
+      # check. The failure direction is deliberate: a wrong path here blocks the
+      # build rather than letting an unsanctioned snapshot through.
       - name: reject pending snapshots
         run: |
-          if find . -name '*.snap.new' -print -quit | grep -q .; then
+          if find . \
+            \( -type d \( -name .git -o -name target -o -name vendor -o -name node_modules \) -prune \) \
+            -o -type f -name '*.snap.new' -print -quit | grep -q .; then
             echo "::error::pending .snap.new files present; snapshots are frozen tests (§15.10)"
             exit 1
           fi
       - name: enforce snapshot site allowlist
         run: |
-          count=$(find . -name '*.snap' | wc -l | tr -d ' ')
-          if [ "$count" -gt 2 ]; then
-            echo "::error::$count snapshot files found; §15.10 permits exactly 2 (§8.7(B)9, §9.7(B)11)"
-            find . -name '*.snap'
+          allowed_snapshots=(
+            'crates/pc-detect/tests/snapshots/d7_run__a6_pending_insta_snapshot_of_recorded_page.snap'
+            'crates/pc-preprocess/tests/snapshots/p5_run__b11_pending_insta_snapshot_of_recorded_page_tiers.snap'
+          )
+          offending_snapshots=()
+          while IFS= read -r snapshot; do
+            case "$snapshot" in
+              "${allowed_snapshots[0]}"|"${allowed_snapshots[1]}") ;;
+              *) offending_snapshots+=("$snapshot") ;;
+            esac
+          done < <(
+            find . \
+              \( -type d \( -name .git -o -name target -o -name vendor -o -name node_modules \) -prune \) \
+              -o -type f -name '*.snap' -printf '%P\n'
+          )
+          if ((${#offending_snapshots[@]} > 0)); then
+            echo "::error::unsanctioned .snap file(s) found; §15.10(c) permits only these two paths:"
+            printf '  %s\n' "${allowed_snapshots[@]}"
+            echo "::error::offending path(s):"
+            printf '  %s\n' "${offending_snapshots[@]}"
             exit 1
           fi
