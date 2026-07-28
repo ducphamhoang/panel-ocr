@@ -6,8 +6,15 @@
 
 use crate::ctx::PipelineCtx;
 use crate::options::PipelineOptions;
-use crate::outcome::{BatchSummary, ImageOutcome};
+use crate::outcome::{panic_message, BatchSummary, ImageOutcome};
+use pc_core::{StageError, Step};
+use rayon::prelude::*;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 /// spec §5.2 — one image, with panics contained.
 ///
@@ -24,8 +31,18 @@ pub fn process_image_isolated(
     options: &PipelineOptions,
     ctx: &PipelineCtx<'_>,
 ) -> ImageOutcome {
-    let _ = (original, options, ctx);
-    todo!("task G2 (spec §5.2): catch_unwind boundary around process_image")
+    match catch_unwind(AssertUnwindSafe(|| {
+        crate::single::process_image(original, options, ctx)
+    })) {
+        Ok(outcome) => outcome,
+        Err(payload) => ImageOutcome::Failed {
+            original: original.to_path_buf(),
+            // `process_image` does not expose its current stage to this boundary.  Detect
+            // is the contract's specified fallback when the stage is not knowable.
+            step: Step::Detect,
+            error: StageError::Inference(panic_message(payload.as_ref())),
+        },
+    }
 }
 
 /// spec §4.5/§5 — the whole batch.
@@ -46,6 +63,39 @@ pub fn run_batch(
     options: &PipelineOptions,
     ctx: &PipelineCtx<'_>,
 ) -> BatchSummary {
-    let _ = (images, options, ctx);
-    todo!("task G2 (spec §4.5, §5): rayon batch runner with per-image isolation")
+    // This lock makes the observation of a failure and the decision to start another
+    // image one atomic operation.  Work which has passed this gate is in flight and is
+    // deliberately allowed to finish.
+    let failed = Arc::new(AtomicBool::new(false));
+    let start_gate = Arc::new(Mutex::new(()));
+    let fail_fast = options.fail_fast;
+    let threads = options.threads.max(1);
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .expect("a positive rayon thread count must build a thread pool");
+    let outcomes = pool.install(|| {
+        images
+            .par_iter()
+            .filter_map(|original| {
+                if fail_fast {
+                    let _gate = start_gate.lock().expect("fail-fast gate poisoned");
+                    if failed.load(Ordering::Acquire) {
+                        return None;
+                    }
+                }
+
+                let outcome = process_image_isolated(original, options, ctx);
+                if fail_fast && outcome.is_failed() {
+                    // Synchronise with would-be starters before publishing the failure.
+                    let _gate = start_gate.lock().expect("fail-fast gate poisoned");
+                    failed.store(true, Ordering::Release);
+                }
+                Some(outcome)
+            })
+            .collect()
+    });
+
+    BatchSummary::new(outcomes)
 }
