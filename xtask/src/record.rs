@@ -4,6 +4,7 @@
 //! capable environment records what it can and reports exactly what it could not.
 
 use crate::env::{detector_backend_status, PythonTooling, NO_PYTHON_HELP};
+use crate::model_signature;
 use crate::paths;
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
@@ -17,8 +18,10 @@ pub enum Group {
     InterArea,
     /// §10.3 step 2 / §16.9 item 21 — PIL `FIND_EDGES` cross-check. Needs PIL.
     FindEdges,
-    /// §7.2/§7.2.1 — detector-boundary + whole-page recordings. Needs D1 + D4 + weights.
+    /// §7.2/§7.2.1 — detector-boundary + whole-page recordings. Needs ONNX, weights, and pages.
     Detector,
+    /// §16.16 — declared graph metadata from the sha256-verified ONNX artifact. Needs weights.
+    ModelSignature,
 }
 
 impl Group {
@@ -27,6 +30,7 @@ impl Group {
         Group::InterArea,
         Group::FindEdges,
         Group::Detector,
+        Group::ModelSignature,
     ];
 
     fn label(self) -> &'static str {
@@ -35,6 +39,7 @@ impl Group {
             Self::InterArea => "inter-area",
             Self::FindEdges => "find-edges",
             Self::Detector => "detector",
+            Self::ModelSignature => "model-signature",
         }
     }
 }
@@ -45,6 +50,7 @@ impl Group {
 pub enum Outcome {
     Recorded { detail: String },
     Skipped { reason: String },
+    Failed { reason: String },
 }
 
 /// §16.10 item 19: the two bubbles the NLM reference is recorded for.
@@ -54,42 +60,64 @@ pub const NLM_BUBBLES: &[&str] = &["nightmare", "ray"];
 pub const INTER_AREA_TARGET: (u32, u32) = (500, 4000);
 pub const INTER_AREA_REFERENCE: &str = "inter_area/long_strip_inter_area_500x4000.png";
 
-pub fn run(groups: &[Group], python: Option<&Path>, force: bool) -> Result<Vec<(Group, Outcome)>> {
-    let tooling = PythonTooling::discover(python)?;
-    match &tooling {
-        Some(found) => println!("python tooling: {}", found.describe()),
-        None => println!("python tooling: NOT FOUND"),
-    }
+pub fn run(
+    groups: &[Group],
+    python: Option<&Path>,
+    detector: Option<&str>,
+    model_signature_path: Option<&Path>,
+    force: bool,
+) -> Result<Vec<(Group, Outcome)>> {
+    let needs_python = groups
+        .iter()
+        .any(|group| matches!(group, Group::Nlm | Group::InterArea | Group::FindEdges));
+    let tooling = if needs_python {
+        let tooling = PythonTooling::discover(python)?;
+        match &tooling {
+            Some(found) => println!("python tooling: {}", found.describe()),
+            None => println!("python tooling: NOT FOUND"),
+        }
+        tooling
+    } else {
+        None
+    };
 
     let mut results = Vec::new();
     for &group in groups {
         println!("\n── {} ─────────────────────────────", group.label());
-        let outcome = match group {
+        let attempt = match group {
             Group::Nlm => match &tooling {
-                Some(tooling) => record_nlm(tooling, force)?,
-                None => Outcome::Skipped {
+                Some(tooling) => record_nlm(tooling, force),
+                None => Ok(Outcome::Skipped {
                     reason: NO_PYTHON_HELP.into(),
-                },
+                }),
             },
             Group::InterArea => match &tooling {
-                Some(tooling) => record_inter_area(tooling, force)?,
-                None => Outcome::Skipped {
+                Some(tooling) => record_inter_area(tooling, force),
+                None => Ok(Outcome::Skipped {
                     reason: NO_PYTHON_HELP.into(),
-                },
+                }),
             },
             Group::FindEdges => match &tooling {
-                Some(tooling) => verify_find_edges(tooling)?,
-                None => Outcome::Skipped {
+                Some(tooling) => verify_find_edges(tooling),
+                None => Ok(Outcome::Skipped {
                     reason: NO_PYTHON_HELP.into(),
-                },
+                }),
             },
-            Group::Detector => Outcome::Skipped {
-                reason: detector_backend_status().explain().into(),
+            Group::Detector => Ok(Outcome::Skipped {
+                reason: detector_backend_status(detector)?.explain(),
+            }),
+            Group::ModelSignature => model_signature::record(model_signature_path, force),
+        };
+        let outcome = match attempt {
+            Ok(outcome) => outcome,
+            Err(error) => Outcome::Failed {
+                reason: format!("{error:#}"),
             },
         };
         match &outcome {
             Outcome::Recorded { detail } => println!("recorded: {detail}"),
             Outcome::Skipped { reason } => println!("SKIPPED\n{reason}"),
+            Outcome::Failed { reason } => println!("FAILED\n{reason}"),
         }
         results.push((group, outcome));
     }

@@ -16,7 +16,9 @@ repository.workspace   = true
 # fixtures root, which pc-testkit rebases on load.
 pc-core    = { path = "../pc-core" }
 image      = { workspace = true }
+serde      = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }
+sha2 = { workspace = true }

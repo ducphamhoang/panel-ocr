@@ -10,6 +10,10 @@ rust-version.workspace = true
 authors.workspace      = true
 repository.workspace   = true
 
+[features]
+default = []
+onnx    = ["pc-detect/onnx"]
+
 [dependencies]
 # §16.13 item 3: xtask is the ONE place `pc-testkit` is a normal (non-dev) dependency.
 # It is maintainer tooling, not shipped code, so §1's "pc-testkit is a dev-dependency
@@ -20,8 +24,10 @@ pc-core    = { path = "../crates/pc-core" }
 pc-config  = { path = "../crates/pc-config" }
 pc-denoise = { path = "../crates/pc-denoise" }
 pc-detect  = { path = "../crates/pc-detect", features = ["testkit"] }
+pc-models  = { path = "../crates/pc-models" }
 
 anyhow     = { workspace = true }
 clap       = { workspace = true }
 image      = { workspace = true }
+serde      = { workspace = true }
 serde_json = { workspace = true }

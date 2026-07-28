@@ -3,3 +3,4 @@
 # `cargo xtask calibrate-goldens` invocations work from anywhere in the workspace.
 [alias]
 xtask = "run --package xtask --"
+xtask-onnx = "run --package xtask --features onnx --"

@@ -107,35 +107,82 @@ not be approximated in Rust (that would make the parity gates circular). To reco
 
 Until then the dependent tests stay `#[ignore]`d — that is the correct state, not a bug.";
 
-/// Where the detector-boundary recording stands (§7.2.1). Kept as a function rather
-/// than a constant so the reason is computed from the actual build, not from a comment.
-pub fn detector_backend_status() -> DetectorStatus {
-    // §8.5 tasks D1 (`pc-models`) and D4 (`pc-detect/src/onnx.rs`) are the two pieces
-    // that would let this binary run a real detector. Neither exists yet, so there is
-    // no code path that could produce `_detector_mask.png` / `_detector_blocks.json`
-    // even if weights were present. `cfg!(feature = ...)` cannot express "another
-    // crate's module is unimplemented", so this is stated explicitly.
-    DetectorStatus::BackendNotImplemented
+/// Where the detector-boundary recording stands (§7.2.1), computed from this build and
+/// the configured model path. An explicit `--detector` spec takes precedence over the
+/// `PANEL_OCR_ONNX_MODEL` fallback, just as other explicit xtask options do.
+pub fn detector_backend_status(configured_detector: Option<&str>) -> Result<DetectorStatus> {
+    let explicit_path = configured_detector.map(parse_detector_spec).transpose()?;
+    if !cfg!(feature = "onnx") {
+        return Ok(DetectorStatus::OnnxFeatureDisabled);
+    }
+    let (model_path, model_source) = match explicit_path {
+        Some(path) => (Some(path), Some("from the --detector onnx:<path> flag")),
+        None => match std::env::var_os("PANEL_OCR_ONNX_MODEL") {
+            Some(path) => (
+                Some(PathBuf::from(path)),
+                Some("from the PANEL_OCR_ONNX_MODEL environment variable"),
+            ),
+            None => (None, None),
+        },
+    };
+    if !model_path.as_deref().is_some_and(Path::is_file) {
+        return Ok(DetectorStatus::ModelWeightsMissing {
+            model_path,
+            model_source,
+        });
+    }
+    Ok(DetectorStatus::MangaPagesMissing)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) fn parse_detector_spec(spec: &str) -> Result<PathBuf> {
+    let Some(path) = spec.strip_prefix("onnx:") else {
+        bail!("invalid --detector value `{spec}`; expected the form `onnx:<path>`");
+    };
+    if path.is_empty() {
+        bail!("invalid --detector value `{spec}`; expected the form `onnx:<path>`");
+    }
+    Ok(PathBuf::from(path))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetectorStatus {
-    /// `pc-detect`'s ONNX backend (D4) and `pc-models` (D1) are not implemented.
-    BackendNotImplemented,
+    OnnxFeatureDisabled,
+    ModelWeightsMissing {
+        model_path: Option<PathBuf>,
+        model_source: Option<&'static str>,
+    },
+    MangaPagesMissing,
 }
 
 impl DetectorStatus {
-    pub fn explain(self) -> &'static str {
+    pub fn explain(self) -> String {
         match self {
-            Self::BackendNotImplemented => {
-                "\
-detector-boundary recording is UNAVAILABLE in this checkout.
-Reason: spec §8.5 task D4 (`crates/pc-detect/src/onnx.rs`, the `ort` session) and task D1
-(the `pc-models` crate that resolves/downloads/verifies `comictextdetector.pt.onnx`) are
-not implemented yet. Model weights alone would not be enough — there is no inference code
-to feed them to.
+            Self::OnnxFeatureDisabled => ONNX_FEATURE_DISABLED_EXPLANATION.into(),
+            Self::ModelWeightsMissing {
+                model_path: Some(path),
+                model_source: Some(source),
+            } => format!(
+                "the ONNX feature is enabled but the model weights are not present at {} ({}). \
+                 Point it at the sha256-verified comictextdetector.pt.onnx and retry.",
+                path.display(),
+                source
+            ),
+            Self::ModelWeightsMissing {
+                model_path: None,
+                model_source: None,
+            } => format!("{MODEL_WEIGHTS_MISSING_EXPLANATION}\nNo model path was supplied."),
+            Self::ModelWeightsMissing { .. } => MODEL_WEIGHTS_MISSING_EXPLANATION.into(),
+            Self::MangaPagesMissing => MANGA_PAGES_MISSING_EXPLANATION.into(),
+        }
+    }
+}
 
-Consequently NONE of these §7.2 artifacts can be produced yet:
+const ONNX_FEATURE_DISABLED_EXPLANATION: &str = concat!(
+    "detector-boundary recording is UNAVAILABLE because xtask was built without its ",
+    "opt-in ONNX feature. Rebuild with `cargo xtask-onnx` (or `cargo run --package ",
+    "xtask --features onnx -- ...`) and retry the detector recording command.\n\n",
+    "\
+These §7.2 artifacts cannot be produced yet:
   tests/fixtures/recorded/<stem>_detector_mask.png     (§7.2.1, raw RawDetection.mask)
   tests/fixtures/recorded/<stem>_detector_blocks.json  (§7.2.1, Vec<RawBlock>)
   tests/fixtures/recorded/<stem>_base.png              (§7.2)
@@ -146,11 +193,44 @@ and these tests must stay `#[ignore]`d:
   pc-detect     d7_run.rs::a6_pending_insta_snapshot_of_recorded_page      (§8.7(A)6)
   pc-detect     d7_run.rs::b9_pending_recorded_page_regression_lock        (§8.7(B)9)
   pc-preprocess p5_run.rs::b11_pending_insta_snapshot_of_recorded_page_tiers (§9.7(B)11)
-  pc-denoise    n4_run.rs::b13_pending_recorded_page_end_to_end_golden     (§11.7(B)13)
+  pc-denoise    n4_run.rs::b13_pending_recorded_page_end_to_end_golden     (§11.7(B)13)"
+);
 
-To finish F1 later: implement D1 + D4, then run on a machine with the weights
-  cargo xtask record-fixtures --only detector --detector onnx:<path-to-comictextdetector.pt.onnx>"
-            }
-        }
-    }
-}
+const MODEL_WEIGHTS_MISSING_EXPLANATION: &str = concat!(
+    "detector-boundary recording is UNAVAILABLE because the ONNX feature is enabled ",
+    "but the model weights are missing. Supply them with either the ",
+    "`--detector onnx:<path>` flag or the `PANEL_OCR_ONNX_MODEL` environment variable, ",
+    "then retry the detector recording command.\n\n",
+    "\
+These §7.2 artifacts cannot be produced yet:
+  tests/fixtures/recorded/<stem>_detector_mask.png     (§7.2.1, raw RawDetection.mask)
+  tests/fixtures/recorded/<stem>_detector_blocks.json  (§7.2.1, Vec<RawBlock>)
+  tests/fixtures/recorded/<stem>_base.png              (§7.2)
+  tests/fixtures/recorded/<stem>_raw_mask.png          (§7.2)
+  tests/fixtures/recorded/<stem>#raw.json              (§7.2, PageDataRaw)
+
+and these tests must stay `#[ignore]`d:
+  pc-detect     d7_run.rs::a6_pending_insta_snapshot_of_recorded_page      (§8.7(A)6)
+  pc-detect     d7_run.rs::b9_pending_recorded_page_regression_lock        (§8.7(B)9)
+  pc-preprocess p5_run.rs::b11_pending_insta_snapshot_of_recorded_page_tiers (§9.7(B)11)
+  pc-denoise    n4_run.rs::b13_pending_recorded_page_end_to_end_golden     (§11.7(B)13)"
+);
+
+const MANGA_PAGES_MISSING_EXPLANATION: &str = concat!(
+    "detector-boundary recording is UNAVAILABLE until the maintainer supplies ",
+    "license-clean full manga page(s) for §7.2, each no larger than 400 KB. Supply ",
+    "those pages, then retry the detector recording command.\n\n",
+    "\
+These §7.2 artifacts cannot be produced yet:
+  tests/fixtures/recorded/<stem>_detector_mask.png     (§7.2.1, raw RawDetection.mask)
+  tests/fixtures/recorded/<stem>_detector_blocks.json  (§7.2.1, Vec<RawBlock>)
+  tests/fixtures/recorded/<stem>_base.png              (§7.2)
+  tests/fixtures/recorded/<stem>_raw_mask.png          (§7.2)
+  tests/fixtures/recorded/<stem>#raw.json              (§7.2, PageDataRaw)
+
+and these tests must stay `#[ignore]`d:
+  pc-detect     d7_run.rs::a6_pending_insta_snapshot_of_recorded_page      (§8.7(A)6)
+  pc-detect     d7_run.rs::b9_pending_recorded_page_regression_lock        (§8.7(B)9)
+  pc-preprocess p5_run.rs::b11_pending_insta_snapshot_of_recorded_page_tiers (§9.7(B)11)
+  pc-denoise    n4_run.rs::b13_pending_recorded_page_end_to_end_golden     (§11.7(B)13)"
+);

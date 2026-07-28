@@ -11,10 +11,11 @@
 
 mod calibrate;
 mod env;
+mod model_signature;
 mod paths;
 mod record;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use record::{Group, Outcome};
 use std::path::PathBuf;
@@ -41,10 +42,12 @@ enum Command {
         /// Python interpreter that has `cv2`, `PIL` and `numpy` importable.
         #[arg(long)]
         python: Option<PathBuf>,
-        /// Detector backend for the `detector` group, e.g. `onnx:/path/comictextdetector.pt.onnx`.
-        /// Accepted but not yet usable: see the group's skip message (spec §8.5 D1/D4).
+        /// Model path used by the detector recording preflight, e.g. `onnx:/path/model.onnx`.
         #[arg(long, value_name = "SPEC")]
         detector: Option<String>,
+        /// Verified ONNX model path for the dependency-free `model-signature` group.
+        #[arg(long)]
+        model_signature: Option<PathBuf>,
         /// Re-record even when the output already exists.
         #[arg(long)]
         force: bool,
@@ -64,6 +67,7 @@ fn main() -> Result<()> {
             only,
             python,
             detector,
+            model_signature,
             force,
         } => {
             let groups = if only.is_empty() {
@@ -71,16 +75,26 @@ fn main() -> Result<()> {
             } else {
                 only
             };
-            if let Some(spec) = &detector {
-                // Explicitly acknowledged rather than silently ignored: a maintainer who
-                // supplies weights must be told why nothing happened with them.
-                println!(
-                    "note: --detector {spec} was supplied, but the backend it would drive does \
-                     not exist yet (spec §8.5 D1/D4). See the `detector` group below."
-                );
-            }
-            let results = record::run(&groups, python.as_deref(), force)?;
+            let detector_path = detector
+                .as_deref()
+                .map(env::parse_detector_spec)
+                .transpose()?;
+            let model_signature = model_signature.or(detector_path);
+            let results = record::run(
+                &groups,
+                python.as_deref(),
+                detector.as_deref(),
+                model_signature.as_deref(),
+                force,
+            )?;
             summarize(&results);
+            let failed = results
+                .iter()
+                .filter(|(_, outcome)| matches!(outcome, Outcome::Failed { .. }))
+                .count();
+            if failed > 0 {
+                bail!("{failed} group(s) failed during fixture recording");
+            }
             Ok(())
         }
         Command::CalibrateGoldens { out } => calibrate::run(out.as_deref()),
@@ -94,13 +108,20 @@ fn probe() -> Result<()> {
         None => println!("cv2 + PIL: MISSING\n{}", env::NO_PYTHON_HELP),
     }
     println!("\nONNX detector: UNAVAILABLE");
-    println!("{}", env::detector_backend_status().explain());
+    // `probe` has no detector CLI option; `None` deliberately means consult only
+    // PANEL_OCR_ONNX_MODEL when the ONNX feature is enabled.
+    println!("{}", env::detector_backend_status(None)?.explain());
+    println!(
+        "\nmodel-signature: {}",
+        model_signature::capability_status(None)
+    );
     Ok(())
 }
 
 fn summarize(results: &[(Group, Outcome)]) {
     println!("\n═══ summary ═══");
     let mut skipped = 0;
+    let mut failed = 0;
     for (group, outcome) in results {
         let (tag, detail) = match outcome {
             Outcome::Recorded { detail } => ("ok     ", detail.as_str()),
@@ -111,6 +132,10 @@ fn summarize(results: &[(Group, Outcome)]) {
                     "see above for the reason and the follow-up command",
                 )
             }
+            Outcome::Failed { reason } => {
+                failed += 1;
+                ("FAILED ", reason.as_str())
+            }
         };
         println!("{tag} {group:?}: {detail}");
     }
@@ -119,5 +144,8 @@ fn summarize(results: &[(Group, Outcome)]) {
             "\n{skipped} group(s) skipped. The tests that depend on them MUST stay `#[ignore]`d —\n\
              producing a stand-in fixture would defeat the purpose of a parity gate (§7.3)."
         );
+    }
+    if failed > 0 {
+        println!("\n{failed} group(s) failed. The recording run will exit non-zero.");
     }
 }
