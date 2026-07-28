@@ -184,7 +184,10 @@ pub fn export_cleaned(
     original_mode: ColorMode,
     dpi: Option<(u32, u32)>,
 ) -> Result<(), StageError> {
-    todo!("task E3: cleaned-image export (§12.3 step 3)")
+    let format = format_for_destination(dest)?;
+    let image = source.load()?;
+    let converted = formats::convert_to_mode(image.as_ref(), original_mode);
+    formats::save(&converted, dest, format, dpi)
 }
 
 /// spec §12.3 step 4 — the mask image (task **E3**).
@@ -201,7 +204,22 @@ pub fn export_mask(
     dest: &Path,
     original_size: (u32, u32),
 ) -> Result<(), StageError> {
-    todo!("task E3: mask export (§12.3 step 4)")
+    let format = format_for_destination(dest)?;
+    let mask = match choice {
+        MaskChoice::FinalOnly(final_mask) => {
+            resize_nearest_rgba(&final_mask.load()?.to_rgba8(), original_size)
+        }
+        MaskChoice::WithDenoise {
+            final_mask,
+            denoise_mask,
+        } => {
+            let mut combined = resize_nearest_rgba(&final_mask.load()?.to_rgba8(), original_size);
+            let noise = resize_nearest_rgba(&denoise_mask.load()?.to_rgba8(), original_size);
+            alpha_composite_over(&mut combined, &noise, (0, 0));
+            combined
+        }
+    };
+    formats::save(&image::DynamicImage::ImageRgba8(mask), dest, format, None)
 }
 
 /// spec §12.3 step 5 — the isolated text layer (task **E3**).
@@ -212,7 +230,13 @@ pub fn export_mask(
 /// (§12.7(A)8, §16.11 item 6). The text layer is written at its own size (it is
 /// already an original-resolution artifact); no resize, no dpi.
 pub fn export_text(source: &ImageHandle, dest: &Path) -> Result<(), StageError> {
-    todo!("task E3: text-layer export (§12.3 step 5)")
+    let format = format_for_destination(dest)?;
+    if !format.supports_alpha() {
+        let suffix = formats::suffix_of(dest).unwrap_or_default();
+        tracing::warn!(%suffix, "text export target does not support alpha; flattening onto white");
+    }
+    let image = source.load()?;
+    formats::save(image.as_ref(), dest, format, None)
 }
 
 /// spec §12.3, steps 1–8, in exactly that order (task **E3**).
@@ -231,5 +255,42 @@ pub fn export_text(source: &ImageHandle, dest: &Path) -> Result<(), StageError> 
 /// Errors are reserved for an unresolvable destination, an unsupported suffix, a failed
 /// `mkdir -p`, an unloadable source handle, and an encode/write failure.
 pub fn run(input: ExportInput) -> Result<ExportOutput, StageError> {
-    todo!("task E3: run() wiring (§12.3 steps 1-8)")
+    let dests = destinations(&input)?;
+    std::fs::create_dir_all(&dests.base).map_err(|source| StageError::Io {
+        path: dests.base.clone(),
+        source,
+    })?;
+
+    let selection = discover::resolve(&input.sources, &input.outputs, input.denoising_enabled);
+    let mut files_written = Vec::new();
+
+    if let Some(source) = selection.cleaned {
+        let original_mode = formats::read_color_mode(&input.original_path)?;
+        let dpi = formats::read_dpi_lossy(&input.original_path);
+        export_cleaned(&source, &dests.cleaned, original_mode, dpi)?;
+        files_written.push(dests.cleaned);
+    }
+    if let Some(choice) = selection.mask {
+        let original_size =
+            image::image_dimensions(&input.original_path).map_err(|source| StageError::Decode {
+                path: input.original_path.clone(),
+                source,
+            })?;
+        export_mask(&choice, &dests.mask, original_size)?;
+        files_written.push(dests.mask);
+    }
+    if let Some(source) = selection.text {
+        export_text(&source, &dests.text)?;
+        files_written.push(dests.text);
+    }
+
+    Ok(ExportOutput { files_written })
+}
+
+/// Resolve a destination suffix through the single format table used by all exports.
+fn format_for_destination(dest: &Path) -> Result<OutputFormat, StageError> {
+    let suffix = formats::suffix_of(dest).ok_or_else(|| {
+        formats::invalid_input(format!("destination `{}` has no suffix", dest.display()))
+    })?;
+    OutputFormat::from_suffix(&suffix)
 }
