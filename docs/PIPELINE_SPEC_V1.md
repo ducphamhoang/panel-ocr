@@ -1614,6 +1614,164 @@ verify-then-decide process as §15/§16.6. Each item is binding on Codex.
 
 ---
 
+## 16.9 Stage 3 (mask) decisions, from joint architect + Rust Engineer review (2026-07-28)
+
+Resolved during test-drafting for `pc-mask`/`pc-imageops` (M1–M6), applying the same
+verify-then-decide process as §15/§16.6/§16.8. Each item is binding on Codex.
+
+1. **Box-mask rasterisation is EXCLUSIVE on `x2`/`y2`.** §10.3 step 1 says "inclusive on
+   both ends, because upstream uses `ImageDraw.rectangle`". That is superseded by §16.6
+   item 5, which already settled the codebase-wide convention (and by
+   `pc_detect::mask::rasterize_union`, which shipped in Stage 1 using it). A masker that
+   rasterised inclusively would cover a different region than the `mask_coverage` filter
+   that produced the boxes, which is a worse inconsistency than a one-pixel upstream
+   difference on the right/bottom edge of an already heavily-padded extended box.
+   `pc_imageops::mask::rasterize_boxes` is the single implementation; `pc-detect`'s
+   `rasterize_union` stays where it is (frozen, gray-valued, different return type).
+
+2. **Module ownership.** §10.1's claim that kernels and composition live in `pc-imageops`
+   is superseded by §10.5/§13's crate column, which is the authority: `pc-imageops` gets
+   exactly one new module, `mask.rs` (`BinaryMask` + `rasterize_boxes`, task M1);
+   `grow.rs`, `border.rs`, `fit.rs`, `combine.rs` all live in `pc-mask` (M2–M5). Reason:
+   the kernels and the composition rules are *masking policy* (they depend on
+   `MaskerConfig` semantics), while `BinaryMask` is a general container. `pc-imageops`
+   keeps its "no `pc-config` dependency" property (see its `Cargo.toml` note).
+
+3. **`BinaryMask`'s API is pinned** (§10.2 lists names, not signatures):
+   `new/from_fn/dimensions/width/height/get/set/count_set/is_blank/bbox/and/or/
+   crop_into/to_gray/from_gray_threshold/as_bits`. `and`/`or` **panic** on a dimension
+   mismatch (a programming error, not a per-image condition). `bbox()` returns
+   `Option<Rect>` in the codebase-wide exclusive convention (a single set pixel at
+   `(2,3)` gives `Rect::new(2,3,3,4)`), `None` when blank.
+   `crop_into(rect, target, offset)` maps source pixel `(sx,sy)` to
+   `(offset.0 + sx - rect.x1, offset.1 + sy - rect.y1)`, clamping the *source* read via
+   `Rect::to_crop` and silently dropping destinations outside `target` — defined this way
+   so a partially out-of-canvas `rect` still lands correctly.
+
+4. **`from_gray_threshold` is strict `>`**, and `PIL_BINARY_THRESHOLD = 127` is a named
+   constant in `pc-imageops` (§10.3 step 0's PIL `L → 1` rule). §10.3 step 0's precise mask
+   is `BinaryMask::from_gray_threshold(&raw_mask.to_luma8(), PIL_BINARY_THRESHOLD)`.
+
+5. **`kernel(0)` is the single centre pixel**, i.e. the corner-zeroing of §10.3 step 6's
+   small-kernel branch applies only when `diameter >= 3`. For `diameter == 1` the four
+   "corners" *are* the centre, so zeroing them would produce an empty kernel and an
+   erasing "dilation" — §10.3 step 6 already states the intended behaviour ("dilation is
+   identity"); this item just names where the branch goes. Reachable via
+   `min_mask_thickness = 0`, which §6 validation permits.
+
+6. **Dilation is stamp-based**: `out(x + kx - r, y + ky - r) |= in(x, y)` for every set
+   kernel cell, i.e. the Minkowski sum, with out-of-bounds writes dropped (zero border).
+   Kernels are symmetric, so this equals the reflect-then-max formulation; stating it
+   fixes §10.7(A)2's "equals the kernel footprint translated to the centre" literally.
+
+7. **The border canvas is a typed two-variant enum**, `border::BaseCanvas::{Gray, Rgb}`,
+   built from the loaded `DynamicImage` (`L`/`LA` → `Gray`, everything else → `Rgb`).
+   The **grayscale path is taken when the canvas is `Gray` OR `!allow_colored_masks`**
+   (§10.3 step 5's "or a grayscale base"), and in the `Rgb + !allow_colored_masks` case
+   the conversion uses `pil_luma` (§10.3's ITU-R 601-2 integer-truncating coefficients),
+   never `image`'s `to_luma8`.
+
+8. **`BlankMask` is a marker error type** in `border.rs`;
+   `border_std_deviation(...) -> Result<BorderStats, BlankMask>` with
+   `BorderStats { std_deviation: f64, median_color: [u8;3] }`. `fit_region` maps
+   `Err(BlankMask)` from *any* candidate to `None` for the whole region (§10.3 step 8).
+
+9. **Candidate selection is factored as a pure policy function**,
+   `fit::select_candidate(count, fast, improvement_threshold, scorer) -> Result<Selected, BlankMask>`,
+   where `scorer: FnMut(usize) -> Result<BorderStats, BlankMask>`. This is what makes
+   §10.7(A)8 testable on canned deviations and §10.7(A)11's "evaluates exactly one
+   candidate" testable with an instrumented/panicking scorer, exactly as those items ask.
+   `count == 0` is a caller bug (`fit_region` always builds `>= 2` candidates) and panics.
+
+10. **The fast-mode break is evaluated after scoring candidate `i`**: `if fast && dev_i ==
+    0.0 { break }`. Equivalent to upstream's break-on-zero, and equivalent to testing
+    `best_dev == 0.0` post-accept (a `0.0` candidate is always accepted, since
+    `0.0 <= best*(1-t)` holds for every `best >= 0.0`).
+
+11. **A degenerate region rect is a skip, not an error.** If `reference.to_crop(image_size)`
+    or `masking.to_crop(image_size)` is `None` (empty or fully out-of-bounds — reachable
+    from a hand-edited `#clean.json`), `fit_region` returns `None` and logs `WARN`, the
+    same treatment as the blank-precise-mask case. Per §5.6 sub-image conditions are never
+    `StageError`s.
+
+12. **`Fitment.median_color` is populated even when `mask == None`** (the
+    `std_deviation > mask_max_standard_deviation` failure path). §10.3 step 10 only says
+    the mask is dropped; keeping the colour makes the failure analysable and is what
+    §10.7(A)16's frozen gate asserts on.
+
+13. **Cleaned/text-layer canvas source and size.** The canvas is `original_image` iff
+    `page.scale != 1.0`, else `base_image` (§10.3 step 4, upstream `masker.py:104`), and
+    the mask is resized to that canvas's **actual loaded dimensions**, never to a size
+    computed from `scale` (same robustness stance as §11.3 / §16.6 item 3). The text layer
+    uses the same source as the cleaned image, so a `scale == 1.0` run never has to load
+    the original file at all. Nearest-neighbour resampling is pinned as
+    `src = floor(dst * src_len / dst_len)` (so a 2× upscale of a binary mask is exactly
+    2×2 blocks, which is what §10.7(A)13 asserts).
+
+14. **The §15.3 output-mode rule is applied to the in-memory value, not only at write
+    time**: `MaskOutput.cleaned`'s handle carries a `DynamicImage::ImageLuma8` when the
+    rule says `L` and `ImageRgb8` otherwise, so memory mode and disk mode agree
+    pixel-for-pixel. "Base is grayscale" means the loaded canvas is `L`/`LA`.
+
+15. **`mask_overlay`'s blend is pinned**: with `a = debug_mask_color[3] as f64 / 255.0`,
+    `out = round(base * (1 - a) + color * a)` per channel, applied only where the combined
+    mask's alpha is 255, result `RGB` at base-image size. §10.3 step 4 said "recoloured and
+    composited" without pinning the arithmetic; this is standard source-over with a
+    constant alpha.
+
+16. **Determinism gate (§10.7(A)14) does not serialize `MaskData` in memory mode.** Same
+    reasoning as §16.7: `MaskData` holds `ImageHandle`s and `ImageHandle::Serialize`
+    deliberately rejects path-less handles, while per-thread destination paths would make
+    the JSON differ for reasons that are not the property under test. The frozen gate
+    therefore compares, across 20 sequential runs and across 1 vs 8 threads in memory mode:
+    the combined-mask **RGBA pixel buffer**, the cleaned-image pixel buffer, and
+    `MaskData.regions` (`Vec<MaskRegionStats>`, which already derives `PartialEq`) plus
+    `scale`/`original_path`. A separate disk-mode test writes to one shared destination set
+    twice and asserts the `#mask_data.json` bytes and `_combined_mask.png` bytes are
+    identical — the mode in which byte-identity is meaningful. `pc-core` is not touched.
+
+17. **§10.7(B)15's demo_bubbles calibration report is produced by `cargo xtask
+    calibrate-goldens` (F2), not by a `pc-mask` test.** Building a `PageData` from a
+    recorded `PageDataRaw` requires `pc-preprocess`, and §1 rule 2 forbids a stage crate
+    depending on another stage crate — including as a dev-dependency, which would make the
+    "no stage↔stage edge" rule unenforceable by inspection. §13's F2 row already assigns
+    this report to xtask. Consequently **`pc-mask` ships no test that reads any
+    `*_clean.png`**, which also satisfies §15.2/ATTRIBUTION.md's "no pass/fail assertion
+    against a calibration fixture".
+
+18. **§10.7(A)16 (the frozen `black_bubble` gate) is driven from the always-present
+    upstream `black_bubble_raw.png`**, not from a recorded fixture: a hand-specified
+    interior masking region (`Rect::new(60,100,140,240)`, verified to lie inside the
+    balloon: 11 200 px, mean luma 24.3, 989 light text px) with the precise mask derived by
+    thresholding that raw image at `> 127`. The gate only checks the *selected fill
+    colour* (`max channel <= 40`, off-white snap did not fire), which is independent of
+    where the precise mask came from — so it stays frozen and gating without depending on
+    `cargo xtask record-fixtures` having been run. Measured evidence that the target is
+    right: upstream's own `black_bubble_clean.png` fills those pixels with exactly `0`.
+
+19. **`run()` bookkeeping.** `page.validate()` is called at entry and its failure mapped to
+    `StageError::InvalidInput` (mirrors §16.8 item 8). An empty page (no masking regions) is
+    a success with a fully transparent `combined_mask`, a `cleaned` equal to the canvas, and
+    empty `regions`/`analytics` (mirrors §16.8 item 9). `MaskData.schema_version =
+    MaskInput.schema_version`; `original_path`/`base_image`/`scale` are passed through from
+    `page`. `MaskFittingAnalytic` entries are 1:1 with `MaskData.regions`, in region order,
+    with `path = page.original_path` and `fit_found = fitment.mask.is_some()`.
+
+20. **Rayon is deferred.** §10.5's parallelism note is explicitly gated on "only after the
+    sequential version passes", so v1's `pc-mask` fits regions sequentially and takes no
+    `rayon` dependency. Revisit with a benchmark, not with a guess.
+
+21. **§10.7(A)4's "a 3×3 fully-set mask has all 9 pixels as edges" is corrected to 8.**
+    The parenthetical justification ("all on the 1-px image border") does not hold for the
+    centre pixel of a 3×3 image: PIL leaves the outermost ring unfiltered (8 pixels,
+    copied through as 255 → truthy → edges) and *does* filter the centre, whose FIND_EDGES
+    response is `255*8 − 8*255 = 0`. §10.3 step 2's own formula
+    (`on the border || any 8-neighbour is 0`) already yields 8; only the acceptance
+    criterion's count was wrong, and the frozen test asserts 8 with this reasoning
+    recorded at the call site. Verified by hand, not by fitting the test to the code.
+
+---
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

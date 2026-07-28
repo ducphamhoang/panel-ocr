@@ -1,0 +1,27 @@
+[package]
+name        = "pc-mask"
+description = "panel-ocr STAGE 3: masking (spec §10) -- growth kernels, border statistics, mask fitting, composition."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+pc-core     = { path = "../pc-core" }
+# §16.5 item 1: every stage crate depends on pc-config -- the stage's config travels
+# by value inside its Input (§3).
+pc-config   = { path = "../pc-config" }
+# M1's BinaryMask + box-mask rasterisation (§16.9 item 2).
+pc-imageops = { path = "../pc-imageops" }
+image       = { workspace = true }
+serde       = { workspace = true }
+tracing     = { workspace = true }
+# NOTE (§16.9 item 20): no `rayon`. §10.5's per-region parallelism is explicitly gated
+# on "only after the sequential version passes", so v1 fits regions sequentially.
+
+[dev-dependencies]
+pc-testkit = { path = "../pc-testkit" }
+serde_json = { workspace = true }
+tempfile   = { workspace = true }

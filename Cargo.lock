@@ -387,6 +387,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-mask"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "pc-config",
+ "pc-core",
+ "pc-imageops",
+ "pc-testkit",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "pc-ocr"
 version = "0.1.0"
 dependencies = [
