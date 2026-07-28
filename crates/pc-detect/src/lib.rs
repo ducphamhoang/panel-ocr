@@ -9,6 +9,7 @@
 
 pub mod detector;
 pub mod mask;
+pub mod onnx;
 pub mod resize;
 pub mod yolo;
 
