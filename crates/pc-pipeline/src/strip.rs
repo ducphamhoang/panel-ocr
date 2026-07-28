@@ -11,8 +11,8 @@
 use crate::cache::CachePaths;
 use crate::options::PipelineOptions;
 use pc_config::GeneralConfig;
-use pc_core::StageError;
-use pc_export::{ExportOutput, ExportSources};
+use pc_core::{ImageHandle, Output, StageError};
+use pc_export::{ExportInput, ExportOutput, ExportSources};
 use pc_imageops::SplitParams;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -136,6 +136,159 @@ pub fn merged_strip_export(
     segment_sources: &[ExportSources],
     options: &PipelineOptions,
 ) -> Result<ExportOutput, StageError> {
-    let _ = (manifest, segment_sources, options);
-    todo!("tasks D9/E5 (spec §12.5, §13 row 26): stitch segment outputs and export once")
+    if manifest.segments.len() != segment_sources.len() {
+        return Err(StageError::InvalidInput(format!(
+            "split manifest has {} segments but {} export-source sets were supplied",
+            manifest.segments.len(),
+            segment_sources.len()
+        )));
+    }
+
+    if !options.profile.general.merge_after_split {
+        let mut files_written = Vec::new();
+        for (segment, sources) in manifest.segments.iter().zip(segment_sources) {
+            let output = pc_export::run(ExportInput {
+                schema_version: pc_core::SCHEMA_VERSION,
+                original_path: segment.clone(),
+                export_path: segment.clone(),
+                output_dir: options.output_dir.clone(),
+                outputs: options.requested_outputs(),
+                sources: sources.clone(),
+                preferred_file_type: Some(options.profile.general.preferred_file_type.clone()),
+                preferred_mask_file_type: options.profile.general.preferred_mask_file_type.clone(),
+                denoising_enabled: options.denoising_enabled(),
+            })?;
+            files_written.extend(output.files_written);
+        }
+        return Ok(ExportOutput { files_written });
+    }
+
+    let first_segment = manifest.segments.first().ok_or_else(|| {
+        StageError::InvalidInput("cannot merge a split manifest with no segments".into())
+    })?;
+    let cache_dir = first_segment.parent().ok_or_else(|| {
+        StageError::InvalidInput(format!(
+            "segment path `{}` has no parent directory",
+            first_segment.display()
+        ))
+    })?;
+    let cache = CachePaths::from_existing(first_segment, cache_dir)?;
+    let requested = options.requested_outputs();
+
+    let sources = ExportSources {
+        masked: stitch_requested(
+            &requested,
+            &[Output::MaskedOutput, Output::DenoisedOutput],
+            segment_sources
+                .iter()
+                .map(|sources| sources.masked.as_ref()),
+            cache.for_output(Output::MaskedOutput),
+            manifest.image_size,
+            "cleaned",
+        )?,
+        denoised: stitch_requested(
+            &requested,
+            &[Output::MaskedOutput, Output::DenoisedOutput],
+            segment_sources
+                .iter()
+                .map(|sources| sources.denoised.as_ref()),
+            cache.for_output(Output::DenoisedOutput),
+            manifest.image_size,
+            "cleaned",
+        )?,
+        final_mask: stitch_requested(
+            &requested,
+            &[Output::FinalMask, Output::DenoiseMask],
+            segment_sources
+                .iter()
+                .map(|sources| sources.final_mask.as_ref()),
+            cache.for_output(Output::FinalMask),
+            manifest.image_size,
+            "mask",
+        )?,
+        denoise_mask: stitch_requested(
+            &requested,
+            &[Output::FinalMask, Output::DenoiseMask],
+            segment_sources
+                .iter()
+                .map(|sources| sources.denoise_mask.as_ref()),
+            cache.for_output(Output::DenoiseMask),
+            manifest.image_size,
+            "mask",
+        )?,
+        isolated_text: stitch_requested(
+            &requested,
+            &[Output::IsolatedText],
+            segment_sources
+                .iter()
+                .map(|sources| sources.isolated_text.as_ref()),
+            cache.for_output(Output::IsolatedText),
+            manifest.image_size,
+            "text",
+        )?,
+    };
+
+    pc_export::run(ExportInput {
+        schema_version: pc_core::SCHEMA_VERSION,
+        original_path: manifest.original.clone(),
+        export_path: manifest.original.clone(),
+        output_dir: options.output_dir.clone(),
+        outputs: requested,
+        sources,
+        preferred_file_type: Some(options.profile.general.preferred_file_type.clone()),
+        preferred_mask_file_type: options.profile.general.preferred_mask_file_type.clone(),
+        denoising_enabled: options.denoising_enabled(),
+    })
+}
+
+/// Stitch one availability candidate when its export category was requested. A partial
+/// category is deliberately discarded: exporting only some strip segments would produce
+/// a misleading, truncated image.
+fn stitch_requested<'a>(
+    requested: &[Output],
+    category_outputs: &[Output],
+    handles: impl Iterator<Item = Option<&'a ImageHandle>>,
+    destination: PathBuf,
+    expected_size: (u32, u32),
+    category: &str,
+) -> Result<Option<ImageHandle>, StageError> {
+    if !requested
+        .iter()
+        .any(|output| category_outputs.contains(output))
+    {
+        return Ok(None);
+    }
+
+    let handles: Option<Vec<&ImageHandle>> = handles.collect();
+    let Some(handles) = handles else {
+        tracing::warn!(%category, "not every split segment supplied this export category; dropping it");
+        return Ok(None);
+    };
+
+    let segments = handles
+        .iter()
+        .map(|handle| handle.load().map(|image| image.to_rgba8()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let stitched = pc_imageops::stitch_images(&segments)?;
+    if stitched.dimensions() != expected_size {
+        return Err(StageError::InvalidInput(format!(
+            "stitched {category} image has dimensions {:?}, expected {:?}",
+            stitched.dimensions(),
+            expected_size
+        )));
+    }
+
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| StageError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    stitched
+        .save_with_format(&destination, image::ImageFormat::Png)
+        .map_err(|error| StageError::Io {
+            path: destination.clone(),
+            source: std::io::Error::other(error),
+        })?;
+    Ok(Some(ImageHandle::from_path(destination)))
 }
