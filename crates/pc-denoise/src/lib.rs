@@ -175,7 +175,94 @@ pub fn is_one_bit(handle: &ImageHandle) -> Result<bool, StageError> {
 /// §16.10 item 18: `config.denoising_enabled` is **not** consulted here — skipping the
 /// step is `pc-pipeline`'s job.
 pub fn run(input: DenoiseInput) -> Result<DenoiseOutput, StageError> {
-    todo!("task N4: run() wiring, 1-bit shortcut, blank-noise-mask path, analytics (spec §11.3)")
+    let DenoiseInput {
+        mask_data,
+        original_image,
+        masked_image,
+        config,
+        dests,
+        ..
+    } = input;
+
+    if is_one_bit(&original_image)? {
+        let original_size = original_image.dimensions()?;
+        let masked = masked_image.load()?.as_ref().clone();
+        let noise_mask = noise_mask::blank_noise_mask(original_size);
+
+        if let Some(path) = &dests.denoised {
+            match masked_image.path.as_ref() {
+                Some(source) if source != path => {
+                    std::fs::copy(source, path).map_err(|source| StageError::Io {
+                        path: path.clone(),
+                        source,
+                    })?;
+                }
+                _ => write_png(&masked, path)?,
+            }
+        }
+        let noise_image = DynamicImage::ImageRgba8(noise_mask.clone());
+        if let Some(path) = &dests.noise_mask {
+            write_png(&noise_image, path)?;
+        }
+
+        return Ok(DenoiseOutput {
+            denoised: image_handle(&dests.denoised, masked),
+            noise_mask: image_handle(&dests.noise_mask, noise_image),
+            analytics: DenoiseAnalytic {
+                path: mask_data.original_path,
+                std_deviations: Vec::new(),
+                boxes_denoised: 0,
+            },
+        });
+    }
+
+    let original = original_image.load()?;
+    let original_is_gray = matches!(
+        original.as_ref(),
+        DynamicImage::ImageLuma8(_) | DynamicImage::ImageLumaA8(_)
+    );
+    let mut cleaned = original.to_rgb8();
+    let raw_mask = mask_data.combined_mask.load()?.to_rgba8();
+    let scale_up = if raw_mask.dimensions() == cleaned.dimensions() {
+        1.0
+    } else {
+        f64::from(cleaned.width()) / f64::from(raw_mask.width())
+    };
+    let mask = composite::resize_nearest_rgba(&raw_mask, cleaned.dimensions());
+    cleaned = composite::composite_rgb(&cleaned, &mask);
+
+    let selected =
+        noise_mask::select_regions(&mask_data.regions, config.noise_min_standard_deviation);
+    let (noise_mask, boxes_denoised) =
+        noise_mask::build_noise_mask(&cleaned, &mask, &selected, scale_up, &config);
+    let denoised_rgb = composite::composite_rgb(&cleaned, &noise_mask);
+    let denoised = if original_is_gray && is_achromatic_image(&denoised_rgb) {
+        DynamicImage::ImageRgb8(denoised_rgb).to_luma8().into()
+    } else {
+        DynamicImage::ImageRgb8(denoised_rgb)
+    };
+    let noise_image = DynamicImage::ImageRgba8(noise_mask);
+
+    if let Some(path) = &dests.denoised {
+        write_png(&denoised, path)?;
+    }
+    if let Some(path) = &dests.noise_mask {
+        write_png(&noise_image, path)?;
+    }
+
+    Ok(DenoiseOutput {
+        denoised: image_handle(&dests.denoised, denoised),
+        noise_mask: image_handle(&dests.noise_mask, noise_image),
+        analytics: DenoiseAnalytic {
+            path: mask_data.original_path,
+            std_deviations: mask_data
+                .regions
+                .iter()
+                .map(|region| region.std_deviation)
+                .collect(),
+            boxes_denoised,
+        },
+    })
 }
 
 /// `ImageHandle::with_both` when a destination exists, `from_memory` otherwise — the

@@ -1961,6 +1961,19 @@ verify-then-decide process as §15/§16.6/§16.8/§16.9. Each item is binding on
     `attach_alpha`). Left as `todo!()` for Codex (multi-step wiring): `noise_mask.rs`'s
     `build_noise_mask` and `lib.rs`'s `run`.
 
+22. **Frozen-test correction (2026-07-28, joint architect + Rust Engineer).** During N4
+    implementation Codex found that `n4_run.rs`'s
+    `item13_the_upscale_factor_comes_from_the_actual_sizes_not_from_mask_data_scale`
+    built its single region with `std_deviation = 0.1` while asserting
+    `boxes_denoised == 1` under `DenoiserConfig::default()`. That is self-contradictory:
+    item 16 / §11.3 step 3's strictly-greater cutoff at `noise_min_standard_deviation =
+    0.25` excludes σ = 0.1, so the region can never be selected. The selection logic and
+    the spec are both correct; the σ was an incidental authoring slip in a test whose
+    subject is item 13's `scale_up` recompute, not the cutoff (which is separately locked
+    by `a10_zero_qualifying_regions_...` and §11.7(A)6/10). Authorized change, and the
+    only one: that call site's σ becomes `0.5`, comfortably above the cutoff and not
+    boundary-adjacent. No assertion, no other test, and no implementation file changed.
+
 ---
 
 ## 16. Summary of what v1 is NOT

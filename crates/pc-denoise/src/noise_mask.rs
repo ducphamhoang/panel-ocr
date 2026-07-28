@@ -121,7 +121,49 @@ pub fn build_noise_mask(
     scale_up: f64,
     config: &DenoiserConfig,
 ) -> (RgbaImage, usize) {
-    todo!("task N3: per-region crop/grow/fade/denoise/composite loop (spec §11.3 steps 4-5)")
+    let mut noise_mask = blank_noise_mask(cleaned.dimensions());
+    let mut boxes_denoised = 0;
+    // Dilation reaches `noise_outline_size` pixels beyond the original mask and the
+    // Gaussian has non-zero support through `3 * noise_fade_radius`.  The working
+    // window must include that halo: otherwise the crop edge clips the alpha fade and
+    // leaves NLM with only the already-filled (often uniform) region to process.
+    let reach = config
+        .noise_outline_size
+        .saturating_add(config.noise_fade_radius.saturating_mul(3))
+        .min(i32::MAX as u32) as i32;
+
+    for region in selected {
+        // Validate the scaled rect itself before padding it: a degenerate original
+        // rect remains a skipped region, rather than becoming a valid padded window.
+        let Some((scaled, _)) = region_crop(region.rect, scale_up, cleaned.dimensions()) else {
+            tracing::warn!(rect = ?region.rect, scale_up, "skipping denoise region with no usable crop");
+            continue;
+        };
+        let crop = scaled
+            .pad(reach, cleaned.dimensions())
+            .to_crop(cleaned.dimensions())
+            .expect("padding a usable in-canvas rect produces a usable crop");
+
+        let image_cutout = crop_rgb(cleaned, crop);
+        let mask_cutout = crop_rgba(mask, crop);
+        let alpha = fade_mask(
+            &alpha_binary(&mask_cutout),
+            config.noise_outline_size,
+            config.noise_fade_radius,
+        );
+        let denoised = crate::nlm::denoise(
+            &image::DynamicImage::ImageRgb8(image_cutout),
+            nlm_params(config),
+        )
+        .to_rgb8();
+        let layer = attach_alpha(&denoised, &alpha);
+
+        // `crop` is the clamped placement origin for partially out-of-canvas regions.
+        composite::alpha_composite_over(&mut noise_mask, &layer, (crop.0 as i32, crop.1 as i32));
+        boxes_denoised += 1;
+    }
+
+    (noise_mask, boxes_denoised)
 }
 
 /// Crop helper shared by the per-region loop and the tests: the `(x, y, w, h)` window

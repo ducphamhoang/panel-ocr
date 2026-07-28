@@ -268,7 +268,10 @@ fn item13_the_upscale_factor_comes_from_the_actual_sizes_not_from_mask_data_scal
     let mut input = memory_input(
         original.clone(),
         mask.clone(),
-        vec![region(half_region, 0.1, false)],
+        // resolved 2026-07-28 (§16.10 item 22): σ must exceed
+        // `noise_min_standard_deviation` (0.25, `DenoiserConfig::default`) or the region
+        // is never selected at all, regardless of the scale recompute under test.
+        vec![region(half_region, 0.5, false)],
         DenoiserConfig {
             template_window_size: 3,
             search_window_size: 5,
