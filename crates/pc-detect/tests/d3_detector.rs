@@ -214,4 +214,10 @@ fn class_index_is_not_recoverable_from_language() {
     let language_of = |_block: &RawBlock| -> Option<Language> { None };
     assert_eq!(language_of(&unknown), language_of(&out_of_range));
     assert_ne!(unknown.class_index, out_of_range.class_index);
+    assert_eq!(pc_detect::yolo::class_to_language(2), None);
+    assert_eq!(pc_detect::yolo::class_to_language(7), None);
+    assert_eq!(
+        pc_detect::yolo::class_to_language(2),
+        pc_detect::yolo::class_to_language(7)
+    );
 }

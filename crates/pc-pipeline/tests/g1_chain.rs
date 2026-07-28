@@ -217,6 +217,13 @@ fn resuming_without_a_cache_entry_fails_the_image() {
     let outcome = pc_pipeline::process_image(&page, &options, &PipelineCtx::new(&provider));
 
     assert!(outcome.is_failed(), "expected Failed, got {outcome:?}");
+    assert!(matches!(
+        outcome,
+        ImageOutcome::Failed {
+            step: Step::Mask,
+            ..
+        }
+    ));
 }
 
 /// §5.7: identical inputs produce identical outputs — same outcome shape, same exported

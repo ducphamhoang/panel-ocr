@@ -10,6 +10,7 @@ use image::{GrayImage, Luma};
 use pc_config::{MaskRefineMode, TextDetectorConfig};
 use pc_core::{Language, Rect, Stage, StageError};
 use pc_detect::{DetectStage, MockDetector, ReplayDetector, TextDetector};
+use std::path::{Path, PathBuf};
 
 fn replay_detector() -> (tempfile::TempDir, ReplayDetector) {
     let (dir, stem) = synthetic_replay_fixture();
@@ -24,11 +25,39 @@ fn replay_detector() -> (tempfile::TempDir, ReplayDetector) {
 /// properties these three call sites actually assert (stage-wrapper equivalence, run-to-run
 /// determinism, determinism under a shared detector) only need a deterministic, comparable
 /// representation of the page; JSON was a stand-in for one. `PageDataRaw: PartialEq`
-/// compares every field (handles by `path`), which is strictly stronger than string
-/// equality. JSON byte-stability itself stays covered by
+/// compares its structural fields, but its `ImageHandle` fields compare by `path` only;
+/// in memory mode both paths are `None`, so `PartialEq` does not compare pixel content.
+/// The `a6_replay_image_content_is_byte_identical_across_ten_runs_and_eight_threads` test
+/// below covers image-content identity by loading and comparing raw base-image and mask
+/// bytes. JSON byte-stability itself stays covered by
 /// `detect_output_round_trips_through_json`, which runs in disk mode.
 fn page_of(output: &pc_detect::DetectOutput) -> pc_core::PageDataRaw {
     output.page.clone()
+}
+
+fn image_content_of(output: &pc_detect::DetectOutput) -> (Vec<u8>, Vec<u8>) {
+    let base_image = output
+        .page
+        .base_image
+        .load()
+        .expect("base image is loaded in memory")
+        .to_rgb8();
+    let raw_mask = output
+        .page
+        .raw_mask
+        .load()
+        .expect("raw mask is loaded in memory")
+        .to_luma8();
+    (base_image.into_raw(), raw_mask.into_raw())
+}
+
+fn directory_snapshot(path: &Path) -> Vec<PathBuf> {
+    let mut entries = std::fs::read_dir(path)
+        .expect("directory readable")
+        .map(|entry| entry.expect("directory entry readable").path())
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries
 }
 
 // ------------------------------------------------------------ mask_coverage (§8.7(A)5)
@@ -215,6 +244,36 @@ fn memory_mode_writes_nothing_to_disk() {
             .expect("scratch dir readable")
             .count(),
         0
+    );
+}
+
+#[test]
+fn memory_mode_does_not_write_destination_scratch_or_source_parent() {
+    let source_dir = tempfile::TempDir::new().expect("source dir");
+    let destination_scratch = tempfile::TempDir::new().expect("destination scratch");
+    let source_path = source_dir.path().join("source.png");
+    synthetic_page(REPLAY_SIZE.0, REPLAY_SIZE.1)
+        .save(&source_path)
+        .expect("write source image");
+    let source_parent_before = directory_snapshot(source_dir.path());
+
+    let mut input = memory_input(synthetic_page(REPLAY_SIZE.0, REPLAY_SIZE.1));
+    input.source = pc_core::ImageHandle::from_path(&source_path);
+    input.original_path = source_path.clone();
+    assert!(input.base_image_dest.is_none() && input.raw_mask_dest.is_none());
+
+    let detector = MockDetector::new()
+        .with_blocks(synthetic_blocks())
+        .with_mask(synthetic_raw_mask());
+    let output = pc_detect::run(input, &detector).expect("detection succeeds");
+
+    assert!(output.page.base_image.path.is_none());
+    assert!(output.page.raw_mask.path.is_none());
+    assert!(directory_snapshot(destination_scratch.path()).is_empty());
+    assert_eq!(
+        directory_snapshot(source_dir.path()),
+        source_parent_before,
+        "memory mode must not alter the original image's parent"
     );
 }
 
@@ -420,6 +479,53 @@ fn a6_replay_run_is_identical_under_concurrent_shared_detector_use() {
     assert_eq!(results.len(), 8);
     assert!(results.iter().all(|page| *page == expected));
     assert_eq!(detector.calls(), 9);
+}
+
+#[test]
+fn a6_replay_image_content_is_byte_identical_across_ten_runs_and_eight_threads() {
+    let (_dir, detector) = replay_detector();
+
+    let expected_output = pc_detect::run(
+        memory_input(synthetic_page(REPLAY_SIZE.0, REPLAY_SIZE.1)),
+        &detector,
+    )
+    .expect("detection succeeds");
+    let expected = image_content_of(&expected_output);
+
+    for run in 1..10 {
+        let output = pc_detect::run(
+            memory_input(synthetic_page(REPLAY_SIZE.0, REPLAY_SIZE.1)),
+            &detector,
+        )
+        .expect("detection succeeds");
+        assert!(image_content_of(&output) == expected, "run {run} diverged");
+    }
+
+    let shared: &dyn TextDetector = &detector;
+    let results: Vec<(Vec<u8>, Vec<u8>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                scope.spawn(move || {
+                    let output = pc_detect::run(
+                        memory_input(synthetic_page(REPLAY_SIZE.0, REPLAY_SIZE.1)),
+                        shared,
+                    )
+                    .expect("detection succeeds");
+                    image_content_of(&output)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("worker did not panic"))
+            .collect()
+    });
+
+    assert_eq!(results.len(), 8);
+    assert!(
+        results.iter().all(|content| content == &expected),
+        "concurrent image content diverged"
+    );
 }
 
 // ------------------------------------------------------------ pending F1

@@ -3,8 +3,8 @@
 //! "The recorded JSON's `ImageHandle` paths are stored **relative to the fixtures
 //! root** and rebased on load by `pc-testkit`."
 //!
-//! Note: `PageDataRaw`/`MaskData` do not implement `PartialEq` (pc-core §2, because
-//! they contain `ImageHandle`), so these tests compare handle paths field-wise.
+//! Note: `PageDataRaw` and `MaskData` now implement `PartialEq`; these tests compare
+//! handle paths field-wise because `ImageHandle` equality is deliberately path-based.
 
 use pc_core::{ImageHandle, MaskData, PageDataRaw, SCHEMA_VERSION};
 use pc_testkit::paths;
