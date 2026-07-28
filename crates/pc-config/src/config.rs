@@ -24,13 +24,30 @@ pub struct Config {
 }
 
 impl Config {
+    /// Construct an empty app configuration.
+    ///
+    /// This mirrors the `Default` implementation while giving integration tests and
+    /// callers a direct constructor.
+    #[allow(clippy::should_implement_trait)]
+    pub fn default() -> Self {
+        <Self as Default>::default()
+    }
+
     /// Provisional rule: `default_profile`, when `Some`, must name a key of
     /// `saved_profiles`.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        todo!()
+        if let Some(name) = &self.default_profile {
+            if !self.saved_profiles.contains_key(name) {
+                return Err(ConfigError::Invalid {
+                    field: "default_profile".into(),
+                    message: format!("`{name}` is not present in `saved_profiles`"),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn profile_path(&self, name: &str) -> Option<&std::path::Path> {
-        todo!()
+        self.saved_profiles.get(name).map(PathBuf::as_path)
     }
 }

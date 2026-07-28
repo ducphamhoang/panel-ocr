@@ -9,7 +9,7 @@ use crate::error::ConfigError;
 use pc_core::Language;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "snake_case")]
 pub struct Profile {
     pub general: GeneralConfig,
@@ -19,27 +19,94 @@ pub struct Profile {
     pub denoiser: DenoiserConfig,
 }
 
-impl Default for Profile {
-    fn default() -> Self {
-        todo!()
-    }
-}
-
 impl Profile {
     /// Table name -> known key names, in spec §6 declaration order. The single source
     /// of truth for "is this key unknown?" (§6 round-trip WARN) and for `profile show`.
     /// Frozen against `DEFAULT_PROFILE_TOML` by a test.
-    pub const TABLES: &'static [(&'static str, &'static [&'static str])] = &[];
+    pub const TABLES: &'static [(&'static str, &'static [&'static str])] = &[
+        (
+            "general",
+            &[
+                "preferred_file_type",
+                "preferred_mask_file_type",
+                "input_height_lower_target",
+                "input_height_upper_target",
+                "split_long_strips",
+                "preferred_split_height",
+                "split_tolerance_margin",
+                "long_strip_aspect_ratio",
+                "merge_after_split",
+                "max_threads",
+                "always_cache_masks",
+            ],
+        ),
+        (
+            "text_detector",
+            &["model_path", "concurrent_models", "mask_refine_mode"],
+        ),
+        (
+            "preprocessor",
+            &[
+                "box_min_size",
+                "suspicious_box_min_size",
+                "box_overlap_threshold",
+                "ocr_enabled",
+                "ocr_language",
+                "reading_order",
+                "ocr_max_size",
+                "ocr_blacklist_pattern",
+                "ocr_strict_language",
+                "box_padding_initial",
+                "box_right_padding_initial",
+                "box_padding_extended",
+                "box_right_padding_extended",
+                "box_reference_padding",
+            ],
+        ),
+        (
+            "masker",
+            &[
+                "mask_growth_step_pixels",
+                "mask_growth_steps",
+                "min_mask_thickness",
+                "allow_colored_masks",
+                "off_white_max_threshold",
+                "mask_max_standard_deviation",
+                "mask_improvement_threshold",
+                "mask_selection_fast",
+                "debug_mask_color",
+            ],
+        ),
+        (
+            "denoiser",
+            &[
+                "denoising_enabled",
+                "noise_min_standard_deviation",
+                "noise_outline_size",
+                "noise_fade_radius",
+                "colored_images",
+                "filter_strength",
+                "color_filter_strength",
+                "template_window_size",
+                "search_window_size",
+            ],
+        ),
+    ];
 
     /// spec §6 validation paragraph. Returns the **first** violation in `TABLES` order
     /// (deterministic). Callers that want everything use `validate_all`.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        todo!()
+        self.validate_all().into_iter().next().map_or(Ok(()), Err)
     }
 
     /// Every violation, in `TABLES` order. Empty == valid.
     pub fn validate_all(&self) -> Vec<ConfigError> {
-        todo!()
+        let mut errors = Vec::new();
+        crate::validate::validate_general(&self.general, &mut errors);
+        crate::validate::validate_preprocessor(&self.preprocessor, &mut errors);
+        crate::validate::validate_masker(&self.masker, &mut errors);
+        crate::validate::validate_denoiser(&self.denoiser, &mut errors);
+        errors
     }
 }
 
@@ -67,7 +134,19 @@ pub struct GeneralConfig {
 
 impl Default for GeneralConfig {
     fn default() -> Self {
-        todo!()
+        Self {
+            preferred_file_type: String::new(),
+            preferred_mask_file_type: ".png".into(),
+            input_height_lower_target: 1000,
+            input_height_upper_target: 4000,
+            split_long_strips: true,
+            preferred_split_height: 2000,
+            split_tolerance_margin: 500,
+            long_strip_aspect_ratio: 0.33,
+            merge_after_split: true,
+            max_threads: 0,
+            always_cache_masks: false,
+        }
     }
 }
 
@@ -75,7 +154,8 @@ impl GeneralConfig {
     /// `None` when `preferred_file_type` is empty ("keep original suffix"), else the
     /// normalised (ASCII-lowercased, dot-prefixed) suffix.
     pub fn cleaned_suffix(&self) -> Option<String> {
-        todo!()
+        (!self.preferred_file_type.is_empty())
+            .then(|| self.preferred_file_type.to_ascii_lowercase())
     }
 }
 
@@ -93,31 +173,30 @@ pub struct TextDetectorConfig {
 
 impl Default for TextDetectorConfig {
     fn default() -> Self {
-        todo!()
+        Self {
+            model_path: String::new(),
+            concurrent_models: 1,
+            mask_refine_mode: MaskRefineMode::default(),
+        }
     }
 }
 
 impl TextDetectorConfig {
     /// `None` when `model_path` is empty.
     pub fn model_path(&self) -> Option<&std::path::Path> {
-        todo!()
+        (!self.model_path.is_empty()).then(|| std::path::Path::new(&self.model_path))
     }
 }
 
 /// spec §8.3 step 5 / §15.2. Only `Simple` is implemented in v1; `Annotation` is
 /// accepted by config (spec §16.5 item 3) and rejected by `pc-detect` with
 /// `StageError::InvalidInput`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MaskRefineMode {
+    #[default]
     Simple,
     Annotation,
-}
-
-impl Default for MaskRefineMode {
-    fn default() -> Self {
-        todo!()
-    }
 }
 
 // ------------------------------------------------------------- [preprocessor]
@@ -146,7 +225,22 @@ pub struct PreprocessorConfig {
 
 impl Default for PreprocessorConfig {
     fn default() -> Self {
-        todo!()
+        Self {
+            box_min_size: 400,
+            suspicious_box_min_size: 40_000,
+            box_overlap_threshold: 20.0,
+            ocr_enabled: true,
+            ocr_language: OcrLanguageSetting::default(),
+            reading_order: ReadingOrder::default(),
+            ocr_max_size: 3000,
+            ocr_blacklist_pattern: "[～．ー！？０-９~.!?0-9-]*".into(),
+            ocr_strict_language: false,
+            box_padding_initial: 2,
+            box_right_padding_initial: 3,
+            box_padding_extended: 5,
+            box_right_padding_extended: 5,
+            box_reference_padding: 20,
+        }
     }
 }
 
@@ -154,44 +248,38 @@ impl PreprocessorConfig {
     /// Compiles `ocr_blacklist_pattern` anchored for full-match use (§9.7(A)8).
     /// `validate` has already proven this succeeds, so callers may `expect` it.
     pub fn compile_blacklist(&self) -> Result<regex::Regex, regex::Error> {
-        todo!()
+        regex::Regex::new(&format!("^(?:{})$", self.ocr_blacklist_pattern))
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OcrLanguageSetting {
+    #[default]
     DetectBox,
     DetectPage,
     Jpn,
     Eng,
 }
 
-impl Default for OcrLanguageSetting {
-    fn default() -> Self {
-        todo!()
-    }
-}
-
 impl OcrLanguageSetting {
     /// `Some` for the pinned variants, `None` for the two detect modes.
     pub fn fixed_language(self) -> Option<Language> {
-        todo!()
+        match self {
+            Self::Jpn => Some(Language::Japanese),
+            Self::Eng => Some(Language::English),
+            Self::DetectBox | Self::DetectPage => None,
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadingOrder {
+    #[default]
     Auto,
     Manga,
     Comic,
-}
-
-impl Default for ReadingOrder {
-    fn default() -> Self {
-        todo!()
-    }
 }
 
 // ------------------------------------------------------------------- [masker]
@@ -214,7 +302,17 @@ pub struct MaskerConfig {
 
 impl Default for MaskerConfig {
     fn default() -> Self {
-        todo!()
+        Self {
+            mask_growth_step_pixels: 2,
+            mask_growth_steps: 11,
+            min_mask_thickness: 4,
+            allow_colored_masks: true,
+            off_white_max_threshold: 240,
+            mask_max_standard_deviation: 15.0,
+            mask_improvement_threshold: 0.1,
+            mask_selection_fast: false,
+            debug_mask_color: [108, 30, 240, 127],
+        }
     }
 }
 
@@ -241,6 +339,16 @@ pub struct DenoiserConfig {
 
 impl Default for DenoiserConfig {
     fn default() -> Self {
-        todo!()
+        Self {
+            denoising_enabled: true,
+            noise_min_standard_deviation: 0.25,
+            noise_outline_size: 5,
+            noise_fade_radius: 1,
+            colored_images: false,
+            filter_strength: 10.0,
+            color_filter_strength: 10.0,
+            template_window_size: 7,
+            search_window_size: 21,
+        }
     }
 }

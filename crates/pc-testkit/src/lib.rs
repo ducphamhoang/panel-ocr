@@ -32,5 +32,8 @@ pub use paths::{BubbleKind, DemoBubble, DEMO_BUBBLES, LONG_STRIP_SIZE};
 /// re-declared in each crate.
 #[track_caller]
 pub fn assert_close(actual: f64, expected: f64, eps: f64) {
-    todo!()
+    assert!(
+        eps >= 0.0 && (actual - expected).abs() <= eps,
+        "values are not close: actual={actual}, expected={expected}, epsilon={eps}"
+    );
 }

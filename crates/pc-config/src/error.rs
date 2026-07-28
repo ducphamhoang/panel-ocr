@@ -27,7 +27,10 @@ impl ConfigError {
     /// `Some(field)` for `Invalid`, `None` otherwise. Lets tests assert on the rule
     /// that fired without matching on message text.
     pub fn field(&self) -> Option<&str> {
-        todo!()
+        match self {
+            Self::Invalid { field, .. } => Some(field),
+            Self::Io { .. } | Self::Parse { .. } => None,
+        }
     }
 }
 
@@ -50,6 +53,22 @@ impl ConfigWarning {
     /// The exact user-facing text logged at `WARN`. Frozen: §15.7 requires the
     /// colored-images notice to state both the approximation and the ignored key.
     pub fn message(&self) -> String {
-        todo!()
+        match self {
+            Self::UnknownKey { table, key } if table.is_empty() => {
+                format!("unknown config key `{key}`; preserving it")
+            }
+            Self::UnknownKey { table, key } => {
+                format!("unknown config key `{table}.{key}`; preserving it")
+            }
+            Self::UnknownTable { table } => {
+                format!("unknown config table `[{table}]`; preserving it")
+            }
+            Self::ColoredImagesApproximation => concat!(
+                "`denoiser.colored_images = true` uses the v1 joint-channel ",
+                "approximation; `color_filter_strength` is ignored until the ",
+                "Lab-split implementation in v1.5"
+            )
+            .to_owned(),
+        }
     }
 }
