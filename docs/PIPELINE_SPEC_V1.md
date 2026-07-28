@@ -560,6 +560,12 @@ CI must not run models (confirmed scope), but the masking golden tests need real
 
 The one-time recording is a **checked-in artifact**, reviewed like code. This is what makes the demo_bubbles goldens usable in CI.
 
+**7.2.1 `ReplayDetector` binding and artifact format (resolved during D3 test-drafting).**
+The `TextDetector` trait's `detect(&self, image: &RgbImage) -> Result<RawDetection, StageError>` takes no filename/stem — it's a pure image-in, detection-out boundary. `_raw_mask.png` + `#raw.json` (§2.4's already-*refined* `PageDataRaw`) cannot be replayed back into a `RawDetection` (they're the stage's *output*, post-refinement/post-assembly, not its input). Therefore:
+
+- `ReplayDetector` is bound to **one fixture stem at construction** (`ReplayDetector::new(dir, stem)`), not re-keyed per `detect()` call — matching the trait's per-image, stem-less signature. Calling `detect()` ignores the passed image's content and returns the fixture's recorded detection, incrementing a `calls()` counter.
+- The replay pair recorded/read for this purpose is **distinct** from the `PageDataRaw`-level `_raw_mask.png`/`#raw.json` artifacts and uses its own names: **`<stem>_detector_mask.png`** (the raw, unrefined `RawDetection.mask`) and **`<stem>_detector_blocks.json`** (a `Vec<RawBlock>`, which is why `RawBlock` gains `Serialize`/`Deserialize`). `cargo xtask record-fixtures` (F1) writes both pairs: the `_detector_*` pair for replaying the detector boundary, and the `_base.png`/`_raw_mask.png`/`#raw.json` triple for whole-page regression locks (§8.7(B)9).
+
 ### 7.3 Golden calibration gate (ordering requirement)
 
 Upstream's `*_clean.png` images were produced by a specific PanelCleaner version/profile we cannot fully verify. Per CLAUDE.md, tests are frozen once written — so tolerance numbers must be *measured before freezing*, not guessed after. Therefore:
@@ -1438,6 +1444,27 @@ verify-then-decide process as §15:
     `split_tolerance_margin`, `noise_min_standard_deviation`) even though some combinations are
     reachable nonsense (e.g. `lower_target > upper_target`). Left unvalidated in v1; revisit if
     it causes real problems.
+
+---
+
+## 16.6 Stage 1 (detect) decisions, from Rust Engineer review
+
+Resolved during test-drafting for `pc-detect`/`pc-imageops` (D2, D3, D5, D6, D7, D8):
+
+1. **`DetectInput` gains `pub config: TextDetectorConfig`** (§8.2's field list omitted it). Required so `pc-detect` can reject `MaskRefineMode::Annotation` per §16.5 item 3, and consistent with §3's "config by value in every stage `Input`" rule. Every stage crate therefore depends on `pc-config` (already noted in §16.5 item 1).
+2. **Naming**: §8.2's `base_image_dest` is the authoritative spelling; §4.3's diagram (`base_png_dest`) is a typo — read `base_image_dest` there.
+3. **`PageDataRaw.scale` stores exactly what `calculate_new_size_and_scale` returns**, even in the integer-inverse branch where that can differ slightly from `new_height / original_height` (e.g. `h=5001` gives `scale=0.5` but `new_h=2501`, so `new_h/h ≈ 0.50010`). This is intentional, not a bug: §11.3 already recomputes the denoiser's up-scale factor from actual image sizes rather than trusting `scale` for that purpose, so nothing downstream depends on `scale` being the exact ratio. §2.4's doc comment is amended to say "approximately `new_height / original_height`; exactly `1.0` when no resize happened" rather than claiming exactness.
+4. **Rescaled detector boxes ARE clipped to image bounds.** §8.3 step 4 is amended: after truncating to i32, clamp `x1,y1` to `>= 0` and `x2,y2` to `<= image_size`. This isn't new scope — upstream's yolov5 pipeline clips coordinates (`clip_coords`) as a normal part of the postprocess the spec already claims to port; the original §8.3 step 4 text simply omitted mentioning it. Required so `run()` can produce a `PageDataRaw` that passes its own `validate()` on real (frame-overhanging) detector output.
+5. **Box rasterization is EXCLUSIVE on `x2`/`y2` everywhere, matching §2.1's `Rect` convention exactly** (confirmed: `pc-core`'s already-implemented, already-tested `Rect::to_crop` treats `x2`/`y2` as exclusive). §13's M1 row, which said "inclusive", is corrected to say **exclusive** — M1 must rasterize box masks using the same convention as every other rect operation in the codebase, so `mask_coverage` (§8.3 step 6) and the future masker (§10) agree on what region a box actually covers.
+6. **`cv2.INTER_LINEAR` (§8.3 step 5's mask resize) is pinned to the same convention OpenCV actually uses**: half-pixel-centre source mapping (`src = (dst + 0.5) * (src_len/dst_len) - 0.5`), with border clamping at both ends, axes scaled independently. Test tolerance is ±1 per pixel (OpenCV's u8 path is fixed-point); exact parity is deferred to an F1-recorded reference, mirroring how §8.3 step 2 already treats INTER_AREA.
+7. **`postprocess_mask`'s float→u8 conversion truncates (does not round), after clamping to `[0.0, 255.0]`.** Matches upstream's `(img * 255).astype(np.uint8)` exactly except for the clamp (upstream's `astype` wraps out-of-range floats, which is a real bug the clamp fixes). Consistent with the project's general stance of porting upstream's numeric behavior faithfully except where explicitly identified as a bug (§14).
+8. **`calculate_best_splits` (D8) algorithm, fully specified** (§8.7(B)8 previously only described one example, not the algorithm):
+   - **Aspect gate**: split only when `split_long_strips` is true AND `width / height <= max_aspect_ratio`.
+   - **Split count**: `n = round(height / preferred_height)`, clamped to `>= 1`; number of splits is `n - 1`. (`8000/2000 = 4 → 3 splits`, matching §8.7(B)8's example.)
+   - **Search window** per split *i* (1-indexed): `[preferred*i - tolerance, preferred*i + tolerance)`, half-open, clamped to `1..height`.
+   - **Row score**: convert to luma (per-channel-averaged grayscale), then for row `y`, `score[y] = Σ_x (luma[y][x] - luma[y][x+1])²` — i.e. the sum of squared *horizontal* (along-row) differences, matching "squared-horizontal-difference score" literally (a flat/uniform row, likely a gutter between panels, scores near zero). `score[0]` is `+infinity` (row 0 can never be a legal split). This resolves the ambiguity between "row vs. previous row" and "along the row" in favor of the latter, since that reading matches the literal phrase "horizontal difference" (a difference computed horizontally) rather than a vertical row-to-row comparison.
+   - **Selection**: within each search range, pick the row with the minimum score; ties break toward the smallest row index (deterministic, §5.7).
+   - `row_scores()` and `search_ranges()` stay public (needed by the §8.7(B)8 percentile test and useful for `cargo xtask calibrate-goldens` diagnostics), but the algorithm itself is no longer something Codex has to invent.
 
 ---
 
