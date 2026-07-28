@@ -1,8 +1,14 @@
 [workspace]
 resolver = "2"
 # NOTE: glob members only match directories that exist. At F0 only `pc-core` exists;
-# `xtask` is added to this list by task F1, when the directory is created.
-members = ["crates/*"]
+# `xtask` was added to this list by task F1, when the directory was created.
+#
+# §16.13 item 2: `xtask` is a WORKSPACE MEMBER, not an excluded sub-workspace. It has to
+# link `pc-denoise`/`pc-detect`/`pc-testkit` to measure them (task F2), so sharing one
+# `Cargo.lock` and one `target/` is the only way `cargo xtask calibrate-goldens` measures
+# the same code `cargo test` runs. `publish = false` keeps it off crates.io, and nothing
+# in `pc-cli`'s dependency graph reaches it, so being a member costs users nothing.
+members = ["crates/*", "xtask"]
 
 [workspace.package]
 version      = "0.1.0"

@@ -247,8 +247,7 @@ fn the_invocation_counter_tracks_calls() {
 }
 
 #[test]
-#[ignore = "pending task F1: needs tests/fixtures/recorded/nlm/<name>_h10_t7_s21.png"]
-fn b12_pending_recorded_opencv_parity() {
+fn b12_recorded_opencv_parity() {
     // spec §11.7(B)12 + §16.10 item 19. Input: the whole
     // `upstream/demo_bubbles/<name>_bubble_raw.png` as luma8 (name in {nightmare, ray});
     // reference: `recorded/nlm/<name>_h10_t7_s21.png`, produced by
@@ -262,5 +261,33 @@ fn b12_pending_recorded_opencv_parity() {
     // measured deltas in docs/GOLDEN_CALIBRATION.md BEFORE this test is unignored. If
     // calibration shows the specified tolerances cannot be met, that goes back to the
     // two architects jointly -- never a silent loosening here.
-    unimplemented!("blocked on F1");
+    //
+    // UNIGNORED by task F1/F2 (§16.13). The references are REAL OpenCV 5.0.0 output from
+    // the committed `xtask/scripts/record_nlm.py`; F2 ran first and recorded the measured
+    // numbers in docs/GOLDEN_CALIBRATION.md §1 (nightmare: SSIM 0.999985, mean 0.008946,
+    // max 4; ray: SSIM 0.999999, mean 0.003028, max 1) -- comfortably inside the
+    // SPECIFIED tolerances, which are what is asserted below and stay frozen.
+    let _nlm = shared_nlm();
+    let thresholds = pc_testkit::golden::GoldenThresholds::nlm_parity();
+
+    for name in ["nightmare", "ray"] {
+        let source = images::load_luma8(pc_testkit::paths::upstream(format!(
+            "demo_bubbles/{name}_bubble_raw.png"
+        )));
+        let ours = match nlm::denoise(&DynamicImage::ImageLuma8(source), defaults()) {
+            DynamicImage::ImageLuma8(gray) => gray,
+            other => panic!("luma8 input must yield luma8 output, got {other:?}"),
+        };
+        let reference = images::load_luma8(pc_testkit::paths::recorded(format!(
+            "nlm/{name}_h10_t7_s21.png"
+        )));
+        assert_eq!(
+            reference.dimensions(),
+            ours.dimensions(),
+            "{name}: recorded reference and our output must share dimensions"
+        );
+
+        let report = pc_testkit::golden::GoldenReport::compare_gray(name, &reference, &ours);
+        thresholds.assert_met(&report);
+    }
 }

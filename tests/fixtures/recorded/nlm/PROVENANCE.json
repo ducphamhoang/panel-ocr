@@ -1,0 +1,33 @@
+{
+  "numpy_version": "2.4.6",
+  "opencv_version": "5.0.0",
+  "params": {
+    "h": 10,
+    "searchWindowSize": 21,
+    "templateWindowSize": 7
+  },
+  "python": "3.11.15",
+  "records": [
+    {
+      "name": "nightmare",
+      "output": "tests/fixtures/recorded/nlm/nightmare_h10_t7_s21.png",
+      "sha256": "c6cc1002c209ffadd182f2ebd3162b53b55bbb92f99ee038ebaf419bfed94b8d",
+      "size": [
+        219,
+        343
+      ],
+      "source": "tests/fixtures/upstream/demo_bubbles/nightmare_bubble_raw.png"
+    },
+    {
+      "name": "ray",
+      "output": "tests/fixtures/recorded/nlm/ray_h10_t7_s21.png",
+      "sha256": "9cdd17366dbabf152f67b8d70bee43745c7e45011f8d1cf2fc55b83646fe1658",
+      "size": [
+        256,
+        329
+      ],
+      "source": "tests/fixtures/upstream/demo_bubbles/ray_bubble_raw.png"
+    }
+  ],
+  "tool": "cv2.fastNlMeansDenoising"
+}

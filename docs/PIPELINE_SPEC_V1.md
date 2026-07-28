@@ -2420,6 +2420,133 @@ stage crate's API below was traced against the **already-implemented, frozen** s
 
 ---
 
+## 16.13 Fixture recording + golden calibration decisions (joint architect + Rust Engineer review, 2026-07-28)
+
+Resolved while executing §7.2's task **F1** and §7.3's task **F2**, applying the same
+verify-then-decide process as §16.5–§16.12. Each item is binding.
+
+1. **F1 is not one task — it is four independent recording groups, and they have
+   different blockers.** §7.2 describes F1 as a single "record once, replay forever"
+   step, which implicitly assumed all of it needed real ONNX weights. Tracing the
+   actually-frozen tests shows otherwise: only *some* F1 outputs come from the detector.
+   `cargo xtask record-fixtures` is therefore group-structured, and each group is
+   independently runnable and independently skippable:
+
+   | Group | Real tool it records | Consumers | Status |
+   |---|---|---|---|
+   | `nlm` | `cv2.fastNlMeansDenoising` | §11.6, §11.7(B)12 | **recorded** |
+   | `inter-area` | `cv2.resize`/`INTER_AREA` | §8.7(A)2 | **recorded** |
+   | `find-edges` | `PIL.ImageFilter.FIND_EDGES` | §10.3 step 2 cross-check (item 7) | **verified** |
+   | `detector` | ONNX `comictextdetector` | §7.2, §7.2.1, §8.7(A)6, §8.7(B)9, §9.7(B)11, §10.7(B)15, §11.7(B)13 | **blocked** (item 8) |
+
+   Consequence: the OpenCV/PIL-backed gates are unblocked *now*, without waiting on
+   §8.5's D1/D4. That was not visible from §7.2's wording and is the main finding of
+   this pass.
+
+2. **`xtask` is a workspace member, not an excluded sub-workspace.** `Cargo.toml`'s
+   `members` becomes `["crates/*", "xtask"]`, resolving the "added by task F1" TODO left
+   in that file at F0. Rationale: F2 must *link* `pc-denoise`, `pc-detect` and
+   `pc-testkit` to measure them, so a separate lockfile/`target` would let the tool
+   measure a different build than `cargo test` runs — the one thing a calibration tool
+   must never do. `publish = false` keeps it off crates.io; nothing in `pc-cli`'s
+   dependency graph reaches it, so end users are unaffected. `cargo xtask …` works via
+   an `alias` in `.cargo/config.toml`. Considered and rejected: `exclude = ["xtask"]`
+   (the other common convention) — it buys a marginally faster `cargo build --workspace`
+   at the cost of build-graph divergence in exactly the tool whose job is fidelity.
+
+3. **`xtask` is the single permitted non-dev consumer of `pc-testkit`.** §1 lists
+   `pc-testkit` as "dev-dependency only". That rule exists to keep test helpers out of
+   shipped binaries; `xtask` is maintainer tooling that is never shipped, and F2's
+   report format (`GoldenReport`, `GoldenThresholds`) already lives in `pc-testkit` by
+   design (`golden.rs`'s own header says F2 writes its rows). Duplicating those metrics
+   in `xtask` would let the calibrated numbers and the asserted numbers drift, which
+   defeats §7.3. No other crate gains this exemption.
+
+4. **A missing tool is always a reported skip, never a Rust stand-in.** Binding on every
+   present and future recording group: the reference for a parity gate must be produced
+   by the *real* third-party implementation. Approximating `cv2.fastNlMeansDenoising`
+   (or `INTER_AREA`, or the detector) in Rust to "unblock" a gate would make that gate
+   compare our implementation against itself. `record-fixtures` therefore prints an
+   actionable skip (what is missing, what to install/implement, which tests stay
+   `#[ignore]`d) and exits successfully; it never fabricates a fixture. `cargo xtask
+   probe` reports the same capability matrix without recording anything.
+
+5. **§8.7(A)2's INTER_AREA reference is recorded from a lossless re-decode, not from the
+   JPEG.** Gap in §8.7(A)2: it says "a recorded `cv2.INTER_AREA` reference" of
+   `long_strip.jpg` without saying who decodes the JPEG. Decoding it twice — once by
+   OpenCV's libjpeg-turbo for the reference and once by the `image` crate for our side —
+   folds an unrelated decoder difference into a gate whose stated justification is
+   "identical mathematics, differing only in float accumulation order". Decided: the
+   xtask decodes `long_strip.jpg` with the **same `image` crate** the test uses, writes
+   that as a lossless PNG, and hands *that* to OpenCV. The decoder difference is then
+   measured separately and recorded as an explicitly non-gating diagnostic row (measured
+   at F2 time: mean 0.003438, max Δ 1 — i.e. real but an order of magnitude below the
+   gate's tolerance, so the isolation is a precaution rather than a rescue).
+
+6. **Derived intermediates are scratch, not fixtures.** The re-decoded 1000×8000 PNG
+   (6.7 MB) and the decoder-diagnostic resize (1.5 MB) are byte-reproducible from
+   committed inputs, so they go to `target/xtask-scratch/` and are not checked in; only
+   the diagnostic's *metrics* are persisted, inside `PROVENANCE.json`. Committed
+   recorded-fixture total stays ~1.6 MB. Every recording group writes a
+   `PROVENANCE.json` next to its outputs (tool, tool version, parameters, source, output
+   sha256, all paths repo-relative) — §7.2 calls the recordings "a checked-in artifact,
+   reviewed like code", and a reviewer cannot review a PNG without knowing what produced
+   it. Re-running a recording reproduces identical sha256s (verified).
+
+7. **PIL `FIND_EDGES` gets an empirical cross-check, not a fixture.** §10.3 step 2
+   replaced PIL's filter with a closed form, and §16.9 item 21 corrected §10.7(A)4's
+   edge count from 9 to 8 *by hand reasoning*. `pc_mask::border` consumes no recorded
+   file, so there is nothing to record — but the hand proof deserves confirmation
+   against the real library. `record-fixtures --only find-edges` runs real PIL over all
+   512 distinct 3×3 masks plus 500 random masks and fails loudly on any disagreement.
+   Result at F1 time (Pillow 12.3.0): 1012/1012 agree, and a fully-set 3×3 mask yields
+   exactly 8 edges — §16.9 item 21 is empirically confirmed. A future disagreement here
+   contradicts a frozen test and escalates to both architects; it is never patched in
+   the script.
+
+8. **The detector group is blocked by missing *code*, not missing weights.** Recording
+   `_detector_mask.png`/`_detector_blocks.json` (§7.2.1) and the
+   `_base.png`/`_raw_mask.png`/`#raw.json` triple (§7.2) requires §8.5 task **D4**
+   (`pc-detect/src/onnx.rs`, the `ort` session) and task **D1** (`pc-models`), neither of
+   which exists in this checkout. Obtaining `comictextdetector.pt.onnx` would not help:
+   there is no inference code to feed it to. §7.2 also requires the maintainer to supply
+   one or two license-clean full manga pages (≤ 400 KB), which no automated step can
+   source. F1's detector group therefore remains **open**, and these tests stay
+   `#[ignore]`d with their `unimplemented!("blocked on F1")` bodies intact:
+   `pc-detect d7_run.rs::a6_pending_insta_snapshot_of_recorded_page` (§8.7(A)6),
+   `pc-detect d7_run.rs::b9_pending_recorded_page_regression_lock` (§8.7(B)9),
+   `pc-preprocess p5_run.rs::b11_pending_insta_snapshot_of_recorded_page_tiers` (§9.7(B)11),
+   `pc-denoise n4_run.rs::b13_pending_recorded_page_end_to_end_golden` (§11.7(B)13).
+   §10.7(B)15's demo_bubbles calibration report is blocked for the same reason and is
+   recorded as BLOCKED in `docs/GOLDEN_CALIBRATION.md` rather than omitted.
+
+9. **F2 is partial-by-design and says so in its own output.** §7.3 reads as though
+   `calibrate-goldens` either runs or does not. Decided: it always runs, measures every
+   gate whose inputs exist, and writes each unmeasurable gate as an explicit BLOCKED row
+   naming the reason and the blocked test. A calibration document that silently omits
+   what it could not measure is worse than no document. `docs/GOLDEN_CALIBRATION.md` is
+   **generated** — the measured numbers are not to be hand-edited.
+
+10. **F2 ran before either newly-unignored gate was frozen, per §7.3, and both were met
+    with large margin.** Measured (opencv 5.0.0, pillow 12.3.0, numpy 2.4.6, python
+    3.11.15):
+    - §11.7(B)12 NLM parity — `nightmare`: SSIM 0.999985, mean |Δ| 0.008946, max Δ 4;
+      `ray`: SSIM 0.999999, mean |Δ| 0.003028, max Δ 1. Specified: SSIM ≥ 0.98,
+      mean ≤ 1.0, max ≤ 8. **Met**, by two to three orders of magnitude on the mean.
+      Note this is a *stronger* result than §11.7(B)12's tolerance rationale predicted
+      (it anticipated visible divergence from OpenCV's fixed-point weight LUT); the
+      tolerances are nonetheless left exactly as specified, since tightening a frozen
+      tolerance to fit one measurement is the mirror image of the loosening §7.3
+      forbids.
+    - §8.7(A)2 INTER_AREA parity — mean |Δ| 0.000000, max Δ 0: **bit-exact** against
+      real OpenCV. Specified: mean ≤ 1.0, max Δ ≤ 2. Met.
+
+    Both tests are consequently unignored, with real assertions replacing their
+    `unimplemented!()` placeholders and the recording provenance cited at the call site.
+    No other test's assertions were touched.
+
+---
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

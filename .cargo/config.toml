@@ -1,0 +1,5 @@
+# `cargo xtask ...` -> `cargo run --package xtask -- ...` (spec §7.2/§7.3, task F1/F2).
+# The alias is what makes the spec's literal `cargo xtask record-fixtures` /
+# `cargo xtask calibrate-goldens` invocations work from anywhere in the workspace.
+[alias]
+xtask = "run --package xtask --"

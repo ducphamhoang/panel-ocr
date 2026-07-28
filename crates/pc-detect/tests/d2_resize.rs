@@ -181,11 +181,39 @@ fn long_strip_resize_produces_the_declared_dimensions() {
 }
 
 #[test]
-#[ignore = "pending task F1: needs the cv2.INTER_AREA reference recorded by `cargo xtask record-fixtures`"]
-fn a2_pending_inter_area_matches_the_recorded_opencv_reference() {
+fn a2_inter_area_matches_the_recorded_opencv_reference() {
     // spec §8.7(A)2, second half: mean absolute difference <= 1.0 and max per-channel
     // delta <= 2 against a recorded cv2.INTER_AREA downscale of long_strip.jpg.
-    // Unignore once F1 lands `long_strip_inter_area_500x4000.png` under
-    // tests/fixtures/recorded/.
-    unimplemented!("blocked on F1");
+    //
+    // UNIGNORED by task F1/F2 (§16.13). The reference at
+    // `recorded/inter_area/long_strip_inter_area_500x4000.png` is REAL OpenCV output
+    // (opencv 5.0.0, `cv2.resize(..., interpolation=cv2.INTER_AREA)`), produced by the
+    // committed `xtask/scripts/record_inter_area.py` and recorded with
+    // `cargo xtask record-fixtures --only inter-area`. §16.13 item 5: OpenCV was fed a
+    // lossless PNG re-encode of THIS decode of `long_strip.jpg`, so the gate measures
+    // resize arithmetic, not JPEG-decoder differences. F2 ran first, as §7.3 requires;
+    // measured values are in docs/GOLDEN_CALIBRATION.md §2 (mean 0.000000, max 0).
+    // The tolerances below are the SPECIFIED ones and are frozen — a future regression
+    // is fixed in `resize_area`, never by widening them here.
+    let source = pc_testkit::images::load_rgb8(pc_testkit::paths::long_strip());
+    let (new_width, new_height, _) =
+        calculate_new_size_and_scale(source.width(), source.height(), 1000, 4000);
+    assert_eq!((new_width, new_height), (500, 4000));
+
+    let ours = resize_area(&source, new_width, new_height);
+    let reference = pc_testkit::images::load_rgb8(pc_testkit::paths::recorded(
+        "inter_area/long_strip_inter_area_500x4000.png",
+    ));
+    assert_eq!(reference.dimensions(), (500, 4000));
+
+    let mean_abs_diff = pc_testkit::metrics::mean_abs_diff_rgb(&reference, &ours);
+    let max_delta = pc_testkit::metrics::max_delta_rgb(&reference, &ours);
+    assert!(
+        mean_abs_diff <= 1.0,
+        "mean absolute difference {mean_abs_diff} exceeds the §8.7(A)2 tolerance of 1.0"
+    );
+    assert!(
+        max_delta <= 2,
+        "max per-channel delta {max_delta} exceeds the §8.7(A)2 tolerance of 2"
+    );
 }

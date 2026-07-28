@@ -1,0 +1,27 @@
+[package]
+name        = "xtask"
+description = "panel-ocr maintainer tooling (spec §7.2 task F1, §7.3 task F2): fixture recording and golden calibration. Never shipped to users."
+publish     = false
+
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+# §16.13 item 3: xtask is the ONE place `pc-testkit` is a normal (non-dev) dependency.
+# It is maintainer tooling, not shipped code, so §1's "pc-testkit is a dev-dependency
+# only" rule (which exists to keep test helpers out of the user-facing binary) is
+# satisfied in spirit: nothing in `crates/pc-cli`'s dependency graph gains pc-testkit.
+pc-testkit = { path = "../crates/pc-testkit" }
+pc-core    = { path = "../crates/pc-core" }
+pc-config  = { path = "../crates/pc-config" }
+pc-denoise = { path = "../crates/pc-denoise" }
+pc-detect  = { path = "../crates/pc-detect", features = ["testkit"] }
+
+anyhow     = { workspace = true }
+clap       = { workspace = true }
+image      = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,41 @@
+{
+  "jpeg_decode_diagnostic": {
+    "metrics_vs_reference": {
+      "max_delta": 1,
+      "mean_abs_diff": 0.003438,
+      "ssim_as_gray": 0.9999985218837129
+    },
+    "numpy_version": "2.4.6",
+    "opencv_version": "5.0.0",
+    "output": "target/xtask-scratch/long_strip_inter_area_500x4000_cv2jpeg.png",
+    "output_size": [
+      500,
+      4000
+    ],
+    "python": "3.11.15",
+    "sha256": "cf16b4bdc28f0e58fefc838a8286a4c42f0f3cc687cbe2fe2129a1d9fadfb252",
+    "source": "tests/fixtures/upstream/long_strip.jpg",
+    "source_size": [
+      1000,
+      8000
+    ],
+    "tool": "cv2.resize/INTER_AREA"
+  },
+  "reference": {
+    "numpy_version": "2.4.6",
+    "opencv_version": "5.0.0",
+    "output": "tests/fixtures/recorded/inter_area/long_strip_inter_area_500x4000.png",
+    "output_size": [
+      500,
+      4000
+    ],
+    "python": "3.11.15",
+    "sha256": "812b37cc1168f608d56b99a17fc0dd58d0b105834c1a310a7133e991dc113fd9",
+    "source": "target/xtask-scratch/long_strip_decoded_rgb.png",
+    "source_size": [
+      1000,
+      8000
+    ],
+    "tool": "cv2.resize/INTER_AREA"
+  }
+}

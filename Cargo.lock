@@ -1332,6 +1332,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "image",
+ "pc-config",
+ "pc-core",
+ "pc-denoise",
+ "pc-detect",
+ "pc-testkit",
+ "serde_json",
+]
+
+[[package]]
 name = "zerocopy"
 version = "0.8.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
