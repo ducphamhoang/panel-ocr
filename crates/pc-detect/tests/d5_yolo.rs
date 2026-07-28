@@ -12,7 +12,7 @@ use pc_detect::yolo::{
     OBJECTNESS_THRESHOLD, ROW_STRIDE,
 };
 
-/// One `[cx, cy, w, h, objectness, c0, c1, c2]` row.
+/// One `[cx, cy, w, h, objectness, c0, c1]` row.
 fn row(cx: f32, cy: f32, w: f32, h: f32, objectness: f32, classes: [f32; N_CLASSES]) -> Vec<f32> {
     let mut values = vec![cx, cy, w, h, objectness];
     values.extend_from_slice(&classes);
@@ -26,18 +26,18 @@ fn rows(items: &[Vec<f32>]) -> Vec<f32> {
 /// spec §8.7(A)3 / §14.13, as a single 6-candidate fixture:
 ///   A  keep      obj 7/8  * c0 15/16 = 0.8203125
 ///   B  suppress  obj 3/4  * c1 15/16 = 0.703125    (IoU(A,B) = 0.8824 -- different class!)
-///   E  keep      obj 3/4  * c2 7/8   = 0.65625     (IoU(A,E) = 0.1428, below 0.35)
-///   F  suppress  obj 1/2  * c2 15/16 = 0.46875     (IoU(E,F) = 0.8824)
+///   E  keep      obj 3/4  * c1 7/8   = 0.65625     (IoU(A,E) = 0.1428, below 0.35)
+///   F  suppress  obj 1/2  * c1 15/16 = 0.46875     (IoU(E,F) = 0.8824)
 ///   C  dropped   obj 1/2  * c1 3/4   = 0.375       (fails the class-score gate)
 ///   D  dropped   obj 3/8  = 0.375                  (fails the objectness gate)
 fn a3_fixture() -> Vec<f32> {
     rows(&[
-        row(100.0, 100.0, 64.0, 64.0, 0.875, [0.9375, 0.0, 0.0]), // A -> (68,68,132,132)
-        row(104.0, 100.0, 64.0, 64.0, 0.75, [0.0, 0.9375, 0.0]),  // B -> (72,68,136,132)
-        row(532.0, 532.0, 64.0, 64.0, 0.5, [0.0, 0.75, 0.0]),     // C: score gate
-        row(632.0, 632.0, 64.0, 64.0, 0.375, [0.0, 1.0, 0.0]),    // D: objectness gate
-        row(148.0, 100.0, 64.0, 64.0, 0.75, [0.0, 0.0, 0.875]),   // E -> (116,68,180,132)
-        row(152.0, 100.0, 64.0, 64.0, 0.5, [0.0, 0.0, 0.9375]),   // F -> (120,68,184,132)
+        row(100.0, 100.0, 64.0, 64.0, 0.875, [0.9375, 0.0]), // A -> (68,68,132,132)
+        row(104.0, 100.0, 64.0, 64.0, 0.75, [0.0, 0.9375]),  // B -> (72,68,136,132)
+        row(532.0, 532.0, 64.0, 64.0, 0.5, [0.0, 0.75]),     // C: score gate
+        row(632.0, 632.0, 64.0, 64.0, 0.375, [0.0, 1.0]),    // D: objectness gate
+        row(148.0, 100.0, 64.0, 64.0, 0.75, [0.0, 0.875]),   // E -> (116,68,180,132)
+        row(152.0, 100.0, 64.0, 64.0, 0.5, [0.0, 0.9375]),   // F -> (120,68,184,132)
     ])
 }
 
@@ -49,15 +49,15 @@ fn constants_match_the_spec() {
     assert_eq!(CLASS_SCORE_THRESHOLD, 0.4);
     assert_eq!(NMS_IOU_THRESHOLD, 0.35);
     assert_eq!(MAX_DET, 300);
-    assert_eq!(N_CLASSES, 3);
-    assert_eq!(ROW_STRIDE, 8);
+    assert_eq!(N_CLASSES, 2);
+    assert_eq!(ROW_STRIDE, 7);
 }
 
 // ------------------------------------------------------------ gates + decode
 
 #[test]
 fn filter_candidates_decodes_xywh_to_xyxy() {
-    let candidates = filter_candidates(&row(100.0, 100.0, 64.0, 64.0, 0.875, [0.9375, 0.0, 0.0]));
+    let candidates = filter_candidates(&row(100.0, 100.0, 64.0, 64.0, 0.875, [0.9375, 0.0]));
 
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].xyxy, [68.0, 68.0, 132.0, 132.0]);
@@ -68,8 +68,8 @@ fn filter_candidates_decodes_xywh_to_xyxy() {
 #[test]
 fn objectness_gate_is_strictly_greater() {
     // 0.375 < 0.4 -> dropped; 0.40625 > 0.4 -> kept (its class score also clears 0.4).
-    let dropped = filter_candidates(&row(10.0, 10.0, 4.0, 4.0, 0.375, [1.0, 0.0, 0.0]));
-    let kept = filter_candidates(&row(10.0, 10.0, 4.0, 4.0, 0.40625, [1.0, 0.0, 0.0]));
+    let dropped = filter_candidates(&row(10.0, 10.0, 4.0, 4.0, 0.375, [1.0, 0.0]));
+    let kept = filter_candidates(&row(10.0, 10.0, 4.0, 4.0, 0.40625, [1.0, 0.0]));
 
     assert!(dropped.is_empty());
     assert_eq!(kept.len(), 1);
@@ -79,8 +79,8 @@ fn objectness_gate_is_strictly_greater() {
 #[test]
 fn class_score_gate_is_a_second_separate_strictly_greater_filter() {
     // spec §8.3 step 4: objectness clears 0.4 but objectness*class does not.
-    let dropped = filter_candidates(&row(10.0, 10.0, 4.0, 4.0, 0.5, [0.0, 0.75, 0.0]));
-    let kept = filter_candidates(&row(10.0, 10.0, 4.0, 4.0, 0.5, [0.0, 0.875, 0.0]));
+    let dropped = filter_candidates(&row(10.0, 10.0, 4.0, 4.0, 0.5, [0.0, 0.75]));
+    let kept = filter_candidates(&row(10.0, 10.0, 4.0, 4.0, 0.5, [0.0, 0.875]));
 
     assert!(dropped.is_empty(), "0.5 * 0.75 = 0.375 <= 0.4");
     assert_eq!(kept.len(), 1, "0.5 * 0.875 = 0.4375 > 0.4");
@@ -89,18 +89,18 @@ fn class_score_gate_is_a_second_separate_strictly_greater_filter() {
 
 #[test]
 fn best_class_wins_and_sets_the_class_index() {
-    let candidates = filter_candidates(&row(10.0, 10.0, 4.0, 4.0, 1.0, [0.5, 0.75, 0.9375]));
+    let candidates = filter_candidates(&row(10.0, 10.0, 4.0, 4.0, 1.0, [0.5, 0.9375]));
 
     assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].class_index, 2);
+    assert_eq!(candidates[0].class_index, 1);
     assert_eq!(candidates[0].score, 0.9375);
 }
 
 #[test]
 fn filter_candidates_preserves_input_order() {
     let candidates = filter_candidates(&rows(&[
-        row(10.0, 10.0, 4.0, 4.0, 1.0, [0.5, 0.0, 0.0]),
-        row(20.0, 20.0, 4.0, 4.0, 1.0, [0.0, 0.9375, 0.0]),
+        row(10.0, 10.0, 4.0, 4.0, 1.0, [0.5, 0.0]),
+        row(20.0, 20.0, 4.0, 4.0, 1.0, [0.0, 0.9375]),
     ]));
 
     assert_eq!(candidates.len(), 2);
@@ -154,7 +154,7 @@ fn a3_class_agnostic_nms_with_both_confidence_gates() {
     assert_eq!(survivors[0].class_index, 0);
     assert_eq!(survivors[0].score, 0.8203125);
     assert_eq!(survivors[1].xyxy, [116.0, 68.0, 180.0, 132.0]);
-    assert_eq!(survivors[1].class_index, 2);
+    assert_eq!(survivors[1].class_index, 1);
     assert_eq!(survivors[1].score, 0.65625);
 }
 

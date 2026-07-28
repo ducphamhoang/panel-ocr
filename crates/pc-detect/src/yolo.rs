@@ -14,7 +14,10 @@ pub const CLASS_SCORE_THRESHOLD: f32 = 0.4;
 pub const NMS_IOU_THRESHOLD: f32 = 0.35;
 /// Upstream caps survivors *after* NMS (spec §8.3 step 4).
 pub const MAX_DET: usize = 300;
-pub const N_CLASSES: usize = 3;
+/// The model predicts 2 classes (`eng = 0`, `ja = 1`); the third language state
+/// (`unknown`) is assigned in code, not by the model (upstream `yolov5_utils.py:135`
+/// and `textblock.py:9-15`).
+pub const N_CLASSES: usize = 2;
 /// `cx, cy, w, h, objectness` + one probability per class.
 pub const ROW_STRIDE: usize = 5 + N_CLASSES;
 
@@ -182,6 +185,7 @@ pub fn class_to_language(class_index: u8) -> Option<Language> {
     match class_index {
         0 => Some(Language::English),
         1 => Some(Language::Japanese),
+        // Retained for the spec mapping; the real model has no class 2.
         2 => None,
         _ => {
             tracing::warn!(class_index, "unknown detector class index");
