@@ -17,8 +17,18 @@ fn replay_detector() -> (tempfile::TempDir, ReplayDetector) {
     (dir, detector)
 }
 
-fn page_json(output: &pc_detect::DetectOutput) -> String {
-    serde_json::to_string(&output.page).expect("PageDataRaw is serializable")
+/// resolved 2026-07-28 (spec §16.7, joint-architect decision): this used to be
+/// `page_json()`, serializing `output.page` to a JSON string. That is impossible for a
+/// memory-mode output — `ImageHandle`'s hand-written `Serialize` (§2.3) deliberately errors
+/// on `path.is_none()`, and §4.1 memory mode necessarily yields path-less handles. The
+/// properties these three call sites actually assert (stage-wrapper equivalence, run-to-run
+/// determinism, determinism under a shared detector) only need a deterministic, comparable
+/// representation of the page; JSON was a stand-in for one. `PageDataRaw: PartialEq`
+/// compares every field (handles by `path`), which is strictly stronger than string
+/// equality. JSON byte-stability itself stays covered by
+/// `detect_output_round_trips_through_json`, which runs in disk mode.
+fn page_of(output: &pc_detect::DetectOutput) -> pc_core::PageDataRaw {
+    output.page.clone()
 }
 
 // ------------------------------------------------------------ mask_coverage (§8.7(A)5)
@@ -284,7 +294,9 @@ fn detect_stage_matches_the_free_function() {
     )
     .expect("detection succeeds");
 
-    assert_eq!(page_json(&direct), page_json(&via_trait));
+    // resolved 2026-07-28 (§16.7): memory-mode pages cannot be JSON-serialized
+    // (ImageHandle guard); compare the `PageDataRaw` structurally instead.
+    assert_eq!(page_of(&direct), page_of(&via_trait));
     assert_eq!(direct.analytics, via_trait.analytics);
     assert_eq!(DetectStage::STEP, pc_core::Step::Detect);
 }
@@ -342,10 +354,12 @@ fn detect_input_round_trips_through_json() {
 
 #[test]
 fn a6_replay_run_is_byte_identical_across_ten_runs() {
-    // spec §8.7(A)6, hand-written half: the JSON must be byte-stable run to run.
+    // spec §8.7(A)6, hand-written half: the emitted page must be stable run to run.
+    // resolved 2026-07-28 (§16.7): memory-mode pages cannot be JSON-serialized (ImageHandle
+    // guard); compare `PageDataRaw` structurally instead of comparing JSON strings.
     let (_dir, detector) = replay_detector();
 
-    let first = page_json(
+    let first = page_of(
         &pc_detect::run(
             memory_input(synthetic_page(REPLAY_SIZE.0, REPLAY_SIZE.1)),
             &detector,
@@ -354,7 +368,7 @@ fn a6_replay_run_is_byte_identical_across_ten_runs() {
     );
 
     for run in 1..10 {
-        let next = page_json(
+        let next = page_of(
             &pc_detect::run(
                 memory_input(synthetic_page(REPLAY_SIZE.0, REPLAY_SIZE.1)),
                 &detector,
@@ -370,10 +384,12 @@ fn a6_replay_run_is_byte_identical_across_ten_runs() {
 fn a6_replay_run_is_identical_under_concurrent_shared_detector_use() {
     // spec §8.7(A)6 / §4.5: `run()` is single-image and single-threaded; the
     // parallelism lives above it and shares ONE `&dyn TextDetector` across threads.
+    // resolved 2026-07-28 (§16.7): memory-mode pages cannot be JSON-serialized (ImageHandle
+    // guard); compare `PageDataRaw` structurally instead of comparing JSON strings.
     let (_dir, detector) = replay_detector();
     let shared: &dyn TextDetector = &detector;
 
-    let expected = page_json(
+    let expected = page_of(
         &pc_detect::run(
             memory_input(synthetic_page(REPLAY_SIZE.0, REPLAY_SIZE.1)),
             shared,
@@ -381,11 +397,11 @@ fn a6_replay_run_is_identical_under_concurrent_shared_detector_use() {
         .expect("detection succeeds"),
     );
 
-    let results: Vec<String> = std::thread::scope(|scope| {
+    let results: Vec<pc_core::PageDataRaw> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..8)
             .map(|_| {
                 scope.spawn(move || {
-                    page_json(
+                    page_of(
                         &pc_detect::run(
                             memory_input(synthetic_page(REPLAY_SIZE.0, REPLAY_SIZE.1)),
                             shared,
@@ -402,7 +418,7 @@ fn a6_replay_run_is_identical_under_concurrent_shared_detector_use() {
     });
 
     assert_eq!(results.len(), 8);
-    assert!(results.iter().all(|json| *json == expected));
+    assert!(results.iter().all(|page| *page == expected));
     assert_eq!(detector.calls(), 9);
 }
 

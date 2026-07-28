@@ -1468,6 +1468,48 @@ Resolved during test-drafting for `pc-detect`/`pc-imageops` (D2, D3, D5, D6, D7,
 
 ---
 
+## 16.7 D7 frozen-test vs. `pc-core` contract resolution (joint-architect, 2026-07-28)
+
+Raised by Codex during D7 implementation and correctly escalated rather than patched around:
+three frozen tests in `crates/pc-detect/tests/d7_run.rs` compared `serde_json::to_string(&output.page)`
+on outputs built from `memory_input()`. That can never succeed. §4.1 memory mode (both
+destinations `None`) must leave `base_image`/`raw_mask` path-less, and `ImageHandle`'s
+hand-written `Serialize` (§2.3) deliberately errors on `path.is_none()`. The frozen tests and
+the frozen `pc-core` contract were therefore genuinely contradictory, not merely mismatched.
+
+1. **The `ImageHandle::Serialize` guard stands, unchanged.** It is the whole point of §2.3: a
+   path-less handle must never reach a checkpoint JSON that a later `--resume` would try to
+   load from disk. Neither the guard nor `ensure_materialized` was touched. Nothing about
+   disk-checkpoint safety is weakened by this decision.
+2. **The three tests were asserting the wrong mechanism, not the wrong property.** Stage-wrapper
+   equivalence (`detect_stage_matches_the_free_function`), run-to-run determinism
+   (`a6_replay_run_is_byte_identical_across_ten_runs`) and determinism under a shared
+   `&dyn TextDetector` (`a6_replay_run_is_identical_under_concurrent_shared_detector_use`) need
+   a deterministic *comparable representation* of the emitted page. JSON was a convenient
+   stand-in for one; serialization is not itself the property under test. `PageDataRaw` therefore
+   **derives `PartialEq`** (`crates/pc-core/src/page.rs`) and those three sites compare pages
+   structurally via a `page_of()` helper. Structural equality is strictly stronger than string
+   equality here: it compares every field, with `ImageHandle` compared by `path` (§2.3's
+   already-decided `PartialEq`), and it cannot be satisfied by two differently-shaped pages that
+   happen to serialize alike.
+3. **Rejected alternative: switch those three tests to disk mode.** It would have kept the
+   literal "JSON is byte-identical" wording of §8.7(A)6, but it drags filesystem I/O into a pure
+   determinism test, and the 8-thread concurrency test would need either one shared destination
+   path (8 threads racing on the same two PNG writes — a false failure, and not what §4.5 is
+   about) or per-thread paths (which then differ in the very JSON being compared). Worse test for
+   no gain.
+4. **§8.7(A)6's wording is amended**: "produces a `PageDataRaw` that is identical across 10 runs
+   and across 1 vs 8 threads" — identity is checked structurally in memory mode. JSON
+   byte-stability is still covered, in the mode where it is actually meaningful: disk mode, by
+   `detect_output_round_trips_through_json`, and later by the F1-gated `assert_json_snapshot!`
+   site, which must use materialized (disk-mode) handles for exactly the reason above.
+5. **Frozen-test amendment recorded.** Per CLAUDE.md this edit was made only under joint
+   Technical-Architecture + Senior-Rust-Engineer sign-off; every other test in `d7_run.rs` and
+   `tests/common/mod.rs` (including `memory_input`) is untouched, and the tests remain frozen
+   against further unilateral edits.
+
+---
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

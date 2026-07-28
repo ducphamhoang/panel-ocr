@@ -18,6 +18,7 @@ fn rgb_from_gray_rows(rows: &[&[u8]]) -> RgbImage {
 // ------------------------------------------------------------ §8.7(A)1 table
 
 #[test]
+#[allow(clippy::type_complexity)]
 fn a1_calculate_new_size_and_scale_matches_the_spec_table() {
     // spec §8.7(A)1, transcribed literally; w = 1000 throughout.
     let cases: [(u32, u32, u32, (u32, u32, f64)); 7] = [

@@ -5,7 +5,11 @@ use crate::{error::StageError, geometry::Rect, image_handle::ImageHandle, langua
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `PartialEq` (added 2026-07-28, spec §16.7) exists so determinism/stage-conformance tests
+/// can compare two `PageDataRaw` values structurally without serializing them — a memory-mode
+/// page holds path-less `ImageHandle`s, which `ImageHandle::Serialize` deliberately rejects
+/// (§2.3). `ImageHandle`'s own `PartialEq` compares `path` only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PageDataRaw {
     pub schema_version: u32,
     pub original_path: PathBuf,

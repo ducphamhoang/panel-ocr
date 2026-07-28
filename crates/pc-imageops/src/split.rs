@@ -108,7 +108,7 @@ pub fn search_ranges(image_size: (u32, u32), params: &SplitParams) -> Vec<Range<
                 .saturating_sub(u64::from(params.tolerance_margin))
                 .max(1);
             let end = (centre + u64::from(params.tolerance_margin)).min(u64::from(height));
-            (start < end).then(|| start as u32..end as u32)
+            (start < end).then_some(start as u32..end as u32)
         })
         .collect()
 }
@@ -159,6 +159,9 @@ pub fn calculate_best_splits(image: &RgbImage, params: &SplitParams) -> Vec<u32>
 ///
 /// `StageError::InvalidInput` if `splits` is not strictly increasing or any row is
 /// outside `1..height`.
+// A generic type alias here would just move the same signature elsewhere; it's plain
+// pixel-buffer plumbing, not accidental nesting.
+#[allow(clippy::type_complexity)]
 pub fn split_image<P: Pixel + 'static>(
     image: &ImageBuffer<P, Vec<P::Subpixel>>,
     splits: &[u32],

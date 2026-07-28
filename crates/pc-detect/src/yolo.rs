@@ -46,7 +46,7 @@ impl LetterboxGeometry {
     /// spec §8.3 step 4 computes `(im_w / (net - dw), im_h / (net - dh))`. Letterboxing
     /// scales both axes by the same `r`, so both components are `1/r` — one scalar.
     pub fn resize_ratio(&self) -> f32 {
-        todo!("D5: 1/r from the letterbox geometry")
+        self.image_size.0 as f32 / (self.net_size as f32 - self.dw)
     }
 }
 
@@ -55,12 +55,59 @@ impl LetterboxGeometry {
 /// `rows` is the flattened `[N, ROW_STRIDE]` block output; its length must be a
 /// multiple of `ROW_STRIDE`. Output order is input order (NMS sorts afterwards).
 pub fn filter_candidates(rows: &[f32]) -> Vec<Candidate> {
-    todo!("D5: objectness gate, best class, class-score gate, xywh->xyxy")
+    assert_eq!(
+        rows.len() % ROW_STRIDE,
+        0,
+        "YOLO output length must be a multiple of ROW_STRIDE"
+    );
+
+    rows.chunks_exact(ROW_STRIDE)
+        .filter_map(|row| {
+            let objectness = row[4];
+            if objectness <= OBJECTNESS_THRESHOLD {
+                return None;
+            }
+
+            let (class_index, class_probability) = row[5..]
+                .iter()
+                .copied()
+                .enumerate()
+                .max_by(|(_, left), (_, right)| left.total_cmp(right))?;
+            let score = objectness * class_probability;
+            if score <= CLASS_SCORE_THRESHOLD {
+                return None;
+            }
+
+            let half_width = row[2] / 2.0;
+            let half_height = row[3] / 2.0;
+            Some(Candidate {
+                xyxy: [
+                    row[0] - half_width,
+                    row[1] - half_height,
+                    row[0] + half_width,
+                    row[1] + half_height,
+                ],
+                class_index: class_index as u8,
+                score,
+            })
+        })
+        .collect()
 }
 
 /// Intersection over union of two `[x1, y1, x2, y2]` boxes; `0.0` when the union is 0.
 pub fn iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
-    todo!("D5: IoU")
+    let intersection_width = (a[2].min(b[2]) - a[0].max(b[0])).max(0.0);
+    let intersection_height = (a[3].min(b[3]) - a[1].max(b[1])).max(0.0);
+    let intersection = intersection_width * intersection_height;
+    let area_a = (a[2] - a[0]).max(0.0) * (a[3] - a[1]).max(0.0);
+    let area_b = (b[2] - b[0]).max(0.0) * (b[3] - b[1]).max(0.0);
+    let union = area_a + area_b - intersection;
+
+    if union > 0.0 {
+        intersection / union
+    } else {
+        0.0
+    }
 }
 
 /// Greedy NMS, descending score, `NMS_IOU_THRESHOLD`, survivors capped at `MAX_DET`.
@@ -71,7 +118,24 @@ pub fn iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
 /// **class-agnostic** NMS to remove the duplicate at the source; the surviving box's
 /// language is used as-is. See spec §14.13 / §15.1.
 pub fn nms(candidates: Vec<Candidate>) -> Vec<Candidate> {
-    todo!("D5: class-agnostic greedy NMS")
+    let mut ordered = candidates;
+    ordered.sort_by(|left, right| right.score.total_cmp(&left.score));
+
+    let mut survivors = Vec::with_capacity(ordered.len().min(MAX_DET));
+    // DEVIATION(13): suppress across all classes to eliminate duplicate balloon
+    // detections; upstream performs per-class NMS (§14.13 / §15.1).
+    for candidate in ordered {
+        if survivors
+            .iter()
+            .all(|kept: &Candidate| iou(&candidate.xyxy, &kept.xyxy) <= NMS_IOU_THRESHOLD)
+        {
+            survivors.push(candidate);
+            if survivors.len() == MAX_DET {
+                break;
+            }
+        }
+    }
+    survivors
 }
 
 /// Letterboxed coords -> base-image coords (spec §8.3 step 4): multiply by
@@ -81,22 +145,53 @@ pub fn nms(candidates: Vec<Candidate>) -> Vec<Candidate> {
 /// port (upstream's yolov5 `clip_coords`), and is required for `run()` to produce a
 /// `PageDataRaw` that passes its own `validate()` on frame-overhanging detections.
 pub fn rescale(candidates: &[Candidate], geometry: &LetterboxGeometry) -> Vec<RawBlock> {
-    todo!("D5: rescale + clip to image bounds")
+    let ratio_x = geometry.image_size.0 as f32 / (geometry.net_size as f32 - geometry.dw);
+    let ratio_y = geometry.image_size.1 as f32 / (geometry.net_size as f32 - geometry.dh);
+    let max_x = geometry.image_size.0 as i32;
+    let max_y = geometry.image_size.1 as i32;
+
+    candidates
+        .iter()
+        .map(|candidate| {
+            let x1 = (candidate.xyxy[0] * ratio_x) as i32;
+            let y1 = (candidate.xyxy[1] * ratio_y) as i32;
+            let x2 = (candidate.xyxy[2] * ratio_x) as i32;
+            let y2 = (candidate.xyxy[3] * ratio_y) as i32;
+            RawBlock {
+                rect: pc_core::Rect::new(
+                    x1.clamp(0, max_x),
+                    y1.clamp(0, max_y),
+                    x2.clamp(0, max_x),
+                    y2.clamp(0, max_y),
+                ),
+                class_index: candidate.class_index,
+                confidence: round3(candidate.score),
+            }
+        })
+        .collect()
 }
 
 /// Round to 3 decimals (upstream `np.round(..., 3)`, spec §8.3 step 4) so golden JSON
 /// is stable.
 pub fn round3(value: f32) -> f32 {
-    todo!("D5: round to 3 decimals")
+    (value * 1_000.0).round() / 1_000.0
 }
 
 /// spec §8.3 step 4: `0 => English`, `1 => Japanese`, `2 => None`; any other index is
 /// `None` plus a `WARN` (a model swap must be diagnosable, not silently mapped).
 pub fn class_to_language(class_index: u8) -> Option<Language> {
-    todo!("D5: class index -> language")
+    match class_index {
+        0 => Some(Language::English),
+        1 => Some(Language::Japanese),
+        2 => None,
+        _ => {
+            tracing::warn!(class_index, "unknown detector class index");
+            None
+        }
+    }
 }
 
 /// `filter_candidates` -> `nms` -> `rescale`, i.e. the whole of spec §8.3 step 4.
 pub fn postprocess(rows: &[f32], geometry: &LetterboxGeometry) -> Vec<RawBlock> {
-    todo!("D5: compose the postprocess")
+    rescale(&nms(filter_candidates(rows)), geometry)
 }

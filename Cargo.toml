@@ -39,7 +39,10 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 indicatif          = "0.17.9"
 
 # --- ml (feature-gated; pinned exact per decisions doc #2) ---
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray"] }
+# "std" is required here (not just "ndarray"): ort's own "ndarray" feature only
+# pulls in the ndarray crate, it does not enable `ndarray/std` -- and ndarray 0.17
+# gates `NdFloat` behind that feature. ort's "std" feature is what turns it on.
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray", "std"] }
 
 # --- model acquisition ---
 reqwest = { version = "0.12.9", default-features = false, features = ["rustls-tls", "blocking", "stream"] }
