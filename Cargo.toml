@@ -48,7 +48,18 @@ indicatif          = "0.17.9"
 # "std" is required here (not just "ndarray"): ort's own "ndarray" feature only
 # pulls in the ndarray crate, it does not enable `ndarray/std` -- and ndarray 0.17
 # gates `NdFloat` behind that feature. ort's "std" feature is what turns it on.
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray", "std"] }
+# `download-binaries` and `copy-dylibs` are ort defaults that `default-features = false`
+# unintentionally switches off; without them nothing links (ort-sys/build/main.rs's
+# `cargo:rustc-cfg=link_error`). `download-binaries` also requires exactly one TLS
+# feature; use `tls-rustls` to match the workspace's reqwest rustls stack and avoid
+# introducing a native TLS/OpenSSL dependency. No `api-NN` feature is needed: ort-sys/src/version.rs
+# computes ORT_API_VERSION as 17 + V18 + ... + V24, so the featureless state resolves
+# to API 17, which any ONNX Runtime >= 1.17 serves, including the prebuilt archive
+# fetched by `download-binaries`. Restricted/offline builders can suppress the build-time
+# download with ORT_SKIP_DOWNLOAD=1, ORT_OFFLINE=1, or CARGO_NET_OFFLINE=1 (ort-sys/build/vars.rs:9).
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+    "ndarray", "std", "download-binaries", "copy-dylibs", "tls-rustls",
+] }
 
 # --- model acquisition ---
 reqwest = { version = "0.12.9", default-features = false, features = ["rustls-tls", "blocking", "stream"] }
