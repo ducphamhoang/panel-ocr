@@ -1,0 +1,37 @@
+[package]
+name        = "pc-detect"
+description = "panel-ocr STAGE 1: text detection (spec §8) -- TextDetector trait, YOLO postprocess, mask refinement."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[features]
+# `onnx` is NOT default: the whole point of the `TextDetector` trait (§1 rule 4) is
+# that every test, and the entire pipeline below this stage, works with mocks and
+# replay fixtures and no model files at all.
+default = []
+onnx    = ["dep:ort"]
+# Exposes MockDetector / ReplayDetector to other crates' tests (§7.2).
+testkit = []
+
+[dependencies]
+pc-core     = { path = "../pc-core" }
+# §16.5 item 1: every stage crate depends on pc-config -- the stage's config travels
+# by value inside its Input (§3).
+pc-config   = { path = "../pc-config" }
+pc-imageops = { path = "../pc-imageops" }
+image       = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+tracing     = { workspace = true }
+ort         = { workspace = true, optional = true }
+
+[dev-dependencies]
+pc-testkit = { path = "../pc-testkit" }
+tempfile   = { workspace = true }
+# Self dev-dependency so integration tests (which link the crate as an external lib,
+# without `cfg(test)`) can see the `testkit`-gated mock backends.
+pc-detect  = { path = ".", features = ["testkit"] }

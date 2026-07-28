@@ -1,0 +1,20 @@
+[package]
+name        = "pc-imageops"
+description = "Pure image algorithms shared by panel-ocr stages: long-strip splitting/stitching."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+# spec §1 rule 2: shared pixel math lives here and depends on nothing but `pc-core`.
+# Deliberately NOT `pc-config` -- these algorithms take plain parameter structs so they
+# stay usable from `xtask` diagnostics and from any stage without a profile in hand.
+pc-core = { path = "../pc-core" }
+image   = { workspace = true }
+
+[dev-dependencies]
+pc-testkit = { path = "../pc-testkit" }
+approx     = { workspace = true }
