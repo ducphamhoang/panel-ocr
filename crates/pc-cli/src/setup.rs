@@ -80,6 +80,7 @@ pub fn build_clean_options(
     args: &CleanArgs,
     profile: Profile,
     image_count: usize,
+    cache_root: &Path,
 ) -> PipelineOptions {
     let skips = args.skip_flags();
     if skips.implies_more() {
@@ -101,12 +102,7 @@ pub fn build_clean_options(
     let threads = resolve_threads(configured_threads, image_count);
     // Per-image artifacts go under `{root}/images` so that `cleanup_cache`'s
     // `remove_dir_all` (and `cache clear --images`) can never reach `{root}/models`.
-    let cache_dir = paths::image_cache_dir(
-        &args
-            .cache_dir
-            .clone()
-            .unwrap_or_else(paths::default_cache_dir),
-    );
+    let cache_dir = paths::image_cache_dir(cache_root);
 
     PipelineOptions {
         profile,

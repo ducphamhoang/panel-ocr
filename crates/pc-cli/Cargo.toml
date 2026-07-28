@@ -16,14 +16,21 @@ path = "src/main.rs"
 name = "pc_cli"
 path = "src/lib.rs"
 
+[features]
+default = []
+# Keep the whole pipeline runnable with mocks and replay fixtures without model files or
+# ONNX Runtime; the real backend is opt-in because the spec requires this no-onnx default.
+onnx = ["pc-detect/onnx"]
+
 [dependencies]
 pc-core     = { path = "../pc-core" }
 pc-config   = { path = "../pc-config" }
 pc-pipeline = { path = "../pc-pipeline" }
 pc-export   = { path = "../pc-export" }
-# §16.12 item 2: v1 ships the mock/replay backends because D1/D4 are deferred and the
-# `onnx` provider is not buildable yet. Drop the feature when D4 lands.
+# The ONNX feature is non-default so the whole pipeline remains runnable on mocks and
+# replay fixtures with no model files and no ONNX Runtime, as required by spec §7.2.
 pc-detect   = { path = "../pc-detect", features = ["testkit"] }
+pc-models   = { path = "../pc-models" }
 
 anyhow             = { workspace = true }
 clap               = { workspace = true }

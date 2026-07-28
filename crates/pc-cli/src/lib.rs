@@ -10,6 +10,7 @@
 pub mod args;
 pub mod detector;
 pub mod logging;
+pub mod models;
 pub mod paths;
 pub mod setup;
 
@@ -18,7 +19,7 @@ pub use args::{
     ReportFormatArg,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use pc_pipeline::{Checkpointing, ImageOutcome, PipelineCtx, PipelineOptions, EXIT_FATAL, EXIT_OK};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -42,7 +43,6 @@ pub fn run(cli: Cli) -> i32 {
     match result {
         Ok(code) => code,
         Err(error) => {
-            tracing::error!("{error:#}");
             eprintln!("error: {error:#}");
             EXIT_FATAL
         }
@@ -55,9 +55,10 @@ pub fn run(cli: Cli) -> i32 {
 ///   1. expand `paths` (`pc_pipeline::expand_inputs`); an empty result is fatal (§5.3);
 ///   2. load the app config + profile (`setup::load_app_config`/`load_profile`) and
 ///      build options (`setup::build_clean_options`) — all three already implemented;
-///   3. build the detector provider (`detector::build_provider`); an `Err` is fatal and
+///   3. build the detector provider (`detector::build_provider`); ONNX resolves and verifies
+///      its model on first detection use, while an `Err` at construction remains fatal and
 ///      must print [`detector::ONNX_UNAVAILABLE`] verbatim for `--detector onnx`
-///      (§16.12 item 2);
+///      (§16.12 item 2, §16.18);
 ///   4. create the cache dir (fatal on failure, §5.3) and run
 ///      `pc_pipeline::run_batch`;
 ///   5. always print `BatchSummary::render()`; print the analytics tables unless
@@ -75,8 +76,14 @@ pub fn run_clean(args: CleanArgs) -> Result<i32> {
         args.profile_path.as_deref(),
         &config,
     )?;
-    let options = setup::build_clean_options(&args, profile, images.len());
-    let provider = detector::build_provider(&args.detector, args.model_path.as_deref())?;
+    let cache_root = paths::resolve_cache_root(args.cache_dir.as_deref(), &config);
+    let provider = detector::build_provider(
+        &args.detector,
+        args.model_path.as_deref(),
+        profile.text_detector.model_path(),
+        &cache_root,
+    )?;
+    let options = setup::build_clean_options(&args, profile, images.len(), &cache_root);
     run_pipeline(&images, options, provider.as_ref(), !args.hide_analytics)
 }
 
@@ -103,12 +110,14 @@ pub fn run_ocr(args: OcrArgs) -> Result<i32> {
              the OCR report will be empty (spec §16.12 item 4)"
         );
     }
-    let cache_dir = paths::image_cache_dir(
-        &args
-            .cache_dir
-            .clone()
-            .unwrap_or_else(paths::default_cache_dir),
-    );
+    let cache_root = paths::resolve_cache_root(args.cache_dir.as_deref(), &config);
+    let provider = detector::build_provider(
+        &args.detector,
+        None,
+        profile.text_detector.model_path(),
+        &cache_root,
+    )?;
+    let cache_dir = paths::image_cache_dir(&cache_root);
     let options = PipelineOptions {
         threads: pc_pipeline::resolve_threads(profile.general.max_threads, images.len()),
         profile,
@@ -116,9 +125,12 @@ pub fn run_ocr(args: OcrArgs) -> Result<i32> {
         performing_ocr: true,
         ..PipelineOptions::default()
     };
-    let provider = detector::build_provider(&args.detector, None)?;
     let ctx = PipelineCtx::new(provider.as_ref());
     let summary = pc_pipeline::run_batch(&images, &options, &ctx);
+    if let Some(message) = summary.fatal_model_message() {
+        cleanup_cache(&options)?;
+        return Err(anyhow!(message));
+    }
     let report = ocr_report(&summary, args.format.into());
     match args.output {
         Some(path) => std::fs::write(&path, report)
@@ -188,16 +200,21 @@ pub fn run_profile(command: ProfileCommand) -> Result<i32> {
 /// spec §13.1's `cache show|clear`.
 pub fn run_cache(command: CacheCommand) -> Result<i32> {
     let config = setup::load_app_config()?;
-    let cache_dir = config.cache_dir.unwrap_or_else(paths::default_cache_dir);
+    let cli_override = match &command {
+        CacheCommand::Show { cache_dir } | CacheCommand::Clear { cache_dir, .. } => {
+            cache_dir.as_deref()
+        }
+    };
+    let cache_dir = paths::resolve_cache_root(cli_override, &config);
     match command {
-        CacheCommand::Show => {
+        CacheCommand::Show { .. } => {
             println!(
                 "{}\t{} bytes",
                 cache_dir.display(),
                 directory_size(&cache_dir)?
             );
         }
-        CacheCommand::Clear { models, images } => {
+        CacheCommand::Clear { models, images, .. } => {
             let clear_all = !models && !images;
             // Per category, never the whole root: `--images` must not take `models/` with
             // it (task D1's weights are expensive to re-download), and `--models` must not
@@ -213,19 +230,95 @@ pub fn run_cache(command: CacheCommand) -> Result<i32> {
     Ok(EXIT_OK)
 }
 
-/// spec §13.1's `models download|verify|path`. `download`/`verify` require task D1 and
-/// must fail with the same kind of explicit "not in this build" message as
-/// [`detector::ONNX_UNAVAILABLE`] (§16.12 item 2); `path` works today.
+/// spec §13.1's `models download|verify|path`.
 pub fn run_models(command: ModelsCommand) -> Result<i32> {
     match command {
-        ModelsCommand::Download | ModelsCommand::Verify => bail!(
-            "model download and verification are not available in this build (task D1 is not implemented); {}",
-            detector::ONNX_UNAVAILABLE
-        ),
-        ModelsCommand::Path => {
-            let config = setup::load_app_config()?;
-            let cache_dir = config.cache_dir.unwrap_or_else(paths::default_cache_dir);
-            println!("{}", paths::models_dir(&cache_dir).display());
+        ModelsCommand::Download { cache_dir } => {
+            let models_dir = models::resolve_managed_models_dir(cache_dir.as_deref())?;
+            let fetcher = pc_models::ReqwestFetcher::new();
+            let mut progress = models::progress_sink();
+            for spec in pc_models::ALL {
+                let path = pc_models::ensure_available(
+                    spec,
+                    &models_dir,
+                    None,
+                    &fetcher,
+                    progress.as_mut(),
+                )
+                .with_context(|| format!("failed to install model `{}`", spec.name))?;
+                println!("{}\t{}", spec.name, path.display());
+            }
+            Ok(EXIT_OK)
+        }
+        ModelsCommand::Verify { cache_dir } => {
+            let models_dir = models::resolve_managed_models_dir(cache_dir.as_deref())?;
+            let mut all_ok = true;
+            for spec in pc_models::ALL {
+                let resolution = pc_models::resolve(spec, &models_dir, None)?;
+                match resolution {
+                    pc_models::Resolution::Missing(path) => {
+                        all_ok = false;
+                        println!("{}\tMISSING\t{}", spec.name, path.display());
+                    }
+                    pc_models::Resolution::Cached(path) => {
+                        if let Some(expected_size) = models::expected_size(spec) {
+                            let actual_size = std::fs::metadata(&path)
+                                .with_context(|| {
+                                    format!("failed to inspect model `{}`", spec.name)
+                                })?
+                                .len();
+                            if actual_size != expected_size {
+                                all_ok = false;
+                                println!(
+                                    "{}\tSIZE MISMATCH\t{}\tactual={}\texpected={}",
+                                    spec.name,
+                                    path.display(),
+                                    actual_size,
+                                    expected_size
+                                );
+                                continue;
+                            }
+                        }
+                        match pc_models::verify_sha256(&path, spec.sha256) {
+                            Ok(()) => println!("{}\tOK\t{}", spec.name, path.display()),
+                            Err(pc_models::ModelError::HashMismatch {
+                                actual, expected, ..
+                            }) => {
+                                all_ok = false;
+                                println!(
+                                    "{}\tHASH MISMATCH\t{}\tactual={}\texpected={}",
+                                    spec.name,
+                                    path.display(),
+                                    actual,
+                                    expected
+                                );
+                            }
+                            Err(error) => {
+                                all_ok = false;
+                                println!("{}\tERROR\t{}\t{}", spec.name, path.display(), error);
+                            }
+                        }
+                    }
+                    pc_models::Resolution::Override(_) => {
+                        unreachable!("managed model verification never supplies an override")
+                    }
+                }
+            }
+            Ok(if all_ok { EXIT_OK } else { EXIT_FATAL })
+        }
+        ModelsCommand::Path { cache_dir } => {
+            let models_dir = models::resolve_managed_models_dir(cache_dir.as_deref())?;
+            println!("{}", models_dir.display());
+            for spec in pc_models::ALL {
+                let resolution = pc_models::resolve(spec, &models_dir, None)?;
+                let present = matches!(resolution, pc_models::Resolution::Cached(_));
+                println!(
+                    "{}\t{}\t{}",
+                    spec.name,
+                    resolution.path().display(),
+                    if present { "present" } else { "missing" }
+                );
+            }
             Ok(EXIT_OK)
         }
     }
@@ -261,6 +354,10 @@ fn run_pipeline(
     let summary = pc_pipeline::run_batch(images, &options, &ctx);
     if let Some(bar) = progress {
         bar.finish_with_message("cleaning complete");
+    }
+    if let Some(message) = summary.fatal_model_message() {
+        cleanup_cache(&options)?;
+        return Err(anyhow!(message));
     }
     print!("{}", summary.render());
     if show_analytics {

@@ -123,8 +123,8 @@ pub struct CleanArgs {
     #[arg(long)]
     pub hide_analytics: bool,
 
-    /// Detector backend (spec §16.12 items 2 and 21). Hidden: `onnx` is the only value
-    /// v1 documents, and it is not buildable yet.
+    /// Detector backend (spec §16.12 items 2 and 21). Hidden: `onnx` is the documented
+    /// default and is available when pc-cli is built with its non-default `onnx` feature.
     #[arg(long, value_name = "SPEC", default_value = "onnx", hide = true)]
     pub detector: DetectorSpec,
 
@@ -223,24 +223,43 @@ pub enum ProfileCommand {
 #[derive(Debug, Subcommand)]
 pub enum CacheCommand {
     /// Report the cache location and size.
-    Show,
+    Show {
+        /// Cache directory override (spec §16.12 item 21).
+        #[arg(long, value_name = "DIR", hide = true)]
+        cache_dir: Option<PathBuf>,
+    },
     /// Delete cached files.
     Clear {
         #[arg(long)]
         models: bool,
         #[arg(long)]
         images: bool,
+        /// Cache directory override (spec §16.12 item 21).
+        #[arg(long, value_name = "DIR", hide = true)]
+        cache_dir: Option<PathBuf>,
     },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum ModelsCommand {
-    /// Download the detector/OCR models (task D1 — not available in v1).
-    Download,
-    /// Verify the installed models' sha256 (task D1 — not available in v1).
-    Verify,
+    /// Download all known detector/OCR models into the managed cache, repairing entries with mismatched digests. Requires network access; the detector model is about 90 MB. No `onnx` feature or ONNX Runtime is required.
+    Download {
+        /// Cache directory override (spec §16.12 item 21).
+        #[arg(long, value_name = "DIR", hide = true)]
+        cache_dir: Option<PathBuf>,
+    },
+    /// Verify model availability and digests without modifying the cache, reporting each model's status. Exits 1 if any model is missing or fails verification, making it useful as a preflight or CI check. No `onnx` feature or ONNX Runtime is required.
+    Verify {
+        /// Cache directory override (spec §16.12 item 21).
+        #[arg(long, value_name = "DIR", hide = true)]
+        cache_dir: Option<PathBuf>,
+    },
     /// Print where models are looked up.
-    Path,
+    Path {
+        /// Cache directory override (spec §16.12 item 21).
+        #[arg(long, value_name = "DIR", hide = true)]
+        cache_dir: Option<PathBuf>,
+    },
 }
 
 /// spec §16.12 item 2 — `--detector`'s value grammar.

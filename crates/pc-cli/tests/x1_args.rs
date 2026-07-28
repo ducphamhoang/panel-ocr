@@ -128,9 +128,17 @@ fn detector_spec_grammar() {
 }
 
 /// §16.12 item 2 — `onnx` is a fatal, explained failure in v1; `mock`/`replay` build.
+// Gate added 2026-07-28 (authorized directly, no assertion text changed): this asserts the
+// content of `detector::ONNX_UNAVAILABLE`, which is itself `#[cfg(not(feature = "onnx"))]`.
+// Without the same `cfg` it asserts the contents of nothing — under `--features onnx` the
+// ONNX arm is real and the "D1/D4" wording does not exist. PER-TEST, never file-level: the
+// other tests here are feature-independent and must keep running in both configurations.
+// The `--features onnx` counterparts are the two tests immediately below.
+#[cfg(not(feature = "onnx"))]
 #[test]
 fn only_the_mock_and_replay_providers_can_be_built_in_v1() {
-    let error = detector::build_provider(&DetectorSpec::Onnx, None)
+    let cache_root = tempfile::tempdir().unwrap();
+    let error = detector::build_provider(&DetectorSpec::Onnx, None, None, cache_root.path())
         .err()
         .expect("onnx must not be buildable in v1");
     let message = error.to_string();
@@ -138,10 +146,265 @@ fn only_the_mock_and_replay_providers_can_be_built_in_v1() {
     assert!(message.contains("D4"), "{message}");
     assert!(message.contains("--detector replay"), "{message}");
 
-    assert!(detector::build_provider(&DetectorSpec::Mock, None).is_ok());
+    assert!(detector::build_provider(&DetectorSpec::Mock, None, None, cache_root.path()).is_ok());
     assert!(
-        detector::build_provider(&DetectorSpec::Replay(PathBuf::from("/nope")), None).is_ok(),
+        detector::build_provider(
+            &DetectorSpec::Replay(PathBuf::from("/nope")),
+            None,
+            None,
+            cache_root.path()
+        )
+        .is_ok(),
         "a replay provider builds; a missing fixture is a per-image error (§16.12 item 3)"
+    );
+}
+
+/// §5.3 + the "`clean` never provisions" reversal — the `--features onnx` counterpart of
+/// `only_the_mock_and_replay_providers_can_be_built_in_v1`.
+///
+/// With the feature on, the ONNX arm is real, so the default detector's failure mode is no
+/// longer "not in this build" but "the managed model is not provisioned". Provisioning
+/// happens **only** in the explicit `models` subcommands, so this must be a fatal that
+/// tells the user the command to run — never a download.
+///
+/// `resolve_detector_model` is the unit under test rather than `build_provider`, because it
+/// is the function that owns the managed-cache case and the only one that receives a cache
+/// root at all; `build_provider` takes an already-resolved path and so cannot name a cache
+/// location. See the companion test below for `build_provider`'s half.
+#[cfg(feature = "onnx")]
+#[test]
+fn onnx_resolution_against_an_empty_managed_cache_tells_the_user_to_download() {
+    let cache_root = tempfile::tempdir().unwrap();
+    let models_dir = paths::models_dir(cache_root.path());
+
+    // Both overrides `None`, i.e. the managed-cache path — the only arm the reversal
+    // changes. Passing them explicitly also makes this test immune to an ambient profile
+    // that happens to set `text_detector.model_path`, which would otherwise take the
+    // override arm and skip the case under test entirely.
+    let error =
+        pc_cli::models::resolve_detector_model(&DetectorSpec::Onnx, None, None, cache_root.path())
+            .expect_err("an unprovisioned managed cache must be fatal, never a download");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("panel-ocr models download"),
+        "must name the explicit provisioning command: {message}"
+    );
+    assert!(
+        message.contains(&models_dir.display().to_string()),
+        "must name where the model is expected to be: {message}"
+    );
+    assert!(
+        !message.contains("not available in this build"),
+        "that is the no-feature message; this build HAS the backend: {message}"
+    );
+
+    // The observable form of "never provisions": under the reversed behaviour this call
+    // downloaded ~90 MB into `models_dir`. No timing is asserted -- the empty cache is the
+    // evidence.
+    assert!(
+        !models_dir.exists()
+            || std::fs::read_dir(&models_dir)
+                .expect("readable")
+                .next()
+                .is_none(),
+        "resolution must neither create nor populate the managed cache: {}",
+        models_dir.display()
+    );
+}
+
+/// Lazy-in-provider: construction must SUCCEED with no model (a run that never detects needs
+/// none), and the actionable refusal must arrive on first use instead.
+#[cfg(feature = "onnx")]
+#[test]
+fn onnx_provider_defers_model_resolution_to_first_use() {
+    let cache_root = tempfile::tempdir().unwrap();
+    let models_dir = paths::models_dir(cache_root.path());
+
+    let provider = detector::build_provider(&DetectorSpec::Onnx, None, None, cache_root.path())
+        .expect("construction must not resolve, so it cannot fail on a missing model");
+
+    let error = provider
+        .detector_for(std::path::Path::new("page01.png"))
+        .err()
+        .expect("first use must refuse");
+    let message = error.to_string();
+    assert!(
+        matches!(error, pc_core::StageError::Model(_)),
+        "the runner carves out `Model`: {message}"
+    );
+    assert!(message.contains("panel-ocr models download"), "{message}");
+    assert!(
+        message.contains(&models_dir.display().to_string()),
+        "{message}"
+    );
+    assert!(
+        !message.to_lowercase().contains("runtime"),
+        "must fail on the model, before any ONNX Runtime probe: {message}"
+    );
+
+    // Coverage the `cfg(not(onnx))` gate removes from this configuration.
+    assert!(detector::build_provider(&DetectorSpec::Mock, None, None, cache_root.path()).is_ok());
+}
+
+/// §6 / §13.1 — the precedence boundary between an explicit override and the managed cache.
+///
+/// `resolve_detector_model` evaluates `cli_override.or(profile_override)` **before** the
+/// managed arm, so a user who names a model file can never be told to download a different
+/// one. That guarantee holds by control flow for a *valid* override; this pins it for an
+/// *invalid* one, which is where the reversal's new error plumbing could plausibly wrap a
+/// path error with a provisioning hint. Suggesting `panel-ocr models download` here would be
+/// actively wrong advice: the managed model is not the model that was asked for.
+///
+/// Both arms are exercised, because both feed the same `.or()` and a fix applied to one
+/// could easily miss the other. No fixtures are needed — the profile override arrives as a
+/// plain parameter, not through a profile file.
+///
+/// Three distinct failure modes now exist for `DetectorSpec::Onnx` (no feature / absent
+/// override / unprovisioned cache), and none of them may emit another's message. Each of the
+/// three counterparts therefore asserts the absence of the other two's wording.
+#[cfg(feature = "onnx")]
+#[test]
+fn a_missing_explicit_model_path_is_not_answered_with_a_download_suggestion() {
+    let cache_root = tempfile::tempdir().unwrap();
+    // A separate directory, so the named-but-absent file cannot be mistaken for the managed
+    // cache entry and the "nothing was provisioned" check below stays unambiguous.
+    let elsewhere = tempfile::tempdir().unwrap();
+
+    for (label, via_cli, file_name) in [
+        ("--model-path", true, "my-own-export.onnx"),
+        ("profile model_path", false, "profile-export.onnx"),
+    ] {
+        let named = elsewhere.path().join(file_name);
+        let (cli, profile) = if via_cli {
+            (Some(named.as_path()), None)
+        } else {
+            (None, Some(named.as_path()))
+        };
+
+        let error = pc_cli::models::resolve_detector_model(
+            &DetectorSpec::Onnx,
+            cli,
+            profile,
+            cache_root.path(),
+        )
+        .err()
+        .unwrap_or_else(|| panic!("{label}: a named-but-absent model file is fatal"));
+
+        let message = error.to_string();
+        assert!(
+            message.contains(file_name),
+            "{label}: must name the path the user gave: {message}"
+        );
+        assert!(
+            !message.contains("models download"),
+            "{label}: the managed model is not what was requested: {message}"
+        );
+        assert!(
+            !message.contains("not available in this build"),
+            "{label}: that is the no-feature message; this build HAS the backend: {message}"
+        );
+    }
+
+    // An override failure must not have touched the managed cache either way.
+    let models_dir = paths::models_dir(cache_root.path());
+    assert!(
+        !models_dir.exists()
+            || std::fs::read_dir(&models_dir)
+                .expect("readable")
+                .next()
+                .is_none(),
+        "an override failure must not provision anything: {}",
+        models_dir.display()
+    );
+}
+
+/// §5.3 — the recovery suggestion carried by the "not provisioned" fatal must be safe to
+/// **paste**, for any cache root.
+///
+/// That is the suggestion's entire justification: it exists so a user with a non-default
+/// cache root can copy the line verbatim and have it work. An unquoted path defeats that on
+/// its own criterion — a space splits it into extra arguments, and `;` / `&` / `$(...)` /
+/// backticks stop being path characters and become shell *syntax*. Neither is exotic: a
+/// `--cache-dir` beneath a spaced directory is entirely ordinary on Windows/WSL
+/// (`/mnt/d/Duc/Manga/Choujin Locke/...`).
+///
+/// **`/bin/sh` is the authority here, not a hand-rolled quoter.** Asserting an exact quoted
+/// string would reject a different-but-valid quoting style, and re-implementing POSIX
+/// quoting in the test would only prove the test agrees with itself — the same circularity
+/// §16.13 item 4 rules out for reference fixtures. So the test hands the emitted segment to a
+/// real shell and asserts the shell recovers the original path exactly. v1 is Linux + macOS
+/// only, so a POSIX shell is always present; `#[cfg(unix)]` keeps the file compiling anyway.
+///
+/// One assertion catches every failure mode at once: a broken or unterminated quote makes
+/// `sh` exit non-zero, and word splitting, globbing, parameter expansion and command
+/// substitution all change the recovered bytes.
+#[cfg(all(feature = "onnx", unix))]
+#[test]
+fn the_models_download_suggestion_is_paste_safe_for_hostile_cache_paths() {
+    const PREFIX: &str = "panel-ocr models download --cache-dir ";
+
+    // Every payload is harmless IF EXECUTED, deliberately: an unquoted `$( )` or backtick
+    // would be run by the shell below, so nothing here may have a side effect. `*` is
+    // omitted on purpose — an unmatched glob is left literal by POSIX sh, so it would be a
+    // false negative rather than a probe.
+    let hostile = [
+        "space dir",            // the ordinary case: word splitting
+        "it's-a-cache",         // the case naive quoting gets wrong: ' must become '\''
+        "dollar$(echo pwned)",  // command substitution
+        "back`echo pwned`tick", // the older substitution syntax
+        "semi;colon",           // would terminate the command
+        "amp&ersand",           // would background it
+        "pipe|and\"quote",      // pipeline plus a double quote
+        "tab\tseparated",       // IFS splitting on whitespace that is not a space
+        "line\nbreak",          // legal in a POSIX path, and the nastiest case
+    ];
+
+    let root = tempfile::tempdir().unwrap();
+
+    for hostile in hostile {
+        let path = root.path().join(hostile);
+        let expected = path.display().to_string();
+        let command = pc_cli::models::models_download_command(Some(path.as_path()));
+
+        assert!(
+            command.starts_with(PREFIX),
+            "unexpected suggestion shape for {hostile:?}: {command}"
+        );
+        let segment = &command[PREFIX.len()..];
+
+        let script = format!("printf '%s\\n' {segment}");
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .expect("run /bin/sh");
+
+        assert!(
+            output.status.success(),
+            "a POSIX shell cannot even parse the suggestion for {hostile:?}\n  \
+             command: {command}\n  script:  {script}\n  stderr:  {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            format!("{expected}\n"),
+            "the shell did not recover the original path for {hostile:?} — word splitting, \
+             globbing, parameter/command expansion, or a mis-escaped quote\n  \
+             command: {command}"
+        );
+    }
+}
+
+/// With no `--cache-dir` override the suggestion stays the bare command: the flag is carried
+/// only when it is needed to make the line followable, so quoting must not cause it to be
+/// emitted unconditionally.
+#[cfg(feature = "onnx")]
+#[test]
+fn the_models_download_suggestion_omits_the_flag_for_the_default_cache() {
+    assert_eq!(
+        pc_cli::models::models_download_command(None),
+        "panel-ocr models download"
     );
 }
 

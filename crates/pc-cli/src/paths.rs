@@ -3,7 +3,8 @@
 //! v1 is Linux + macOS only, and `dirs` is not in `[workspace.dependencies]`, so this is
 //! done by hand against the two platforms' conventions. Fully pinned; implemented.
 
-use std::path::PathBuf;
+use pc_config::Config;
+use std::path::{Path, PathBuf};
 
 pub const APP_DIR_NAME: &str = "panel-ocr";
 pub const CONFIG_FILE_NAME: &str = "config.toml";
@@ -27,6 +28,15 @@ pub fn image_cache_dir(cache_root: &std::path::Path) -> PathBuf {
 /// The model cache directory for a run rooted at `cache_root`.
 pub fn models_dir(cache_root: &std::path::Path) -> PathBuf {
     cache_root.join(MODELS_SUBDIR)
+}
+
+/// Resolve the shared cache root: an explicit CLI override wins over the app config,
+/// which wins over the platform default (spec §16.18 item 1).
+pub fn resolve_cache_root(cli_override: Option<&Path>, config: &Config) -> PathBuf {
+    cli_override
+        .map(Path::to_path_buf)
+        .or_else(|| config.cache_dir.clone())
+        .unwrap_or_else(default_cache_dir)
 }
 
 /// `$XDG_CACHE_HOME/panel-ocr`, else `~/Library/Caches/panel-ocr` on macOS,
