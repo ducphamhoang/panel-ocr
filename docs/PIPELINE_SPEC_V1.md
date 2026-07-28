@@ -2926,16 +2926,44 @@ Resolved against the upstream PanelCleaner construction shape, the current `pc-c
    may re-open this as “do not cache failures” without first overturning §5.3, §16.18,
    and `d1_install.rs`'s frozen rationale.
 
-4. **Panics during init are deliberately not latched; the residual is accepted.**
-   There is no `catch_unwind` in `detector_for`; `process_image_isolated` owns panic
-   conversion per §5.2. A panic leaves the latch unset and poisons the initialization
-   gate. `PoisonError::into_inner` recovers mutual exclusion while discarding only the
-   “someone panicked” signal. The panic surfaces as per-image
-   `Failed { step: Detect, error: Inference("panicked: ...") }`, producing exit `2`
-   with N rows and full re-initialization per image — unbounded in batch size, not
-   “once more”. This is accepted with eyes open: a panic payload is not a refusal the
-   code may promote to a run-level verdict. Do not add `catch_unwind` to close the cost
-   gap.
+4. **Panics during init are latched exactly like a rendered refusal.** AMENDED: this
+   supersedes the version committed in `19756ed` by Fable tie-break.
+   `detector_for` wraps its single `initialize_detector()` attempt in
+   `catch_unwind(AssertUnwindSafe(..))`; the payload is rendered with
+   `pc_pipeline::panic_message`, preserving §16.12 item 18's pinned `"panicked: ..."`
+   form, and latched as the attempt's `Err`. It surfaces as `StageError::Model` under
+   item 5's provider-declared fatality: one attempt per run, run-fatal, exit `1`.
+
+   Observed output, corrected against the release binary rather than assumed: the run
+   prints `error: model error: panicked: ...` on stderr and exits `1`. It is **not** a
+   `fatal:` line — `pc-cli`'s fatal path returns `Err(anyhow!(..))` from `run_pipeline`
+   before `BatchSummary::render` is consulted, and `render`'s `fatal:` prefix is
+   therefore not what a user sees for a run-fatal provider refusal. Note also that
+   `catch_unwind` does not suppress the default panic hook, so for a genuine init panic
+   stderr additionally carries the hook's own `thread '...' panicked at ...` line ahead
+   of the `error:` line. Suppressing that hook is deliberately not attempted: a
+   scoped `set_hook`/`take_hook` pair would race with panics on other rayon workers.
+
+   `initialize_detector` takes no image, so an init panic is independent of the original
+   by construction — item 5(b)'s causal criterion classifies it run-fatal, and §16.12
+   item 2's “neither outcome is retried within a run” binds the panicking attempt as much
+   as the erroring one.
+
+   §5.2 is not violated because its boundary is not relocated. `process_image_isolated`
+   still owns panic conversion for every image-dependent unit; the provider converts only
+   the image-independent init unwind, which §5.2's own justification (“ort/FFI and
+   third-party pixel code can panic on malformed input, and one malformed page must not
+   abort a 500-page batch”) never covered, because no page is in scope during init.
+
+   The previous version's acceptance of unbounded per-image re-initialization (~90 MB
+   re-hash plus session rebuild per remaining page) to avoid this conversion is withdrawn.
+   It contradicted items 2 and 5(b) on their own terms, and treating the unwind channel
+   differently from the `Result` channel of the same operation was a mechanism distinction,
+   not a principled one.
+
+   Residual panic sources on this path are ort FFI internals and allocation failure only;
+   the frozen per-image panic tests in `g2_batch.rs` are unaffected because they panic
+   inside `TextDetector::detect`, downstream of init.
 
 5. **Fatality is declared by the provider, never inferred from the variant.**
    The confirmed defect was `single.rs` matching `StageError::Model(_) =>

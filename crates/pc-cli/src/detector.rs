@@ -28,12 +28,16 @@ pub struct ReplayProvider {
 }
 
 #[cfg(feature = "onnx")]
+#[cfg(test)]
+type InitHook = Box<dyn Fn() -> Result<Arc<dyn TextDetector>, String> + Send + Sync>;
+
+#[cfg(feature = "onnx")]
 // DEVIATION(16): upstream constructs `TextDetector(...)` once before each per-image loop
 // (`pcleaner/ctd_interface.py::process_image_batch` and its single-process path), with no
 // `try/except`, so construction failure ends the run. v1 constructs lazily so §4.4 resume
 // runs with cached `#raw.json` do not resolve a detector that stage 1 never reads (§16.19
 // item 1; there is no `--resume` flag, §16.12 item 7), then latches the one `detector_for`
-// attempt's `outcome` — session or rendered refusal — for all rayon workers; without it,
+// attempt's `outcome` — session or rendered refusal, including an init panic — for all rayon workers; without it,
 // each page would re-resolve, re-hash ~90 MB and rebuild a session. The latch also makes
 // `fatal_model_message`'s first run-fatal in input order byte-identical: without the latch,
 // two workers could render different text for the same cause and make stdout scheduling-
@@ -51,6 +55,8 @@ struct OnnxProvider {
     // Deliberate test instrumentation proving failed initialization is attempted once.
     #[cfg(test)]
     attempts: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    init_hook: Option<InitHook>,
 }
 
 #[cfg(feature = "onnx")]
@@ -68,13 +74,20 @@ impl OnnxProvider {
             initializing: Mutex::new(()),
             #[cfg(test)]
             attempts: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            init_hook: None,
         }
     }
 
     fn initialize_detector(&self) -> Result<Arc<dyn TextDetector>, String> {
         #[cfg(test)]
-        self.attempts
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        {
+            self.attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(init_hook) = &self.init_hook {
+                return init_hook();
+            }
+        }
 
         // Keep this order: a model refusal must be actionable even when the runtime is absent.
         // All provisioning refusals stay Model errors so the pipeline treats them as run-fatal.
@@ -120,11 +133,15 @@ impl DetectorProvider for OnnxProvider {
                 .map_err(|message| StageError::Model(message.clone()));
         }
 
-        // Do not catch unwinds here: process_image_isolated owns panic conversion. A panic
-        // leaves this latch unset, so every later image retries; in a batch that is once per
-        // remaining image, unbounded by batch size, with each retry paying for the full ~90 MB
-        // sha256 and session build after the poisoned gate is recovered.
-        let outcome = self.initialize_detector();
+        // initialize_detector takes no image, so an init panic is independent of the original
+        // by construction. §16.19 item 5(b)'s causal criterion classifies it run-fatal, and
+        // §16.12 item 2's "neither outcome is retried within a run" binds the panicking attempt
+        // as much as the erroring one. §5.2's boundary is not relocated: process_image_isolated
+        // still owns panic conversion for every image-dependent unit; only the image-independent
+        // init unwind is converted here.
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.initialize_detector()))
+                .unwrap_or_else(|payload| Err(pc_pipeline::panic_message(payload.as_ref())));
         match outcome {
             Ok(detector) => {
                 let _ = self.outcome.set(Ok(Arc::clone(&detector)));
@@ -186,6 +203,58 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert!(messages.windows(2).all(|pair| pair[0] == pair[1]));
+        }
+    }
+
+    #[test]
+    fn panicking_initialization_is_latched_across_threads() {
+        for _ in 0..25 {
+            let cache = tempfile::tempdir().unwrap();
+            let mut provider = OnnxProvider::new(None, None, cache.path());
+            provider.init_hook = Some(Box::new(|| panic!("initialization exploded")));
+            let provider = Arc::new(provider);
+            let barrier = Arc::new(Barrier::new(4));
+
+            let results = std::thread::scope(|scope| {
+                let workers = (0..4)
+                    .map(|_| {
+                        let barrier = Arc::clone(&barrier);
+                        let provider = Arc::clone(&provider);
+                        scope.spawn(move || {
+                            barrier.wait();
+                            (0..2)
+                                .map(|_| {
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        provider.detector_for(Path::new("image.png"))
+                                    }))
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                workers
+                    .into_iter()
+                    .flat_map(|worker| worker.join().unwrap())
+                    .collect::<Vec<_>>()
+            });
+
+            assert_eq!(provider.attempts.load(Ordering::SeqCst), 1);
+            assert_eq!(results.len(), 8);
+            let messages = results
+                .into_iter()
+                .map(|result| match result {
+                    Ok(Err(StageError::Model(message))) => message,
+                    Ok(Err(error)) => panic!("expected model error, got {error:?}"),
+                    Ok(Ok(_)) => panic!("expected initialization to fail"),
+                    Err(payload) => panic!(
+                        "detector_for unexpectedly unwound: {}",
+                        pc_pipeline::panic_message(payload.as_ref())
+                    ),
+                })
+                .collect::<Vec<_>>();
+            assert!(messages.windows(2).all(|pair| pair[0] == pair[1]));
+            assert!(messages[0].contains("panicked: "));
         }
     }
 }
