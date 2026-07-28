@@ -28,7 +28,9 @@ pub use fit::{fit_region, select_candidate, Fitment, Selected};
 pub use grow::{build_candidates, growth_candidates, kernel, Candidate, Kernel};
 
 use pc_config::MaskerConfig;
-use pc_core::{ImageHandle, MaskData, MaskFittingAnalytic, PageData, StageError, Step};
+use pc_core::{
+    ImageHandle, MaskData, MaskFittingAnalytic, MaskRegionStats, PageData, StageError, Step,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -107,5 +109,140 @@ impl pc_core::Stage for MaskStage {
 /// page with no masking regions is a success: a fully transparent combined mask, a
 /// cleaned image equal to the canvas, and empty `regions`/`analytics`.
 pub fn run(input: MaskInput) -> Result<MaskOutput, StageError> {
-    todo!("task M6: spec §10.3 steps 0-5")
+    input.page.validate()?;
+
+    let MaskInput {
+        schema_version,
+        page,
+        original_image,
+        config,
+        extract_text,
+        debug_outputs,
+        dests,
+    } = input;
+    let base_image = page.base_image.load()?;
+    let base = BaseCanvas::from_dynamic(&base_image);
+    let precise = pc_imageops::BinaryMask::from_gray_threshold(
+        &page.raw_mask.load()?.to_luma8(),
+        pc_imageops::PIL_BINARY_THRESHOLD,
+    );
+    let box_mask = pc_imageops::rasterize_boxes(&page.extended_boxes, page.image_size);
+    if debug_outputs {
+        if let Some(path) = &dests.box_mask {
+            write_png(&image::DynamicImage::ImageLuma8(box_mask.to_gray()), path)?;
+        }
+    }
+    let cut = precise.and(&box_mask);
+    if debug_outputs {
+        if let Some(path) = &dests.cut_mask {
+            write_png(&image::DynamicImage::ImageLuma8(cut.to_gray()), path)?;
+        }
+    }
+
+    let fitments = page
+        .masking_regions
+        .iter()
+        .filter_map(|region| {
+            fit_region(
+                &base,
+                &cut,
+                &box_mask,
+                region.masking,
+                region.reference,
+                &config,
+            )
+        })
+        .collect::<Vec<_>>();
+    let combined = build_combined_mask(&fitments, page.image_size);
+    let combined_image = image::DynamicImage::ImageRgba8(combined.clone());
+    if let Some(path) = &dests.combined_mask {
+        write_png(&combined_image, path)?;
+    }
+    let combined_handle = image_handle(&dests.combined_mask, combined_image);
+
+    let canvas = if page.scale != 1.0 {
+        original_image.load()?.as_ref().clone()
+    } else {
+        base_image.as_ref().clone()
+    };
+    let all_achromatic = fitments
+        .iter()
+        .all(|fitment| combine::is_achromatic(fitment.median_color));
+    let cleaned = cleaned_image(&canvas, &combined, all_achromatic);
+    if let Some(path) = &dests.cleaned {
+        write_png(&cleaned, path)?;
+    }
+    let cleaned_handle = image_handle(&dests.cleaned, cleaned);
+
+    let text_layer = extract_text
+        .then(|| {
+            let text = text_layer(&canvas, &combined);
+            if let Some(path) = &dests.text_layer {
+                write_png(&image::DynamicImage::ImageRgba8(text.clone()), path)?;
+            }
+            Ok::<ImageHandle, StageError>(image_handle(
+                &dests.text_layer,
+                image::DynamicImage::ImageRgba8(text),
+            ))
+        })
+        .transpose()?;
+
+    if debug_outputs {
+        if let Some(path) = &dests.mask_overlay {
+            let overlay = mask_overlay(&base_image, &combined, config.debug_mask_color);
+            write_png(&image::DynamicImage::ImageRgb8(overlay), path)?;
+        }
+    }
+
+    let regions = fitments
+        .iter()
+        .map(|fitment| MaskRegionStats {
+            rect: fitment.masking_rect,
+            std_deviation: fitment.std_deviation,
+            failed: fitment.failed(),
+            thickness: fitment.thickness,
+        })
+        .collect();
+    let analytics = fitments
+        .iter()
+        .map(|fitment| MaskFittingAnalytic {
+            path: page.original_path.clone(),
+            fit_found: !fitment.failed(),
+            candidate_index: fitment.candidate_index,
+            std_deviation: fitment.std_deviation,
+            thickness: fitment.thickness,
+        })
+        .collect();
+    let mask_data = MaskData {
+        schema_version,
+        original_path: page.original_path,
+        base_image: page.base_image,
+        combined_mask: combined_handle.clone(),
+        scale: page.scale,
+        regions,
+    };
+
+    Ok(MaskOutput {
+        mask_data,
+        combined_mask: combined_handle,
+        cleaned: cleaned_handle,
+        text_layer,
+        analytics,
+    })
+}
+
+fn image_handle(path: &Option<PathBuf>, image: image::DynamicImage) -> ImageHandle {
+    match path {
+        Some(path) => ImageHandle::with_both(path, image),
+        None => ImageHandle::from_memory(image),
+    }
+}
+
+fn write_png(image: &image::DynamicImage, path: &std::path::Path) -> Result<(), StageError> {
+    image
+        .save_with_format(path, image::ImageFormat::Png)
+        .map_err(|error| StageError::Io {
+            path: path.to_path_buf(),
+            source: std::io::Error::other(error),
+        })
 }
