@@ -555,7 +555,7 @@ CI must not run models (confirmed scope), but the masking golden tests need real
 `cargo xtask record-fixtures` (maintainer machine, real models present) writes to `tests/fixtures/recorded/`:
 
 - For each `demo_bubbles/*_raw.png`: `<name>_base.png`, `<name>_raw_mask.png`, `<name>#raw.json` (a `PageDataRaw` JSON).
-- For one or two full manga pages the maintainer supplies (kept small, ≤ 400 KB each, license-clean): the same triple.
+- For one or two full manga pages the maintainer supplies (kept small, ≤ 400 KB each, license-clean): the same triple. **(§16.24 item 17: the chosen page is 441,914 B — the cap is exceeded by ~10% as a ratified deviation, to keep the fixture byte-for-byte identical to its CC-BY source rather than re-encoding generational artifacts onto text edges. The license-clean requirement is unaffected and remains binding.)**
 - The recorded JSON's `ImageHandle` paths are stored **relative to the fixtures root** and rebased on load by `pc-testkit`.
 
 `pc-detect` ships `ReplayDetector` (reads a recorded `_raw_mask.png` + block list keyed by input file stem) and `MockDetector` (programmable: fixed blocks + a synthetic mask), both behind `#[cfg(any(test, feature = "testkit"))]` plus a `--detector=replay:<dir>` hidden CLI flag so end-to-end CLI tests run with zero model files.
@@ -4060,11 +4060,56 @@ gating divergence; negative controls constructed in-test and never committed.
 
     Item 12's criterion stands either way: letterbox ratio near 1, so `max(w,h) ≈ 1024`.
 
-**Maintainer decisions — flagged, not ruled.** (i) The page itself: which page, its format, and —
-iff option 16(a) is preferred — raising §7.2's 400 KB cap. The two are quantitatively coupled and
-the choice should precede the recording run so it is not repeated. (ii) Scheduling the three
-§16.20 item 3(f) signatures. This gates the fixture commit and is a calendar problem, not an
-engineering one.
+**Maintainer decisions.** (i) The page, its format, and the cap — **RESOLVED 2026-07-29, see item
+17.** (ii) Scheduling the three §16.20 item 3(f) signatures. This gates the fixture commit and is a
+calendar problem, not an engineering one; still open.
+
+17. **RESOLVED (maintainer, 2026-07-29) — the oracle page is committed byte-for-byte as the served
+    JPEG, under mechanism 16(b), and §7.2's 400 KB cap is exceeded by ~10% as a ratified
+    deviation.**
+
+    The page: **Pepper&Carrot** episode 1 *"Potion of Flight"*, page 1, Japanese translation, by
+    David Revoy and the Pepper&Carrot translation contributors, **CC-BY 4.0** — redistribution
+    permitted with attribution, so §7.2's license-clean requirement is met.
+    `1200 x 1660`, baseline JPEG, **441,914 bytes**, sha256
+    `3bef9922e09cea66ab12271da0070025768ae9bc5d286f41ced617468131267e`, retrieved 2026-07-28,
+    **unmodified**. An `ATTRIBUTION.md` entry in the existing
+    `tests/fixtures/upstream/ATTRIBUTION.md` format is part of the recording commit.
+
+    (a) **Why this page.** Three panels, two multi-line speech balloons, and three *unbubbled* SFX
+    runs (ぱらぱら / ざぶん / どばどば). The bubbled-vs-unbubbled mix is what makes §9.7(B)11's tier
+    assertions meaningful — a single-balloon page would render that gate trivial. Rejected from the
+    same episode: P02 (448,475 B, no extra coverage), P03 (302,541 B but a one-balloon splash),
+    P04 (a 1200x24 footer strip, not a page).
+
+    (b) **The cap deviation, ratified.** 441,914 B against "≤ 400 KB" — about 10% over. Accepted in
+    favour of byte-for-byte provenance: `tests/fixtures/upstream/ATTRIBUTION.md` establishes the
+    repo convention that vendored fixtures are unmodified and hash-verifiable against their source
+    URL, and re-encoding a JPEG concentrates generational artifacts on **text edges**, which is
+    precisely the signal a text-detector fixture must hold stable. Measured alternatives, recorded
+    so the choice is auditable: q=85 → 413,114 B (still over), q=80 → 366,438 B (under), q=75 →
+    246,993 B. CC-BY 4.0 permits modification, so this was a quality decision, not a licensing one.
+
+    (c) **Mechanism 16(b) is the live one, and its two-digest check is NOT vacuous.** Ours consumes
+    the committed JPEG through the `image` crate; upstream consumes the `image`-crate re-decode
+    written as a scratch PNG through `cv2`. **These are two different files read by two different
+    decoders**, so item 16(b)'s requirement — record the digest of the decoded RGB buffer fed to
+    each side and assert the two equal — guards two live failure modes: the PNG round-trip between
+    two libraries, and **BGR/RGB channel order**, which §16.20 item 6 established as load-bearing
+    (`cv2.imread` yields BGR while the cv2 branch of `preprocess_img` feeds RGB). Any
+    implementation that drops the comparison on the grounds that "both sides read one file" is
+    factually wrong about the data flow and must be rejected.
+
+    (d) **Letterbox ratio, deliberately not 1.** This page gives `r = 1024/1660 ≈ 0.617`, so the
+    resize path runs on both sides rather than being bypassed. That is coverage, not a defect:
+    §16.20 item 5 measured the resize difference as moving **confidence** by 0.079–0.089 while
+    **geometry stayed within L1 = 1, four of five coordinates exact**, and confidence is never a
+    gating row (item 3(d)). Pre-resizing the page to `max(w,h) = 1024` would make `r = 1.0000` and
+    eliminate the resize entirely — but it would also eliminate the only check that our resize
+    agrees with upstream's on real content, while costing a cap raise (measured: 740x1024 lossless
+    RGB PNG is 842,352 B; grayscale is 292,183 B but discards colour from a colour comic). Item
+    12's "near 1" criterion exists to keep confidences away from the 0.4 gate on *upscaled small
+    crops* (r ≈ 3.0–3.8); a 0.617 downscale is not that failure mode.
 
 **Deferrals, recorded rather than dropped (§16.23 item 1's rule applied to this ruling).** (i) The
 upstream environment's reproducibility window (§16.20 item 7 licenses less than it appears to)
