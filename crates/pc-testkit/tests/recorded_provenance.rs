@@ -224,6 +224,51 @@ fn path_set_difference(paths: &[String], other: &[String]) -> Vec<String> {
         .collect()
 }
 
+fn collect_recorded_files(directory: &Path, relative: &Path, files: &mut Vec<String>) {
+    let entries = std::fs::read_dir(directory).unwrap_or_else(|error| {
+        panic!(
+            "failed to read recorded fixture directory `{}`: {error}",
+            directory.display()
+        )
+    });
+
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!(
+                "failed to read an entry under `{}`: {error}",
+                directory.display()
+            )
+        });
+        let entry_path = entry.path();
+        let entry_relative = relative.join(entry.file_name());
+        let file_type = entry.file_type().unwrap_or_else(|error| {
+            panic!(
+                "failed to inspect recorded entry `{}`: {error}",
+                entry_path.display()
+            )
+        });
+
+        if file_type.is_dir() {
+            collect_recorded_files(&entry_path, &entry_relative, files);
+        } else {
+            files.push(
+                Path::new(RECORDED_PREFIX)
+                    .join(entry_relative)
+                    .display()
+                    .to_string(),
+            );
+        }
+    }
+}
+
+fn is_exempt_candidate(path: &str) -> bool {
+    path == format!("{RECORDED_PREFIX}/.gitkeep")
+        || Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "PROVENANCE.json" || name == ".gitkeep")
+}
+
 #[test]
 fn recorded_provenance_declared_digests_are_covered() {
     let groups = discover_groups();
@@ -284,5 +329,45 @@ fn recorded_provenance_declared_digests_are_covered() {
     assert_eq!(
         committed_paths, expected_committed_paths,
         "committed path set mismatch; unexpected paths: {unexpected_committed_paths:?}; missing paths: {missing_committed_paths:?}"
+    );
+
+    let mut recorded_files = Vec::new();
+    collect_recorded_files(&paths::recorded_root(), Path::new(""), &mut recorded_files);
+    recorded_files.sort();
+
+    let mut exempt_paths = recorded_files
+        .iter()
+        .filter(|path| is_exempt_candidate(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    exempt_paths.sort();
+    let mut expected_exempt_paths = groups
+        .iter()
+        .map(|group| {
+            Path::new(RECORDED_PREFIX)
+                .join(group.file_name().expect("recorded group must have a name"))
+                .join("PROVENANCE.json")
+                .display()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    expected_exempt_paths.push(format!("{RECORDED_PREFIX}/.gitkeep"));
+    expected_exempt_paths.sort();
+    let unexpected_exempt_paths = path_set_difference(&exempt_paths, &expected_exempt_paths);
+    let missing_exempt_paths = path_set_difference(&expected_exempt_paths, &exempt_paths);
+    assert_eq!(
+        exempt_paths, expected_exempt_paths,
+        "exempt path set mismatch; unexpected paths: {unexpected_exempt_paths:?}; missing paths: {missing_exempt_paths:?}"
+    );
+
+    let committed_files = recorded_files
+        .into_iter()
+        .filter(|path| !is_exempt_candidate(path))
+        .collect::<Vec<_>>();
+    let unexpected_committed_files = path_set_difference(&committed_files, &committed_paths);
+    let missing_committed_files = path_set_difference(&committed_paths, &committed_files);
+    assert_eq!(
+        committed_files, committed_paths,
+        "committed fixture file set mismatch; unexpected files: {unexpected_committed_files:?}; missing declared files: {missing_committed_files:?}"
     );
 }
