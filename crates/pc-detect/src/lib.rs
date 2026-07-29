@@ -16,6 +16,9 @@ pub mod yolo;
 #[cfg(any(test, feature = "testkit"))]
 pub mod mock;
 
+#[cfg(any(test, feature = "testkit"))]
+pub mod oracle;
+
 pub use detector::{DetectInput, DetectOutput, RawBlock, RawDetection, TextDetector};
 pub use mask::{refine_simple, REFINE_DILATE_RADIUS, REFINE_EXPAND, REFINE_THRESHOLD};
 pub use resize::{calculate_new_size_and_scale, resize_area, round_half_away};
