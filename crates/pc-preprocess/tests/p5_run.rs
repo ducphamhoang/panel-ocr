@@ -401,15 +401,25 @@ fn a10_run_is_byte_identical_across_one_hundred_iterations() {
 
 #[test]
 #[ignore = "pending task F1: needs `cargo xtask record-fixtures` output under tests/fixtures/recorded/"]
-fn b11_pending_insta_snapshot_of_recorded_page_tiers() {
-    // spec §9.7(B)11 / §15.10: the single permitted `assert_json_snapshot!` site for
-    // this stage — the recorded page fixture run with a `MockOcrEngine` returning "" for
-    // every crop, locking the three box tiers. Safeguards binding on whoever unignores
-    // this: (a) the first accepted snapshot must be reviewed against a hand-traced
-    // expected value, with reviewer/date/method recorded in docs/GOLDEN_CALIBRATION.md,
-    // before commit; (b) the snapshot is frozen exactly like a hand-written test --
-    // `cargo insta accept` is forbidden in CI and any change needs joint-architect
-    // sign-off; (c) no further snapshot sites may be added without the same §15-style
-    // process.
+fn b11_pending_recorded_page_tier_arithmetic() {
+    // spec §9.7(B)11 / §16.20 item 1(a): use hand-written integer assertions. The
+    // tiers are pure integer arithmetic over the fixture rects and the committed
+    // profile constants, so each expected value is written at the assertion site
+    // with its derivation in a comment; also assert `page_language` and the
+    // reading-order permutation.
+    // ILLUSTRATION of the method from §16.20, not this test's expected data (the
+    // committed page fixture is not chosen yet, so the real rects will differ):
+    // from block rect `(567,74,663,123)` — tight = `pad(2)` then
+    // `right_pad(3)` → `(565,72,668,125)`; extended = `pad(5)` then
+    // `right_pad(5)` → `(560,67,678,130)`; reference = `pad(20)` →
+    // `(540,47,698,150)`.
+    // The profile constants are `box_padding_initial = 2`,
+    // `box_right_padding_initial = 3`, `box_padding_extended = 5`,
+    // `box_right_padding_extended = 5`, and `box_reference_padding = 20`, from
+    // `crates/pc-config/src/profile.rs`.
+    // Upstream is not a valid oracle at this site and must not be used as one:
+    // §14.2 (`resolve_overlaps` set-ordering), §14.3 (box/language desync) and
+    // §14.13 (differing box sets) all sit between upstream and this stage's input,
+    // so upstream disagreement here is noise, not signal.
     unimplemented!("blocked on F1");
 }

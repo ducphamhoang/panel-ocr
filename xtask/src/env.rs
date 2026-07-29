@@ -190,9 +190,9 @@ These §7.2 artifacts cannot be produced yet:
   tests/fixtures/recorded/<stem>#raw.json              (§7.2, PageDataRaw)
 
 and these tests must stay `#[ignore]`d:
-  pc-detect     d7_run.rs::a6_pending_insta_snapshot_of_recorded_page      (§8.7(A)6)
+  pc-detect     d7_run.rs::a6_pending_recorded_page_equality_and_determinism (§8.7(A)6)
   pc-detect     d7_run.rs::b9_pending_recorded_page_regression_lock        (§8.7(B)9)
-  pc-preprocess p5_run.rs::b11_pending_insta_snapshot_of_recorded_page_tiers (§9.7(B)11)
+  pc-preprocess p5_run.rs::b11_pending_recorded_page_tier_arithmetic         (§9.7(B)11)
   pc-denoise    n4_run.rs::b13_pending_recorded_page_end_to_end_golden     (§11.7(B)13)"
 );
 
@@ -210,9 +210,9 @@ These §7.2 artifacts cannot be produced yet:
   tests/fixtures/recorded/<stem>#raw.json              (§7.2, PageDataRaw)
 
 and these tests must stay `#[ignore]`d:
-  pc-detect     d7_run.rs::a6_pending_insta_snapshot_of_recorded_page      (§8.7(A)6)
+  pc-detect     d7_run.rs::a6_pending_recorded_page_equality_and_determinism (§8.7(A)6)
   pc-detect     d7_run.rs::b9_pending_recorded_page_regression_lock        (§8.7(B)9)
-  pc-preprocess p5_run.rs::b11_pending_insta_snapshot_of_recorded_page_tiers (§9.7(B)11)
+  pc-preprocess p5_run.rs::b11_pending_recorded_page_tier_arithmetic         (§9.7(B)11)
   pc-denoise    n4_run.rs::b13_pending_recorded_page_end_to_end_golden     (§11.7(B)13)"
 );
 
@@ -229,8 +229,8 @@ These §7.2 artifacts cannot be produced yet:
   tests/fixtures/recorded/<stem>#raw.json              (§7.2, PageDataRaw)
 
 and these tests must stay `#[ignore]`d:
-  pc-detect     d7_run.rs::a6_pending_insta_snapshot_of_recorded_page      (§8.7(A)6)
+  pc-detect     d7_run.rs::a6_pending_recorded_page_equality_and_determinism (§8.7(A)6)
   pc-detect     d7_run.rs::b9_pending_recorded_page_regression_lock        (§8.7(B)9)
-  pc-preprocess p5_run.rs::b11_pending_insta_snapshot_of_recorded_page_tiers (§9.7(B)11)
+  pc-preprocess p5_run.rs::b11_pending_recorded_page_tier_arithmetic         (§9.7(B)11)
   pc-denoise    n4_run.rs::b13_pending_recorded_page_end_to_end_golden     (§11.7(B)13)"
 );

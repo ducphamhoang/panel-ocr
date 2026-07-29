@@ -145,9 +145,9 @@ same explanation with the exact artifact list.
 | Measurement | Spec | Blocked test |
 |---|---|---|
 | demo_bubbles masking calibration report (IoU, exact %, max Δ, SSIM per fixture) | §10.7(B)15 | *(non-gating report; no test)* |
-| Hand-traced review of the detect-stage `insta` snapshot | §8.7(A)6 / §15.10(a) | `pc-detect d7_run.rs::a6_pending_insta_snapshot_of_recorded_page` |
+| Hand-written detect determinism + committed-raw equality | §8.7(A)6 / §16.20 item 1(b) | `pc-detect d7_run.rs::a6_pending_recorded_page_equality_and_determinism` |
 | Recorded-page box-count/coordinate regression lock | §8.7(B)9 | `pc-detect d7_run.rs::b9_pending_recorded_page_regression_lock` |
-| Hand-traced review of the preprocess-stage `insta` snapshot | §9.7(B)11 / §15.10(a) | `pc-preprocess p5_run.rs::b11_pending_insta_snapshot_of_recorded_page_tiers` |
+| Hand-written preprocess tier arithmetic | §9.7(B)11 / §16.20 item 1(a) | `pc-preprocess p5_run.rs::b11_pending_recorded_page_tier_arithmetic` |
 | End-to-end denoise golden PNGs (`_noise_mask.png`, `_clean_denoised.png`) | §11.7(B)13 / §16.10 item 20 | `pc-denoise n4_run.rs::b13_pending_recorded_page_end_to_end_golden` |
 
 §10.7(B)15 additionally needs one or two license-clean full manga pages (≤ 400 KB
@@ -169,4 +169,3 @@ never patched. See the run log for the current result.
 | NLM parity | §11.7(B)12 | MET |
 | INTER_AREA parity | §8.7(A)2 | MET |
 | Detector-dependent goldens | §8.7(A)6, §8.7(B)9, §9.7(B)11, §10.7(B)15, §11.7(B)13 | BLOCKED on D1+D4 |
-

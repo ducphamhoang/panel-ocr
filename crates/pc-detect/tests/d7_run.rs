@@ -531,15 +531,21 @@ fn a6_replay_image_content_is_byte_identical_across_ten_runs_and_eight_threads()
 // ------------------------------------------------------------ pending F1
 
 #[test]
-#[ignore = "pending task F1: needs `cargo xtask record-fixtures` output under tests/fixtures/recorded/"]
-fn a6_pending_insta_snapshot_of_recorded_page() {
-    // spec §8.7(A)6 / §15.10: the single permitted `assert_json_snapshot!` site for
-    // this stage. Safeguards binding on whoever unignores this: (a) the first accepted
-    // snapshot must be reviewed against a hand-traced expected value, with
-    // reviewer/date/method recorded in docs/GOLDEN_CALIBRATION.md, before commit;
-    // (b) the snapshot is frozen exactly like a hand-written test -- `cargo insta
-    // accept` is forbidden in CI and any change needs joint-architect sign-off;
-    // (c) no further snapshot sites may be added without the same §15-style process.
+#[ignore = "pending task F1: needs the recorded page fixture"]
+fn a6_pending_recorded_page_equality_and_determinism() {
+    // spec §8.7(A)6 / §16.20 item 1(b): this test is TWO hand-written parts: (i) the
+    // `PageDataRaw` JSON is byte-identical across 10 runs and across 1 vs 8 rayon
+    // threads — runs are compared against each other, which never needed a snapshot;
+    // and (ii) one hand-written equality asserts that the produced `PageDataRaw`
+    // equals the committed `#raw.json`, which locks strictly more than a snapshot
+    // would (every field: `confidence`, `language`, `mask_coverage`, `scale`,
+    // `image_size`, schema shape).
+    // §16.20 item 2 caveat: `ReplayDetector` ignores the image it is passed (§7.2.1),
+    // and `crates/pc-detect/src/lib.rs` copies `rect`/`class_index`/`confidence` out
+    // of the fixture untouched — so the values this test actually computes are
+    // `mask_coverage`, the survivor set, `scale` and `image_size`. The fixture's own
+    // correctness is gated separately by §16.20 item 3's committed-oracle review,
+    // NOT here.
     unimplemented!("blocked on F1");
 }
 

@@ -9,11 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # §15.10(b): snapshot files are frozen tests. CI must never accept or write a
-  # snapshot; a drifted snapshot is a FAILURE requiring joint-architect sign-off,
-  # never a `cargo insta accept`.
-  INSTA_UPDATE: "no"
-  INSTA_FORCE_UPDATE: "0"
 
 jobs:
   fmt:
@@ -87,52 +82,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # §15.10(c): reject pending file snapshots (`*.snap.new`) and pending
-      # inline snapshots (`*.pending-snap`); insta uses two forms because file
-      # snapshots and inline snapshots persist pending output differently.
-      # Also reject any `.snap` outside the two
-      # sanctioned paths below. Zero snapshots is intentionally valid while both
-      # sanctioned snapshots remain blocked on F1; once F1 lands, presence of
-      # exactly these two paths can be asserted here.
-      #
-      # CAVEAT: the two allowed paths are UNVERIFIED. No `assert_json_snapshot!`
-      # invocation exists yet (both sites are `#[ignore]`d `unimplemented!()`
-      # placeholders, and `insta` is not yet a dependency of any crate), so the
-      # names below are derived from insta's default convention
-      # `<test-target>__<test-fn>.snap`, not read from real macro calls. If F1
-      # lands and this step fails on a legitimately-placed snapshot, the fix is to
-      # correct these paths to whatever insta actually emits -- NOT to relax the
-      # check. The failure direction is deliberate: a wrong path here blocks the
-      # build rather than letting an unsanctioned snapshot through.
-      - name: reject pending snapshots
+      # §16.20 item 1: snapshots are prohibited project-wide, so this guard is
+      # exact rather than approximate. It rejects all snapshot file forms.
+      - name: reject snapshots
         run: |
           if find . \
             \( -type d \( -name .git -o -name target -o -name vendor -o -name node_modules \) -prune \) \
-            -o \( -type f \( -name '*.snap.new' -o -name '*.pending-snap' \) -print -quit \) | grep -q .; then
-            echo "::error::pending .snap.new files present; snapshots are frozen tests (§15.10)"
-            exit 1
-          fi
-      - name: enforce snapshot site allowlist
-        run: |
-          allowed_snapshots=(
-            'crates/pc-detect/tests/snapshots/d7_run__a6_pending_insta_snapshot_of_recorded_page.snap'
-            'crates/pc-preprocess/tests/snapshots/p5_run__b11_pending_insta_snapshot_of_recorded_page_tiers.snap'
-          )
-          offending_snapshots=()
-          while IFS= read -r snapshot; do
-            case "$snapshot" in
-              "${allowed_snapshots[0]}"|"${allowed_snapshots[1]}") ;;
-              *) offending_snapshots+=("$snapshot") ;;
-            esac
-          done < <(
-            find . \
-              \( -type d \( -name .git -o -name target -o -name vendor -o -name node_modules \) -prune \) \
-              -o -type f -name '*.snap' -printf '%P\n'
-          )
-          if ((${#offending_snapshots[@]} > 0)); then
-            echo "::error::unsanctioned .snap file(s) found; §15.10(c) permits only these two paths:"
-            printf '  %s\n' "${allowed_snapshots[@]}"
-            echo "::error::offending path(s):"
-            printf '  %s\n' "${offending_snapshots[@]}"
+            -o \( -type f \( -name '*.snap' -o -name '*.snap.new' -o -name '*.pending-snap' \) -print -quit \) | grep -q .; then
+            echo "::error::snapshot files are prohibited project-wide (§16.20 item 1)"
             exit 1
           fi

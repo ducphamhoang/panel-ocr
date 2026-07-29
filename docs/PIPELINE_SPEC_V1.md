@@ -1956,7 +1956,7 @@ verify-then-decide process as §15/§16.6/§16.8/§16.9. Each item is binding on
     `cv2.fastNlMeansDenoising(img, h=10, templateWindowSize=7, searchWindowSize=21)`.
     Thresholds come from `GoldenThresholds::nlm_parity()` (already defined in
     `pc-testkit`). The test is `#[ignore]`d with an `unimplemented!("blocked on F1")`
-    body until F1 lands, following the `a6_pending_insta_snapshot_of_recorded_page`
+    body until F1 lands, following the `a6_pending_recorded_page_equality_and_determinism`
     precedent; §7.3 still requires F2 to run before it is unignored.
 
 20. **§11.7(B)13's end-to-end golden is likewise F1-blocked** and is a committed
@@ -2551,9 +2551,9 @@ verify-then-decide process as §16.5–§16.12. Each item is binding.
    one or two license-clean full manga pages (≤ 400 KB), which no automated step can
    source. F1's detector group therefore remains **open**, and these tests stay
    `#[ignore]`d with their `unimplemented!("blocked on F1")` bodies intact:
-   `pc-detect d7_run.rs::a6_pending_insta_snapshot_of_recorded_page` (§8.7(A)6),
+   `pc-detect d7_run.rs::a6_pending_recorded_page_equality_and_determinism` (§8.7(A)6),
    `pc-detect d7_run.rs::b9_pending_recorded_page_regression_lock` (§8.7(B)9),
-   `pc-preprocess p5_run.rs::b11_pending_insta_snapshot_of_recorded_page_tiers` (§9.7(B)11),
+   `pc-preprocess p5_run.rs::b11_pending_recorded_page_tier_arithmetic` (§9.7(B)11),
    `pc-denoise n4_run.rs::b13_pending_recorded_page_end_to_end_golden` (§11.7(B)13).
    §10.7(B)15's demo_bubbles calibration report is blocked for the same reason and is
    recorded as BLOCKED in `docs/GOLDEN_CALIBRATION.md` rather than omitted.

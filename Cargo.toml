@@ -72,10 +72,6 @@ csv   = "1.3.1"
 uuid  = { version = "1.11.0", features = ["v4", "serde"] }   # §4.2 CachePaths
 
 # --- dev only ---
-# `insta` is RESTRICTED (§1, §15.10): permitted at exactly two call sites
-# (§8.7(B)9 and §9.7(B)11). Every other numeric/algorithmic gate uses
-# hand-written assertions. Adding a third snapshot site requires §15-style sign-off.
-insta    = { version = "1.41.1", features = ["json", "redactions"] }
 approx   = "0.5.1"
 tempfile = "3.14.0"
 
