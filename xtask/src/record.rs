@@ -142,6 +142,13 @@ pub fn run(
 /// fixed elsewhere in this crate: false means "not current", which causes the caller to do *more*
 /// work (re-record and rewrite the provenance), never less. The conservative answer is the safe one
 /// here, which is exactly why the polarity is worth stating.
+///
+/// **Three conditions, because a weaker check still permits a false skip.** An earlier version of
+/// this helper compared only `schema_version`, which let a provenance that parses at v1 while
+/// *misdescribing its own artifacts* satisfy the skip — the "actively misdescribes itself" state
+/// `crates/pc-testkit/tests/model_signature.rs` exists to catch, reached here by the recorder
+/// declining to fix it. Since this crate owns both the validator and a digest routine, not using
+/// them was under-using the tools rather than a considered scope choice.
 fn provenance_is_current(group: &str) -> bool {
     let path = paths::recorded_root()
         .join(group)
@@ -149,9 +156,31 @@ fn provenance_is_current(group: &str) -> bool {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return false;
     };
-    serde_json::from_str::<GroupProvenance>(&text).is_ok_and(|parsed| {
-        parsed.schema_version == pc_testkit::provenance::PROVENANCE_SCHEMA_VERSION
-    })
+    let Ok(parsed) = serde_json::from_str::<GroupProvenance>(&text) else {
+        return false;
+    };
+
+    // 1. The schema this binary writes.
+    if parsed.schema_version != pc_testkit::provenance::PROVENANCE_SCHEMA_VERSION {
+        return false;
+    }
+    // 2. Structurally valid — every rule the checker enforces, not just the version field.
+    if !pc_testkit::provenance::validate(group, &parsed).is_empty() {
+        return false;
+    }
+    // 3. Every committed declaration matches the bytes on disk. This is the condition that makes
+    //    the skip mean "the recorded state is self-consistent" rather than "some files exist":
+    //    an output edited or truncated after recording leaves a provenance that parses and
+    //    validates while describing different bytes, and re-recording is exactly the fix.
+    parsed
+        .records
+        .iter()
+        .filter(|record| record.committed)
+        .all(|record| {
+            let artifact = paths::workspace_root().join(&record.output);
+            pc_models::sha256_hex(&artifact)
+                .is_ok_and(|actual| actual.eq_ignore_ascii_case(&record.output_sha256))
+        })
 }
 
 // ------------------------------------------------------------------ group: nlm
