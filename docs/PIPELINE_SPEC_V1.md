@@ -3377,6 +3377,55 @@ decision; it wrote no code.
     divergences and no others. A comparator that prints "compared 0 boxes, 0 divergences →
     PASS" is cookbook rule 1's defect wearing a suit.
 
+11. **The oracle gate of item 3 is specified but NOT implemented, and that gap is tracked
+    here rather than left to be discovered.** Dropping the snapshots removed a gate that
+    enforced nothing — both sites were `#[ignore]`d `unimplemented!()` placeholders — so net
+    enforcement did not fall. But "no regression" is not "there is a gate", and until F1
+    records, **nothing checks our detector output against upstream.** What does hold in the
+    meantime: §8.7(A)1–5's synthetic primaries (letterbox geometry, decode, NMS, refinement
+    arithmetic, the coverage cutoff at 25/26·255⁻¹) are hand-written, executed, and
+    independent of any fixture; §16.16's recorded model signature closes the D4a
+    self-reference; and the `onnx` tier now actually runs (§16.17). The unguarded surface is
+    specifically *agreement with upstream on real image content*.
+
+    **§7.2 forecloses making that gate a CI check at all.** CI must not run models, so any
+    comparison of our live detector against upstream is necessarily **maintainer-local**.
+    What CI can gate is the replay path against the committed fixture — which is exactly why
+    the fixture's own review (item 3) is where the safeguard has to live, and why an
+    unreviewed recorded fixture is the project's highest-value remaining risk.
+
+12. **Fixture-selection criterion, measured: the page must sit near letterbox scale 1, and
+    `demo_bubbles` cannot serve as the oracle fixture.** Recorded because the shortcut is
+    tempting — the seven `demo_bubbles/*_raw.png` crops are already committed, GPL-3.0 and
+    licence-clean, so using them would sidestep the page question entirely — and because the
+    reason it fails is quantitative, not aesthetic.
+
+    Upstream finds **21 blocks across the seven crops** (six produce boxes; `handwritten`
+    yields 0 on both sides). Both sides report `scale = 1.0`, so there is no §8.2 resize
+    confound. Yet the box counts diverge badly — `nightmare` gives us **1** against
+    upstream's **5**, `square` 1 against 2, `darkrays` 2 against 3.
+
+    The mechanism is item 5's noise floor, amplified. These crops are 72×132 to 354×354, so
+    §8.3 step 3's letterbox **upscales them by r ≈ 3.0–3.8**, which magnifies the
+    f32-exact-vs-fixed-point resize difference. Our surviving confidences are 0.437, 0.444,
+    0.564, 0.696 — a minimum margin of **0.037** above §8.3 step 4's 0.4 gate, against a
+    measured noise floor of **0.079–0.089**. The noise is ~2.4× the margin, so box
+    *presence* on these inputs is decided by rounding rather than by content.
+
+    Crucially, this is **not** evidence of a port defect: where a box survives both sides its
+    geometry agrees closely and consistently with item 3(b)'s identity — ours
+    `(40,23,111,207)` against upstream `[40,23,110,207]`, ours `(29,105,86,261)` against
+    upstream `[29,105,90,261]`, the trailing-edge gap being upstream's line union. Geometry is
+    portable here; presence is not.
+
+    **The criterion this yields:** the oracle fixture must be a full page whose letterbox
+    ratio is near 1, so confidences sit far from the 0.4 gate. That is what §7.2's "one or two
+    full manga pages" was already asking for; this item supplies the missing *reason*, so a
+    future maintainer does not substitute a convenient small crop and inherit a fixture whose
+    box set is noise-determined. The `demo_bubbles` crops remain correct for what §10.7(B)15
+    and §11.7 use them for — masking and denoise comparisons on a fixed input — where no
+    detection gate is involved.
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:
