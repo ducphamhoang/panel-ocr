@@ -78,19 +78,48 @@ When the spec is ambiguous or two readings conflict, the answer is in
 this project is a port of. This is now standing policy, and it has already earned its
 keep twice.
 
-It is cheap to consult properly (a full local run, not just reading Python):
+It is cheap to consult properly (a full local run, not just reading Python). Verified
+end-to-end against upstream commit `0afa21f`; run from a scratch directory:
 
+```bash
+# 1. uv, user-local. `python3 -m venv` needs the python3-venv package, which needs sudo.
+curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR="$PWD/uvbin" sh
+export PATH="$PWD/uvbin:$PATH"
+
+# 2. upstream at a pinned commit -- an oracle nobody can re-run is not an oracle
+git clone https://github.com/VoxelCubes/PanelCleaner.git
+git -C PanelCleaner checkout 0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3
+
+# 3. venv, and point uv at it for every subsequent `uv pip`
+uv venv pcvenv
+export VIRTUAL_ENV="$PWD/pcvenv"
+
+# 4. the DETECTOR-PATH SUBSET of requirements.txt. Do not use `-r requirements.txt`:
+#    it drags in PySide6 (Qt GUI), simple_lama_inpainting, pytesseract, psd-tools and
+#    dbus-python, none of which the detector path touches. This filter reproduces
+#    exactly the set that works; PyYAML is icon-cache-only per upstream's own comment.
+grep -vE '^(PySide6|simple_lama_inpainting|pytesseract|psd-tools|strenum|dbus-python|pywin32|win10toast|pyuac|PyYAML)' \
+  PanelCleaner/requirements.txt | grep -vE '^\s*$' > detector-reqs.txt
+uv pip install --torch-backend=cpu -r detector-reqs.txt
+
+# 5. prove the detector entry point actually imports before trusting any output
+PYTHONPATH="$PWD/PanelCleaner" ./pcvenv/bin/python -c \
+  'import pcleaner.ctd_interface as c; print("OK", hasattr(c, "model2annotations"))'
 ```
-uv venv pcvenv                                   # python3-venv needs sudo; uv doesn't
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-uv pip install -r <PanelCleaner deps>            # + manga_ocr, which ctd_interface imports
-```
 
-~1.6 GB, no sudo, ~10 minutes. CPU-only torch is much smaller than the default CUDA build.
+~1.6 GB, no sudo, ~10 minutes. `--torch-backend=cpu` resolves `torch==2.13.0+cpu` /
+`torchvision==0.28.0+cpu`; the default CUDA build is several GB larger for no benefit here.
+Add `--dry-run` to step 4 to re-verify the recipe resolves without downloading anything.
 
-**Install the real dependency rather than stubbing it.** `pcleaner.ctd_interface` failed
-on `No module named 'manga_ocr'`. Stubbing it would have produced an output that looks
-like upstream's but isn't — the exact failure mode an oracle exists to prevent.
+**Install the real dependency rather than stubbing it.** `pcleaner.ctd_interface` failed on
+`No module named 'manga_ocr'` — it is in `requirements.txt`, and the filter above keeps it.
+Stubbing it would have produced an output that looks like upstream's but isn't: the exact
+failure mode an oracle exists to prevent. Step 5 exists for the same reason — an import
+error surfaced at run time is easy to paper over with a mock.
+
+**Pin what you compared against.** Record the upstream commit SHA, the resolved dependency
+versions (`uv pip freeze`), the weights' sha256, and the input page's sha256 alongside any
+result. Without those, a divergence found later cannot be attributed to us or to them.
 
 ### What this found
 
