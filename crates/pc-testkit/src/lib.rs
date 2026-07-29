@@ -23,6 +23,7 @@ pub mod images;
 pub mod metrics;
 pub mod model_signature;
 pub mod paths;
+pub mod provenance;
 
 pub use golden::{GoldenReport, GoldenThresholds};
 pub use metrics::{PixelSet, SsimParams};

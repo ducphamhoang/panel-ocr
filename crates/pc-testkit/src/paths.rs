@@ -210,3 +210,51 @@ fn rebase_handle_path(path: &mut Option<PathBuf>, root: &Path) {
         *path = Some(root.join(relative));
     }
 }
+
+/// spec §7.2 / §16.24 item 13 — the exact inverse of [`rebase_page_data_raw`].
+///
+/// `pc_detect::run` builds handles from the absolute `base_image_dest`/`raw_mask_dest`
+/// (`crates/pc-detect/src/lib.rs:121-128`), while §7.2 requires the recorded JSON to store
+/// paths **relative to the fixtures root**. Without this the recorder commits one machine's
+/// absolute paths — the defect §16.20 item 3's closing paragraph names, and the only thing that
+/// differed across six identical upstream runs (§16.20 item 7).
+///
+/// Returns the paths it could **not** relativize (absolute and not under `root`). Empty means
+/// fully relative. A returned residue rather than silence is deliberate: silently keeping an
+/// absolute path is exactly the defect this function exists to prevent, and the recorder must
+/// refuse to serialise rather than commit one. This is not the `Result` plumbing the crate's
+/// panic policy forbids — a handle outside the fixtures root is a legitimate input the recorder
+/// diagnoses, not a test-authoring mistake.
+///
+/// **Inverse only on stated domains**, because neither direction is total:
+///   * `relativize(rebase(p, root), root) == p` for every **relative** `p`, and for every
+///     absolute `p` **not** under `root` (`rebase` leaves those alone, `paths.rs:208-212`).
+///   * `rebase(relativize(p, root), root) == p` for every absolute `p` **under** `root`.
+///   * An absolute `p` under `root` is NOT recovered by the first composition, because `rebase`
+///     is identity on it while `relativize` strips it. Recording only ever runs the second
+///     composition's direction, which is why that asymmetry is safe and why it is written down.
+pub fn relativize_page_data_raw(page: &mut PageDataRaw, root: &Path) -> Vec<PathBuf> {
+    let mut residue = Vec::new();
+    relativize_handle_path(&mut page.base_image.path, root, &mut residue);
+    relativize_handle_path(&mut page.raw_mask.path, root, &mut residue);
+    residue
+}
+
+/// Same contract as [`relativize_page_data_raw`], for `MaskData`'s two handles.
+pub fn relativize_mask_data(mask: &mut MaskData, root: &Path) -> Vec<PathBuf> {
+    let mut residue = Vec::new();
+    relativize_handle_path(&mut mask.base_image.path, root, &mut residue);
+    relativize_handle_path(&mut mask.combined_mask.path, root, &mut residue);
+    residue
+}
+
+fn relativize_handle_path(path: &mut Option<PathBuf>, root: &Path, residue: &mut Vec<PathBuf>) {
+    let Some(current) = path.as_ref() else { return };
+    if current.is_relative() {
+        return; // already relative: idempotent, mirroring `rebase`'s idempotence on absolutes
+    }
+    match current.strip_prefix(root) {
+        Ok(relative) => *path = Some(relative.to_path_buf()),
+        Err(_) => residue.push(current.clone()),
+    }
+}

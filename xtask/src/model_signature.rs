@@ -3,30 +3,15 @@
 use anyhow::{bail, Context, Result};
 use pc_models::{sha256_hex, verify_sha256, COMIC_TEXT_DETECTOR};
 use pc_testkit::model_signature::{ModelSignature, TensorSignature, ELEMENT_TYPE_F32};
-use serde::{Deserialize, Serialize};
+use pc_testkit::provenance::{ArtifactRecord, GroupProvenance};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const OUTPUT_REL: &str = "model_signature/comictextdetector.signature.json";
 const PROVENANCE_REL: &str = "model_signature/PROVENANCE.json";
-
-#[derive(Debug, Serialize)]
-struct Provenance {
-    tool: &'static str,
-    source: String,
-    source_sha256: String,
-    output: &'static str,
-    output_sha256: String,
-    size_bytes: u64,
-    opset: i64,
-}
-
-#[derive(Debug, Deserialize)]
-struct PublishedProvenance {
-    output_sha256: String,
-    source_sha256: String,
-}
 
 pub fn capability_status(explicit: Option<&Path>) -> String {
     let output = crate::paths::recorded_root().join(OUTPUT_REL);
@@ -101,14 +86,27 @@ pub fn record(explicit: Option<&Path>, force: bool) -> Result<super::record::Out
     let mut signature_json = serde_json::to_vec_pretty(&signature)?;
     signature_json.push(b'\n');
     let output_sha256 = sha256_hex_bytes(&signature_json);
-    let provenance = Provenance {
-        tool: "cargo xtask record-fixtures --only model-signature",
-        source: COMIC_TEXT_DETECTOR.file_name.to_owned(),
-        source_sha256: signature.sha256.clone(),
-        output: "tests/fixtures/recorded/model_signature/comictextdetector.signature.json",
-        output_sha256: output_sha256.clone(),
-        size_bytes: signature.size_bytes,
-        opset: signature.opset,
+    let provenance = GroupProvenance {
+        schema_version: pc_testkit::provenance::PROVENANCE_SCHEMA_VERSION,
+        group: "model_signature".into(),
+        tool: "cargo xtask record-fixtures --only model-signature".into(),
+        command_line: "cargo xtask record-fixtures --only model-signature".into(),
+        tool_versions: BTreeMap::new(),
+        records: vec![ArtifactRecord {
+            name: "signature".into(),
+            output: "tests/fixtures/recorded/model_signature/comictextdetector.signature.json"
+                .into(),
+            output_sha256: output_sha256.clone(),
+            committed: true,
+            source: Some(COMIC_TEXT_DETECTOR.file_name.into()),
+            source_sha256: Some(signature.sha256.clone()),
+            params: BTreeMap::from([
+                ("opset".into(), serde_json::json!(signature.opset)),
+                ("size_bytes".into(), serde_json::json!(signature.size_bytes)),
+            ]),
+        }],
+        detector: None,
+        diagnostics: BTreeMap::new(),
     };
     let mut provenance_json = serde_json::to_vec_pretty(&provenance)?;
     provenance_json.push(b'\n');
@@ -155,12 +153,17 @@ pub fn record(explicit: Option<&Path>, force: bool) -> Result<super::record::Out
     let written_provenance = std::fs::read(&provenance_path)
         .with_context(|| format!("reading published {}", provenance_path.display()))?;
     let written_signature_sha256 = sha256_hex_bytes(&written_signature);
-    let written_provenance: PublishedProvenance = serde_json::from_slice(&written_provenance)
+    let written_provenance: GroupProvenance = serde_json::from_slice(&written_provenance)
         .with_context(|| format!("parsing published {}", provenance_path.display()))?;
-    if written_provenance.output_sha256 != written_signature_sha256 {
+    let written_record = written_provenance
+        .records
+        .iter()
+        .find(|record| record.name == "signature")
+        .context("published model-signature provenance has no signature record")?;
+    if written_record.output_sha256 != written_signature_sha256 {
         bail!(
             "published model-signature pair is inconsistent: provenance output_sha256 {} != signature sha256 {}",
-            written_provenance.output_sha256,
+            written_record.output_sha256,
             written_signature_sha256
         );
     }
@@ -194,7 +197,7 @@ fn validate_existing_pair(output: &Path, provenance_path: &Path) -> Result<()> {
             provenance_path.display()
         )
     })?;
-    let provenance: PublishedProvenance =
+    let provenance: GroupProvenance =
         serde_json::from_slice(&provenance_json).with_context(|| {
             format!(
                 "existing model-signature pair is invalid: {} does not parse as provenance; \
@@ -202,17 +205,22 @@ fn validate_existing_pair(output: &Path, provenance_path: &Path) -> Result<()> {
                 provenance_path.display()
             )
         })?;
-    if provenance.output_sha256 != actual_sha256 {
+    let record = provenance
+        .records
+        .iter()
+        .find(|record| record.name == "signature")
+        .context("existing model-signature provenance has no signature record")?;
+    if record.output_sha256 != actual_sha256 {
         bail!(
             "existing model-signature pair is inconsistent: provenance output_sha256 {} != actual signature sha256 {}; re-recording with --force will repair it",
-            provenance.output_sha256,
+            record.output_sha256,
             actual_sha256
         );
     }
-    if provenance.source_sha256 != COMIC_TEXT_DETECTOR.sha256 {
+    if record.source_sha256.as_deref() != Some(COMIC_TEXT_DETECTOR.sha256) {
         bail!(
             "existing model-signature pair is inconsistent: provenance source_sha256 {} != COMIC_TEXT_DETECTOR.sha256 {}; re-recording with --force will repair it",
-            provenance.source_sha256,
+            record.source_sha256.as_deref().unwrap_or("<missing>"),
             COMIC_TEXT_DETECTOR.sha256
         );
     }
@@ -249,79 +257,10 @@ fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 fn sha256_hex_bytes(bytes: &[u8]) -> String {
-    const INITIAL: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-        0x5be0cd19,
-    ];
-    const ROUND_CONSTANTS: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-        0xc67178f2,
-    ];
-
-    let bit_len = (bytes.len() as u64).wrapping_mul(8);
-    let padded_len = (bytes.len() + 9).div_ceil(64) * 64;
-    let mut padded = Vec::with_capacity(padded_len);
-    padded.extend_from_slice(bytes);
-    padded.push(0x80);
-    padded.resize(padded_len - 8, 0);
-    padded.extend_from_slice(&bit_len.to_be_bytes());
-
-    let mut state = INITIAL;
-    for chunk in padded.chunks_exact(64) {
-        let mut words = [0_u32; 64];
-        for (word, bytes) in words[..16].iter_mut().zip(chunk.chunks_exact(4)) {
-            *word = u32::from_be_bytes(bytes.try_into().expect("SHA-256 word is four bytes"));
-        }
-        for index in 16..64 {
-            let s0 = words[index - 15].rotate_right(7)
-                ^ words[index - 15].rotate_right(18)
-                ^ (words[index - 15] >> 3);
-            let s1 = words[index - 2].rotate_right(17)
-                ^ words[index - 2].rotate_right(19)
-                ^ (words[index - 2] >> 10);
-            words[index] = words[index - 16]
-                .wrapping_add(s0)
-                .wrapping_add(words[index - 7])
-                .wrapping_add(s1);
-        }
-
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = state;
-        for index in 0..64 {
-            let big_sigma1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let choose = (e & f) ^ ((!e) & g);
-            let temp1 = h
-                .wrapping_add(big_sigma1)
-                .wrapping_add(choose)
-                .wrapping_add(ROUND_CONSTANTS[index])
-                .wrapping_add(words[index]);
-            let big_sigma0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let majority = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = big_sigma0.wrapping_add(majority);
-            [h, g, f, e, d, c, b, a] = [
-                g,
-                f,
-                e,
-                d.wrapping_add(temp1),
-                c,
-                b,
-                a,
-                temp1.wrapping_add(temp2),
-            ];
-        }
-        for (value, addition) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
-            *value = value.wrapping_add(addition);
-        }
-    }
-
-    state.iter().map(|word| format!("{word:08x}")).collect()
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn parse_signature(path: &Path) -> Result<ModelSignature> {

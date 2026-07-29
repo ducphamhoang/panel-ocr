@@ -7,7 +7,10 @@ use crate::env::{detector_backend_status, PythonTooling, NO_PYTHON_HELP};
 use crate::model_signature;
 use crate::paths;
 use anyhow::{bail, Context, Result};
-use std::path::{Path, PathBuf};
+use pc_testkit::provenance::{ArtifactRecord, GroupProvenance};
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::path::Path;
 use std::process::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -155,7 +158,10 @@ fn record_nlm(tooling: &PythonTooling, force: bool) -> Result<Outcome> {
     }
     let mut manifest = run_script(&mut command, "record_nlm.py")?;
     paths::relativize_manifest(&mut manifest);
-    write_manifest(&out_dir.join("PROVENANCE.json"), &manifest)?;
+    write_provenance(
+        &out_dir.join("PROVENANCE.json"),
+        &nlm_provenance(&manifest)?,
+    )?;
 
     Ok(Outcome::Recorded {
         detail: format!(
@@ -243,12 +249,9 @@ fn record_inter_area(tooling: &PythonTooling, force: bool) -> Result<Outcome> {
 
     paths::relativize_manifest(&mut manifest);
     paths::relativize_manifest(&mut diagnostic);
-    let mut combined = serde_json::Map::new();
-    combined.insert("reference".into(), manifest);
-    combined.insert("jpeg_decode_diagnostic".into(), diagnostic);
-    write_manifest(
+    write_provenance(
         &dir.join("PROVENANCE.json"),
-        &serde_json::Value::Object(combined),
+        &inter_area_provenance(&manifest, &diagnostic)?,
     )?;
 
     Ok(Outcome::Recorded {
@@ -308,8 +311,103 @@ fn run_script(command: &mut Command, label: &str) -> Result<serde_json::Value> {
     })
 }
 
-fn write_manifest(path: &PathBuf, value: &serde_json::Value) -> Result<()> {
-    let mut text = serde_json::to_string_pretty(value)?;
+fn write_provenance(path: &Path, provenance: &GroupProvenance) -> Result<()> {
+    let mut text = serde_json::to_string_pretty(provenance)?;
     text.push('\n');
     std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
+}
+
+fn manifest_string<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .with_context(|| format!("recording manifest is missing string field `{key}`"))
+}
+
+fn manifest_params(value: &Value, keys: &[&str]) -> BTreeMap<String, Value> {
+    keys.iter()
+        .filter_map(|key| value.get(*key).map(|value| ((*key).into(), value.clone())))
+        .collect()
+}
+
+fn manifest_versions(value: &Value) -> BTreeMap<String, String> {
+    ["python", "opencv_version", "numpy_version"]
+        .iter()
+        .filter_map(|key| {
+            manifest_string(value, key)
+                .ok()
+                .map(|version| (key.trim_end_matches("_version").into(), version.into()))
+        })
+        .collect()
+}
+
+fn nlm_provenance(manifest: &Value) -> Result<GroupProvenance> {
+    let records = manifest
+        .get("records")
+        .and_then(Value::as_array)
+        .context("NLM manifest has no records array")?
+        .iter()
+        .map(|record| {
+            Ok(ArtifactRecord {
+                name: manifest_string(record, "name")?.into(),
+                output: manifest_string(record, "output")?.into(),
+                output_sha256: manifest_string(record, "sha256")?.into(),
+                committed: true,
+                source: Some(manifest_string(record, "source")?.into()),
+                source_sha256: None,
+                params: manifest_params(record, &["size"]),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(GroupProvenance {
+        schema_version: pc_testkit::provenance::PROVENANCE_SCHEMA_VERSION,
+        group: "nlm".into(),
+        tool: manifest_string(manifest, "tool")?.into(),
+        command_line: "cargo xtask record-fixtures --only nlm".into(),
+        tool_versions: manifest_versions(manifest),
+        records: records
+            .into_iter()
+            .map(|mut record| {
+                record.params.extend([
+                    ("h".into(), serde_json::json!(10)),
+                    ("searchWindowSize".into(), serde_json::json!(21)),
+                    ("templateWindowSize".into(), serde_json::json!(7)),
+                ]);
+                record
+            })
+            .collect(),
+        detector: None,
+        diagnostics: BTreeMap::new(),
+    })
+}
+
+fn inter_area_provenance(reference: &Value, diagnostic: &Value) -> Result<GroupProvenance> {
+    let make_record = |value: &Value, name: &str, committed: bool| -> Result<ArtifactRecord> {
+        Ok(ArtifactRecord {
+            name: name.into(),
+            output: manifest_string(value, "output")?.into(),
+            output_sha256: manifest_string(value, "sha256")?.into(),
+            committed,
+            source: Some(manifest_string(value, "source")?.into()),
+            source_sha256: None,
+            params: manifest_params(value, &["output_size", "source_size"]),
+        })
+    };
+    let metrics = diagnostic
+        .get("metrics_vs_reference")
+        .cloned()
+        .context("INTER_AREA diagnostic has no metrics_vs_reference")?;
+    Ok(GroupProvenance {
+        schema_version: pc_testkit::provenance::PROVENANCE_SCHEMA_VERSION,
+        group: "inter_area".into(),
+        tool: manifest_string(reference, "tool")?.into(),
+        command_line: "cargo xtask record-fixtures --only inter-area".into(),
+        tool_versions: manifest_versions(reference),
+        records: vec![
+            make_record(reference, "reference", true)?,
+            make_record(diagnostic, "jpeg_decode_diagnostic", false)?,
+        ],
+        detector: None,
+        diagnostics: BTreeMap::from([("metrics_vs_reference".into(), metrics)]),
+    })
 }

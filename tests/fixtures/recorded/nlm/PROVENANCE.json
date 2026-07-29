@@ -1,33 +1,39 @@
 {
-  "numpy_version": "2.4.6",
-  "opencv_version": "5.0.0",
-  "params": {
-    "h": 10,
-    "searchWindowSize": 21,
-    "templateWindowSize": 7
+  "schema_version": 1,
+  "group": "nlm",
+  "tool": "cv2.fastNlMeansDenoising",
+  "command_line": "cargo xtask record-fixtures --only nlm",
+  "tool_versions": {
+    "numpy": "2.4.6",
+    "opencv": "5.0.0",
+    "python": "3.11.15"
   },
-  "python": "3.11.15",
   "records": [
     {
       "name": "nightmare",
       "output": "tests/fixtures/recorded/nlm/nightmare_h10_t7_s21.png",
-      "sha256": "c6cc1002c209ffadd182f2ebd3162b53b55bbb92f99ee038ebaf419bfed94b8d",
-      "size": [
-        219,
-        343
-      ],
-      "source": "tests/fixtures/upstream/demo_bubbles/nightmare_bubble_raw.png"
+      "output_sha256": "c6cc1002c209ffadd182f2ebd3162b53b55bbb92f99ee038ebaf419bfed94b8d",
+      "committed": true,
+      "source": "tests/fixtures/upstream/demo_bubbles/nightmare_bubble_raw.png",
+      "params": {
+        "h": 10,
+        "searchWindowSize": 21,
+        "size": [219, 343],
+        "templateWindowSize": 7
+      }
     },
     {
       "name": "ray",
       "output": "tests/fixtures/recorded/nlm/ray_h10_t7_s21.png",
-      "sha256": "9cdd17366dbabf152f67b8d70bee43745c7e45011f8d1cf2fc55b83646fe1658",
-      "size": [
-        256,
-        329
-      ],
-      "source": "tests/fixtures/upstream/demo_bubbles/ray_bubble_raw.png"
+      "output_sha256": "9cdd17366dbabf152f67b8d70bee43745c7e45011f8d1cf2fc55b83646fe1658",
+      "committed": true,
+      "source": "tests/fixtures/upstream/demo_bubbles/ray_bubble_raw.png",
+      "params": {
+        "h": 10,
+        "searchWindowSize": 21,
+        "size": [256, 329],
+        "templateWindowSize": 7
+      }
     }
-  ],
-  "tool": "cv2.fastNlMeansDenoising"
+  ]
 }

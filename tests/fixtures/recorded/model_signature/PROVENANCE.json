@@ -1,9 +1,21 @@
 {
+  "schema_version": 1,
+  "group": "model_signature",
   "tool": "cargo xtask record-fixtures --only model-signature",
-  "source": "comictextdetector.pt.onnx",
-  "source_sha256": "1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f",
-  "output": "tests/fixtures/recorded/model_signature/comictextdetector.signature.json",
-  "output_sha256": "b9b563d55831270983c0988e4f6f3ad28a0752efd86da00a580dc58339322e24",
-  "size_bytes": 94669756,
-  "opset": 11
+  "command_line": "cargo xtask record-fixtures --only model-signature",
+  "tool_versions": {},
+  "records": [
+    {
+      "name": "signature",
+      "output": "tests/fixtures/recorded/model_signature/comictextdetector.signature.json",
+      "output_sha256": "b9b563d55831270983c0988e4f6f3ad28a0752efd86da00a580dc58339322e24",
+      "committed": true,
+      "source": "comictextdetector.pt.onnx",
+      "source_sha256": "1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f",
+      "params": {
+        "opset": 11,
+        "size_bytes": 94669756
+      }
+    }
+  ]
 }

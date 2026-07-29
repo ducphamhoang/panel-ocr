@@ -2,24 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-pub fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .canonicalize()
-        .expect("the xtask crate lives one level below the workspace root")
-}
-
-pub fn fixtures_root() -> PathBuf {
-    workspace_root().join("tests/fixtures")
-}
-
-pub fn upstream_root() -> PathBuf {
-    fixtures_root().join("upstream")
-}
-
-pub fn recorded_root() -> PathBuf {
-    fixtures_root().join("recorded")
-}
+#[allow(unused_imports)]
+pub use pc_testkit::paths::{fixtures_root, recorded_root, upstream_root, workspace_root};
 
 pub fn docs_root() -> PathBuf {
     workspace_root().join("docs")

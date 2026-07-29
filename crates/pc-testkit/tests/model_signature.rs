@@ -15,6 +15,81 @@ use pc_testkit::model_signature::{
     ELEMENT_TYPE_F32,
 };
 use pc_testkit::paths;
+use pc_testkit::provenance::{self, ArtifactRecord, GroupProvenance};
+
+/// The one record the `model_signature` group declares. Named rather than positional: indexing
+/// `records[0]` is how this file drifted out of sync with the format in the first place.
+const SIGNATURE_RECORD: &str = "signature";
+
+/// Parse the group's provenance through the shared canonical schema (spec §16.17 item 2, §16.24
+/// item 1). Hand-indexing a `serde_json::Value` is what let this reader drift when the format
+/// changed by ratified decision; going through `GroupProvenance` means the writer
+/// (`xtask/src/model_signature.rs`) and this reader share one definition, so the next format
+/// change is a compile error or a parse failure here rather than a silently-absent key.
+fn read_group_provenance() -> GroupProvenance {
+    let path = paths::recorded(
+        std::path::PathBuf::from("model_signature").join(provenance::PROVENANCE_FILE_NAME),
+    );
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+        panic!(
+            "`{}` does not parse as canonical provenance (§16.17 item 2): {error}",
+            path.display()
+        )
+    })
+}
+
+/// Look the record up BY NAME. The record *set* is asserted by
+/// `the_model_signature_group_declares_exactly_one_record`; this lookup is deliberately
+/// independent of it, because test execution order is not guaranteed and a premise must not
+/// rest on another test having run.
+fn signature_record(group: &GroupProvenance) -> &ArtifactRecord {
+    group
+        .records
+        .iter()
+        .find(|record| record.name == SIGNATURE_RECORD)
+        .unwrap_or_else(|| {
+            panic!(
+                "no record named `{SIGNATURE_RECORD}`; declared records: {:?}",
+                group
+                    .records
+                    .iter()
+                    .map(|record| &record.name)
+                    .collect::<Vec<_>>()
+            )
+        })
+}
+
+#[test]
+// spec §16.24 item 1 + §16.13 item 6: the `model_signature` group declares EXACTLY one artifact,
+// and this test is the reason the consistency test below may look one up by name.
+//
+// Asserting the set rather than taking `records[0]` is the whole point: if the group later grows a
+// second record, a positional reader would keep passing while silently describing a different
+// artifact -- cookbook rule 13's "cardinality is not identity", one directory down. Falsifiable in
+// both directions: a renamed record fails (the set differs), a second record fails (the set
+// differs), and zero records fails both here and in `validate`'s `NoRecords` rule.
+fn the_model_signature_group_declares_exactly_one_record() {
+    let group = read_group_provenance();
+
+    assert_eq!(
+        group.group, "model_signature",
+        "the provenance must declare the group directory it sits in"
+    );
+
+    let declared: Vec<&str> = group
+        .records
+        .iter()
+        .map(|record| record.name.as_str())
+        .collect();
+    assert_eq!(
+        declared,
+        vec![SIGNATURE_RECORD],
+        "the model_signature group's record set changed; a positional reader would silently \
+         start describing a different artifact, so inspect this test rather than widening it"
+    );
+}
 
 #[test]
 // spec §16.16: the committed signature lives under `recorded/model_signature/`, a
@@ -82,6 +157,13 @@ fn sha256_hex(bytes: &[u8]) -> String {
 //
 // INTERNAL CONSISTENCY ONLY -- no digest literal is pinned, so a legitimate re-recording
 // (new weights, a schema change) stays green while an inconsistent pair fails loudly.
+//
+// ADAPTED (§16.17 item 2 / §16.24 items 1 and 19): the three keys this test used to hand-index at
+// top level -- `output`, `output_sha256`, `source_sha256` -- moved under `records[]` when the
+// shared canonical schema landed. It now parses through `pc_testkit::provenance::GroupProvenance`
+// and looks its record up by name. Every assertion below is the same assertion, and the three
+// `.as_str().expect("... as a string")` premise checks are absorbed by the typed parse, which
+// checks the type of EVERY field rather than of three.
 fn the_committed_provenance_describes_the_committed_signature_byte_for_byte() {
     // Prove the instrument before trusting it: FIPS 180-4's `sha256("abc")`. Without this,
     // a hex-encoding bug in the helper above would turn the real assertion into a
@@ -92,25 +174,28 @@ fn the_committed_provenance_describes_the_committed_signature_byte_for_byte() {
     );
 
     let signature_path = paths::recorded(COMIC_TEXT_DETECTOR_SIGNATURE);
-    let provenance_path = paths::recorded("model_signature/PROVENANCE.json");
-    let provenance: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&provenance_path).expect("readable"))
-            .expect("PROVENANCE.json is valid JSON");
+    let group = read_group_provenance();
+    let record = signature_record(&group);
+    let signature = comic_text_detector_signature();
 
     // Guard the premise of everything below: the provenance must be describing THIS file
     // and not some other output that happens to sit in the same directory.
-    let described = provenance["output"]
-        .as_str()
-        .expect("PROVENANCE.json records `output` as a string");
+    let described = record.output.as_str();
     assert_eq!(
         paths::workspace_root().join(described),
         signature_path,
         "PROVENANCE.json describes `{described}`, which is not the committed signature"
     );
 
-    let recorded = provenance["output_sha256"]
-        .as_str()
-        .expect("PROVENANCE.json records `output_sha256` as a string");
+    // New premise guard, cheap and load-bearing: "the COMMITTED signature" is only meaningful
+    // if the record claims to be committed. A record flipped to `committed: false` would make
+    // every assertion below describe a scratch artifact.
+    assert!(
+        record.committed,
+        "the signature record must be declared `committed` (§16.13 item 6)"
+    );
+
+    let recorded = record.output_sha256.as_str();
     let actual = sha256_hex(&std::fs::read(&signature_path).expect("readable"));
 
     assert!(
@@ -127,13 +212,29 @@ fn the_committed_provenance_describes_the_committed_signature_byte_for_byte() {
     );
 
     // Secondary, and deliberately redundant with `pc-models`'
-    // `the_recorded_model_signature_was_taken_from_the_declared_artifact`: provenance names
-    // the source model's digest as well, and that is the one field a hand-edit could
-    // desynchronise without disturbing `output_sha256` above.
-    let recorded_source = provenance["source_sha256"]
-        .as_str()
-        .expect("PROVENANCE.json records `source_sha256` as a string");
-    let signature = comic_text_detector_signature();
+    // `the_recorded_model_signature_was_taken_from_the_declared_artifact` and with
+    // `xtask/tests/provenance_digests.rs`' H2 check: provenance names the source model's digest
+    // as well, and that is the one field a hand-edit could desynchronise without disturbing
+    // `output_sha256` above.
+    //
+    // The redundancy is ratified (§16.24 item 1(b)) and the three checks have DIFFERENT reach:
+    // xtask's binds this digest to `pc_models::COMIC_TEXT_DETECTOR.sha256` (the single source of
+    // truth for model identity, §16.16 item 5), while this one binds it to the digest declared
+    // inside the committed signature file that sits beside it. Neither implies the other -- a
+    // provenance/signature pair could agree with each other and both be stale, or match
+    // `pc-models` while disagreeing with each other.
+    let recorded_source = record.source_sha256.as_deref().unwrap_or_else(|| {
+        panic!(
+            "PROVENANCE.json must declare `source_sha256` for record `{SIGNATURE_RECORD}`; \
+             the model digest is what makes this recording attributable (§16.16 item 2)"
+        )
+    });
+    // The source must be the model itself, or `source_sha256` describes something else entirely.
+    assert_eq!(
+        record.source.as_deref(),
+        Some(signature.model_file_name.as_str()),
+        "`source_sha256` is only meaningful if `source` names the model the signature describes"
+    );
     assert!(
         recorded_source.eq_ignore_ascii_case(&signature.sha256),
         "PROVENANCE.json records source_sha256 = {recorded_source}, but the signature it \
