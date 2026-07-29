@@ -258,8 +258,11 @@ cargo test --workspace 2>&1 | grep -E "^test result" \
   | awk '{p+=$4; f+=$6; i+=$8} END {print "passed="p" failed="f" ignored="i}'
 ```
 
-Current bar, both tiers: **735** default / **746** onnx, 6 ignored, clippy
-`--all-features` 0, fmt 0.
+Current bar, both tiers: **738** default / **749** onnx, 6 ignored, clippy
+`--all-features` 0, fmt 0. (Measured 2026-07-29 with the one-liner above, not carried forward
+from a previous claim — PERF-1 added three config tests and the bar sat stale at 735/746 for a
+commit. §16.24 item 15 records that two independently-written plans cited *different* baselines,
+735/746 and 738/749, which is what a hand-maintained count does. Re-measure; never quote.)
 
 **Also:** a gate that is `#[ignore]` + `unimplemented!()` enforces *nothing*. Four of them
 (§8.7(A)6, §8.7(B)9, §9.7(B)11, §11.7(B)13) are placeholders blocked on F1. That is a

@@ -2816,6 +2816,16 @@ The sanctioned D4a fixture now uses the measured literal `7`, with
    rather than compare pixels: before that group records, schedule a shared provenance
    schema and shared checker, not after.
 
+   **PARTLY SUPERSEDED (§16.24).** The *digest* half of this gap is closed: since
+   `crates/pc-testkit/tests/recorded_provenance.rs` was made bidirectional, every declared
+   digest is verified against the committed bytes, declaring-group locality is enforced, and
+   declared/committed path sets are asserted as exact sets with duplicate rejection. The text
+   above is preserved verbatim because it records what was true when written, but a reader must
+   not re-implement the finished half. What remained open, and what §16.24 rules on, is the
+   **schema** half — nothing constrained structure or required any field to be present, so the
+   three groups carried three incompatible shapes and a misspelled digest key was silently
+   skipped rather than rejected. The activation condition is met by the detector group.
+
 ## 16.18 No implicit model provisioning from processing commands (tie-break, 2026-07-28)
 
 1. **The auto-provisioning decision is reversed.** `clean` and every processing command
@@ -3252,7 +3262,11 @@ decision; it wrote no code.
 
    (e) **Completeness partition.** Every serialized field of `PageDataRaw` lands in exactly
    one bucket — `ORACLE-EXACT` / `EXPLAINED-§14.x` / `DIAGNOSTIC` / `NO-ORACLE` — checked
-   against §2.4/§2.5's field list. A field absent from the table is a defect in the review,
+   against §2.4/§2.5's field list. **(ERRATUM, §16.24 item 10: the §2.5 half of that citation
+   is wrong — §2.5 is `PageData`, the preprocessor's output, not the detector's. The partition
+   covers §2.4's `PageDataRaw` + `DetectedBlock` plus `RawBlock`'s three serialized fields;
+   §2.5's fields appear as `OUT-OF-SCOPE-F1` rows. §16.24 item 11 also makes this partition a
+   test rather than checklist prose.)** A field absent from the table is a defect in the review,
    not an omission. `OPEN` is a blocking state, not a verdict: any open row blocks the
    fixture commit. **A row may not close as `EXPLAINED` against a §14 or §16.x entry that
    does not yet exist** — the ratification lands first, with its `DEVIATION(n)` comment at
@@ -3726,7 +3740,9 @@ because it is a **scope change**, not a gap-fill.
    authorised frozen-test edit); then **F1** — the `PROVENANCE.json` schema and checker due
    under §16.17 item 2, un-stubbing `xtask record-fixtures --only detector`, the §16.20 item
    3(b) comparator with item 10's negative controls, `docs/DETECTOR_ORACLE.md`, the
-   completeness partition and the three signatures; then **GPU-1** (device config, the
+   completeness partition and the three signatures (**F1's plan is ratified by §16.24**, which
+   also adds the upstream-oracle recording script of §16.20 item 3(a) to F1's scope); then
+   **GPU-1** (device config, the
    model-agnostic policy resolver, §16.19-integrated fatal refusal, recording refusal — no
    CUDA linkage); then **GPU-2** (the `cuda` feature and its guards); then §16.21 item 6's
    investigation, which may run any time after PERF-1; then legacy INI import and Lab NLM
@@ -3737,6 +3753,330 @@ because it is a **scope change**, not a gap-fill.
    The committed page fixture and §7.2's 400 KB cap remain the one open prerequisite, per
    §16.20 item 10. It gates only the final fixture *commit* — not building F1's machinery —
    and is a maintainer decision rather than an engineering task.
+
+## 16.24 F1 plan tie-break: the provenance schema vs. the frozen gate, and how oracle pairs are formed (Fable tie-break, 2026-07-29)
+
+Both Opus subagents produced full F1 plans and disagreed on two clusters: whether
+`crates/pc-testkit/tests/recorded_provenance.rs` is replaced or preserved, and whether the
+§16.20 item 3(b) comparator's pairing is a signed input or a computed correspondence. Per
+`CLAUDE.md` the Orchestrator did not pick; a Fable Senior Rust Engineer subagent reviewed both
+positions and made the final call. This section records it. Fable's advisory-only restriction
+was suspended for this decision; it wrote no code.
+
+Ratified without restatement, because both plans independently reached it: one canonical schema
+replacing all three committed shapes, migrated, with `#[serde(deny_unknown_fields)]`; the schema
+in `crates/pc-testkit/src/provenance.rs` (`xtask` has **no lib target** — verified — so nothing
+can depend on it); the comparator in `crates/pc-detect/src/oracle.rs` under
+`cfg(any(test, feature = "testkit"))`, running in the **default** CI tier; ours and the upstream
+oracle sharing **one** `detector/` group directory; a digest-shaped key *and* value sweep over
+free-form maps in addition to the typed layer; the 0.001 confidence perturbation never being a
+gating divergence; negative controls constructed in-test and never committed.
+
+1. **DECIDED — the frozen test is PRESERVED; the engineer's position wins. No replacement is
+   authorised.** Cookbook rule 8 names three exits from a frozen test, and replacement qualifies
+   only under exit 2 — contradiction with the spec. No contradiction exists: the engineer's
+   migration design proves the test can stay green with **zero edits**, so the precondition for
+   the exit the architect invoked is absent. The §16.20 item 8 precedent the architect leaned on
+   *was* a genuine contradiction (a test pinning `PAD_VALUE == 114` against a normative upstream
+   0); this is not that. The architect's own risk table concedes the point by naming its
+   replacement task "the highest-risk task in F1" — it replaces a gate that took five iterations
+   to get right, **every one of which was green while broken**. A replacement justified by
+   tidiness, carrying that risk profile, against a preservation design costing only field-naming
+   discipline, loses.
+
+   (a) The migration is **declared-path-set preserving**. Acceptance gate for the migration
+   commit: `cargo test -p pc-testkit --test recorded_provenance` green **with the test file
+   unmodified**. If it is not green the migration is reworked, never the test.
+
+   (b) The key-name walker (`recorded_provenance.rs:90-151`) is **neither deleted nor patched**.
+   Under the canonical schema it becomes a second, redundant verifier of the same digests.
+   Redundancy in a digest gate is acceptable; deleting five ratified iterations to remove it is
+   not.
+
+   (c) Digest slots are named so the walker's sibling resolution (`:90-96`) succeeds:
+   `output_sha256`/`output`, `source_sha256`/`source`, `input_page_sha256`/`input_page` — subject
+   to item 2's single-declaration constraint.
+
+   (d) `sha2` is **not** promoted to `pc-testkit`'s `[dependencies]`; the shared checker stays
+   pure structure over already-parsed JSON. Digest verification continues to live in the frozen
+   test (its own `sha2` dev-dep) and in `xtask` via `pc_models::sha256_hex`.
+
+   (e) The architect's holes **H1 and H2 are real** and are closed **additively** (rule 8 exit 1)
+   in a new test file under `xtask/tests/` — legal because integration tests of a bin-only
+   package link its `[dependencies]`, and `xtask` already carries `pc-models` and `pc-testkit`.
+   It must assert: (H2) the `model_signature` group's `source_sha256` **equals**
+   `pc_models::COMIC_TEXT_DETECTOR.sha256` — today checked only inside the writer
+   (`xtask/src/model_signature.rs:212-218`), cookbook rule 12 exactly; and (H1) each
+   `nlm`/`inter_area` source under `tests/fixtures/upstream/` hashes to a literal recorded at
+   migration time. Upstream-path digests must **not** be added to the provenance files
+   themselves — `assert_known_non_committed_form` (`:184-208`) rejects that form, and loosening
+   the exemption is rule 13's "bypass wearing different clothes".
+
+   (f) When the detector group records, `EXPECTED_GROUPS` / `EXPECTED_DECLARED_PATHS` /
+   `EXPECTED_COMMITTED_PATHS` (`:11-27`) gain the new entries. This is an **authorised additive
+   edit**, invited by the test's own message (`:85`), on two conditions ratified here: every
+   existing entry is retained verbatim, and the constants stay **literal** — **deriving them from
+   the filesystem is forbidden** (rule 13's iteration-2 collapse). It lands in the same atomic
+   commit as the fixtures (item 6).
+
+2. **ERRATUM against BOTH plans: each schema as drafted breaks the frozen gate at recording
+   time.** Neither traced its detector pins through `recorded_provenance.rs:297-311`, which
+   rejects **any** duplicate declared path across the whole tree, unconditionally — no constant
+   edit can satisfy it.
+
+   (a) *Engineer's schema:* `DetectorProvenance` is per-record and required for every record in
+   the group. With ~6 records each carrying `model`/`model_sha256` and
+   `input_page`/`input_page_sha256`, the walker collects the same two paths ~6 times → duplicate
+   rejection fires. Worse, `comictextdetector.pt.onnx` is **already** declared by the
+   `model_signature` group, so even one detector-group declaration of the bare filename is a
+   cross-group duplicate.
+
+   (b) *Architect's schema:* `ModelRef { sha256, .. }` and `PageRef { sha256, .. }` carry a bare
+   `sha256` key whose sibling resolution is hard-coded to `output` (`:92`). No `output` sibling
+   exists in those objects, so the walker **panics** (`:112-119`). Consistent with deleting the
+   walker; fatal under item 1.
+
+   **The constraint:** the canonical schema must be shaped so the frozen walker sees each
+   filesystem path declared **exactly once per tree**. Binding realisation: detector pins are
+   hoisted to **one group-level `detector` block per `PROVENANCE.json`** (the architect's
+   group-level shape, with `upstream` and `ours` sub-blocks), not per-record; the input page is
+   declared exactly once, as `input_page`/`input_page_sha256`, and is **not** additionally listed
+   as a record output; and the model digest is stored under a key the walker does not collect
+   (e.g. `model_digest`, sibling `model` holding the bare filename), because the bare filename is
+   already declared by `model_signature` and because walker visibility buys nothing for it — the
+   bare-model form is exactly the deliberately-unverifiable bucket, which is hole H2. **The
+   compensating check is stronger than the walker's**: item 1(e)'s always-running test must
+   assert the detector group's `model_digest` equals `pc_models::COMIC_TEXT_DETECTOR.sha256`. A
+   digest slot dodging the walker is acceptable **only** because that test verifies it against
+   the single source of truth; that condition is part of this ratification, not an implementation
+   detail.
+
+3. **Schema content amendments, binding.** The engineer's `DetectorProvenance` is missing
+   spec-mandated fields; the architect's content list is adopted where it is the superset.
+
+   (a) **Upstream side** pins: upstream version; commit (40-hex); **the invoking command line of
+   the upstream run itself** (§16.20 item 3(a) — the engineer's group-level `command_line` can
+   only hold the xtask invocation); the profile with every non-default key, built by diffing
+   against defaults rather than by hand; backend (`cv2_dnn`, enforced by the engineer's
+   backend↔implementation biconditional, adopted); and **resolved dependency versions** (cookbook
+   rule 3; §16.20 item 7 makes them the only means of attributing a later divergence).
+
+   (b) **Our side** pins: execution provider and both thread counts — **spec-mandated** by
+   §16.22 item 6 and §16.21 item 5, taken from the *resolved* config, not the profile default —
+   plus `pad_value` and the panel-ocr commit, which §16.20 items 8 and 5 make fixture-affecting.
+
+   (c) The engineer's validator rule list is adopted, re-based onto the hoisted shape, including
+   the digest-key and digest-shaped-value sweeps and the uppercase-digest rejection.
+
+4. **DECIDED — pairing is a SIGNED INPUT, not an algorithm; the architect's position wins.** The
+   engineer's objection that item 10's "exactly those three divergences" is unimplementable is
+   sound **only against pairing formed by the identity itself**. Under a signed pairing table a
+   1-px perturbation still pairs — the table says so — and yields exactly one geometry
+   divergence, so both designs satisfy item 10 and the stated ground for a computed rule
+   evaporates. What remains is a lopsided cost comparison.
+
+   (a) `PAIRING_CENTRE_L1_LIMIT = 8` is an **unmeasured magnitude threshold on geometry**.
+   §16.20 item 5's entire argument is that no defensible magnitude exists in this territory, and
+   nothing in either plan derives 8 from a measurement. Even scoped to correspondence it has
+   gating side effects — whether a fault surfaces as one `GeometryIdentity` row or as
+   `UnmatchedUpstream` + `UnmatchedOurs` flips at 8 px — and mutual-nearest can mis-pair in
+   geometry the ambiguity guard does not cover. That is a threshold re-entering through the
+   correspondence door.
+
+   (b) The cost of the signed input is hand-authoring N ≲ 12 pairings for one or two pages, and
+   that authorship is work item 3(f) **already requires**: "pair every upstream block with one of
+   ours or with a documented mechanism" is judgment the three signatures exist to cover, and
+   3(f) says the producing agent "may … author the table". The spec anticipated an authored table.
+
+   (c) The engineer's ambiguity scenario is handled *better* by the signed design: the author
+   pairs one and documents the other; the identity then fails or an `EXPLAINED-§14.x` / `OPEN` row
+   results, and `OPEN` blocks the commit — escalation instead of a tie-break heuristic.
+
+   Consequences: the comparator **verifies** a supplied pairing and never invents one. The
+   pairing, the per-pair `IdentityBranch` (line-informed vs line-less, hard-coded per pair — the
+   architect's trap-closure is adopted), the unmatched entries with their mechanisms, and the
+   expected totals form one `Expectations` value, a required by-value argument with no discovery
+   overload. **Item 3(c) is ratified as scoped to gating verdicts** — the engineer asked for this
+   and receives it — but the scoping is **not** license for a correspondence bound:
+   `PAIRING_CENTRE_L1_LIMIT` is rejected and no distance constant may appear in the comparator.
+   Every `Unmatched` entry carries a mechanism (§14.13 per-class duplicate / coverage-filtered /
+   documented split-merge citing its register entry / `Open`), and `Open` is a blocking violation,
+   never a verdict.
+
+5. **DECIDED: the `Expectations` live in the TEST SOURCE, not a committed manifest.** The
+   engineer's `MANIFEST.json` is rejected. A count or pairing read from a file committed beside
+   the artifacts under comparison is derived data one hop from the gate — cookbook rule 12
+   verbatim — and its stated benefit (re-recording without a frozen-test edit) **is** the defect:
+   §16.23 item 5 deliberately budgets the DBNet re-record as "an F1 re-record and full re-sign",
+   a reviewed event, not a file swap that keeps CI green. Expectations are consts in
+   `crates/pc-detect/tests/f1_oracle*.rs`, with the derivation written out in
+   `docs/DETECTOR_ORACLE.md` and covered by the signatures.
+
+6. **The comparator's observable contract — a merge, with the seam stated.** Adopted from the
+   engineer: the divergence **class** system (`Gating` / `Diagnostic` / `NoOracle`) reconciling
+   item 3(d) with item 10; deterministic emission order; **no computed floats in any variant**, so
+   controls assert the whole ordered vector with one exact `assert_eq!`; per-fault isolation
+   tests; the extra-block-on-*our*-side control (rule 13's missing direction — item 10 names only
+   the upstream-side deletion); the line-union positive case built on item 12's measured pair
+   `(29,105,86,261)` vs `[29,105,90,261]`; the empty-oracle accounting-failure control; and the
+   documented-difference-does-not-silence-the-row control. Adopted from the architect: the signed
+   `Expectations`; expectations-in-source; the `IdentityBranch` returned and asserted per pair;
+   the `rect_to_xyxy` conversion isolated in one function with a hand-computed unit test (§2.1's
+   mixed inclusive/exclusive convention is exactly the off-by-one a tolerance would swallow); and
+   **no boolean success channel** — CI's gate is "gating-classified set empty AND pairs-compared
+   equals the authored count", never an `is_ok()`.
+
+   **The recording commit is atomic:** fixtures + provenance + item 1(f)'s constant edits + the
+   real-page gate test with its literal `Expectations` + the doc verdicts + the three signatures
+   land in one commit. Until then no real-page gate test exists. The engineer's WARN-degrading
+   committed-gate test and two-state invariant are **not adopted**: the frozen provenance gate
+   already fails any half-recorded tree (a fourth group directory breaks `EXPECTED_GROUPS`; an
+   undeclared file breaks bidirectional coverage), so the extra machinery guards nothing, and a
+   conditional-return gate is the shape cookbook rule 1 exists to resist.
+
+7. **DECIDED — item 10's "exactly those three divergences" is a multiset across classes:** one
+   gating geometry row, one DIAGNOSTIC confidence row, one gating unmatched/accounting row, and
+   nothing else. Both plans independently converged on this, so the architect's anticipated
+   disagreement does not exist. A control expecting three *gating* failures would contradict items
+   3(c)/(d) and item 5's 0.079–0.089 noise floor.
+
+8. **DECIDED — the comparison's left-hand side is `_detector_blocks.json` (pre-filter); the
+   upstream side is upstream's post-`group_output` output.** §16.20 item 2 names
+   `_detector_blocks.json` "the artifact that genuinely accepts output as truth", and it is what
+   `ReplayDetector` replays; our `#raw.json` blocks are post-coverage-filter (verified:
+   `crates/pc-detect/src/lib.rs:106-118` filters on `mask_coverage` before assembling
+   `PageDataRaw`) and are separately locked by §8.7(A)6/(B)9. Item 9's measured asymmetry —
+   upstream's line-less filter firing once, on `[438,1407,498,1446]`, `mask_score` 0.0359 —
+   becomes **visible instead of hidden**: the box appears in our pre-filter list and not in
+   upstream's post-filter oracle, and closes as a documented unmatched-ours entry citing
+   §14.17/item 9. That is item 9's own lesson, that a divergence table over final artifacts
+   "would have shown a clean result and hidden the structural difference".
+
+   Adjustment: the oracle script must **also** capture upstream's pre-`group_output` block list
+   and per-block `mask_score`s as a DIAGNOSTIC (non-gated) artifact, so each documented unmatched
+   entry points at recorded evidence rather than an inference. The upstream *gated* side stays
+   post-`group_output`, because that is where `lines` exist and where item 3(b)'s identity is
+   defined. Page-level `scale`/`image_size` rows are adopted as **gating** — cookbook rule 7 names
+   both as genuine oracles — and they are what pins the two sides to one coordinate frame.
+
+9. **DECIDED — the `confidence` partition row closes as DIAGNOSTIC if the recording script
+   captures upstream's scores, else NO-ORACLE; it may not close as `OPEN` on this account.**
+   Cookbook rule 7 records that upstream's `#raw.json` does not persist confidence. The script
+   must *attempt* capture from `postprocess_yolo`'s output before `group_output` discards it —
+   item 5's own decomposition proves the value is obtainable — and the oracle schema keeps
+   `confidence: Option<f64>` with `NoOracleField` rows when absent. Either outcome is a closed
+   verdict under item 3(e); neither blocks the fixture. The row is never gated regardless.
+
+10. **ERRATUM — §16.20 item 3(e)'s citation "§2.4/§2.5's field list" is wrong: §2.5 is
+    `PageData`, the preprocessor's output, not the detector's.** The partition F1 owes is over
+    §2.4's `PageDataRaw` + `DetectedBlock`. Ruled: §2.4's fields are partitioned exhaustively;
+    §2.5's fields appear as `OUT-OF-SCOPE-F1` rows pointing at §9.7(B)11, recorded rather than
+    silently dropped (§16.23 item 1's rule); **and, in consequence of item 8, `RawBlock`'s three
+    serialized fields (`rect`, `class_index`, `confidence`) get partition rows too** — the gated
+    artifact may not have unpartitioned fields, or the honour-system gap re-opens one artifact
+    over.
+
+11. **RATIFIED — the completeness partition, the EXPLAINED-anchor rule, the OPEN-blocks rule and
+    the three-signature requirement are TESTS, not checklist prose.** Briefed as an architect-only
+    position; in fact both plans drafted the same four gates, so it is ratified as agreed: set
+    equality between the doc table's field column and the serialized key set, **both directions**,
+    duplicates rejected; every `EXPLAINED-§x.y` anchor present in the spec; no `OPEN` row once the
+    fixture is present; three complete, role-distinct, non-self signatures. Also ratified: the
+    **two-equation** accounting reading —
+    `pairs + class_duplicates + documented_upstream_only == upstream_total` and
+    `pairs + documented_ours_only == ours_total` — since the literal "equals both totals" is
+    unsatisfiable with one-sided extras, as both plans independently found.
+
+12. **DECIDED — `demo_bubbles` detector artifacts: record to scratch for §10.7(B)15's non-gating
+    report, commit nothing, and the four §16.13 item 8 tests stay `#[ignore]`d.** The architect
+    wins; §16.20 item 12 is dispositive. Box presence on those crops is decided by rounding (0.037
+    survival margin against a 0.079–0.089 noise floor), and item 11 names an unreviewed recorded
+    fixture the top residual risk. Un-ignoring regression locks against a noise-determined box set
+    is cookbook rule 7 with extra steps. Those four tests un-ignore only against the signed
+    maintainer page, never against `demo_bubbles`.
+
+13. **CONFIRMED — the architect's H3 is real, and it is assigned.** `pc-testkit` has
+    `rebase_page_data_raw`/`rebase_mask_data` and **no inverse**, while `pc_detect::run` builds
+    handles from the absolute `base_image_dest`/`raw_mask_dest` and §7.2 requires relative storage.
+    Without an inverse the recorder commits one machine's absolute paths — the defect §16.20 item
+    3's closing paragraph names. Assigned to the schema task:
+    `relativize_page_data_raw`/`relativize_mask_data` as exact inverses in `pc_testkit::paths`,
+    with a round-trip unit test, called by the recorder before serialising `#raw.json`, and
+    mirrored in the oracle script's path stripping.
+
+14. **Recorder and oracle-script requirements, merged.** The engineer's testable split (pure
+    `plan()` + `provenance_for()` with in-module `#[cfg(test)]` tests) is adopted, **plus** the
+    architect's execution-path order, all binding: verify `pc_models::COMIC_TEXT_DETECTOR.sha256`
+    **before any inference**; refuse a non-CPU execution provider with a `// §16.22 item 5(b)`
+    guard; call `detect()` directly and write the §7.2.1 pair via the shared
+    `pc_detect::mock::write_replay_fixture` (whose doc comment already names F1); run the full
+    `run()` for the §7.2 triple and **assert the two block lists identical** rather than assuming
+    determinism; relativize (item 13) before serialising; populate provenance from the resolved
+    config.
+
+    **The engineer's plan omits the upstream-oracle recorder entirely — a real scope gap.** The
+    architect's T5b is adopted whole and is in F1's scope: a committed
+    `xtask/scripts/record_detector_oracle.py` (§11.6's precedent that recording scripts are
+    committed so provenance is auditable), pinned to upstream
+    `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`, forcing **and verifying** the `cv2.dnn` backend
+    (§16.20 item 6 — the `.pt` path is a different code path with BGR input), verifying the model
+    digest before emitting, stripping absolute paths, and refusing to emit otherwise. Excluding
+    3(a) would leave F1 delivering a comparator with one operand.
+
+15. **Cleanups, all in F1 scope.** (H4) `DemoBubble::recorded` has zero call sites and builds
+    group-less paths the bidirectional gate would reject — **delete it**; a group-aware accessor
+    can return when a caller exists. (H5) the three explanation constants in `xtask/src/env.rs`
+    promise flat `tests/fixtures/recorded/<stem>_…` paths with no `detector/` component —
+    corrected when the recorder lands; no test pins the full paths, so this is ordinary work, and
+    the engineer's substring-only skip-message test is adopted. (H6) `xtask/src/calibrate.rs`'s
+    stale "blocked on D1/D4" text — corrected to the real blocker, the page plus the recording
+    run. Path-root unification: the four duplicated roots in `xtask/src/paths.rs` become
+    re-exports of `pc_testkit::paths` (§16.18 item 1; F1 adds a third consumer of "where is the
+    recorded root"), xtask-only helpers staying put. The hand-rolled 75-line SHA-256 in
+    `xtask/src/model_signature.rs` is **deleted** — `sha2` is already in `xtask`'s build graph via
+    `pc-models`, so the copy buys no dependency reduction and is a second implementation of a
+    cryptographic primitive; add `sha2` to **`xtask`'s** `[dependencies]`, not `pc-testkit`'s.
+    Migration safeguards: every digest recomputed from bytes and asserted equal to the old file's
+    digest before the new file is written; re-running `nlm`/`inter_area` with `--force` for
+    byte-identity is verification when tooling is present, not a migration precondition; **no
+    digest is ever hand-typed.** Cookbook rule 6's test-count bar: the two plans cite different
+    baselines (735/746 vs 738/749); neither is adjudicated here — re-measure at commit time and
+    record the measured numbers.
+
+16. **Page-format engineering ruling.** The binding invariant: **both detectors must consume
+    byte-identical pixel buffers.** Item 5 measured a 1-LSB input difference moving confidence by
+    0.079–0.089, and a lossy page decoded by `image` on our side and `cv2` on upstream's
+    reintroduces — one level up, feeding the network directly — the decoder confound §16.13 item 5
+    already isolated for INTER_AREA. Two conforming mechanisms, either acceptable:
+
+    (a) commit a **lossless PNG**, so decoding is content-deterministic and the file sha256
+    suffices. This collides with §7.2's 400 KB cap and needs the maintainer's cap amendment, since
+    a lossless ~1024-wide page plausibly exceeds it; or
+
+    (b) commit the JPEG within the cap and feed upstream the `image`-crate re-decode written as a
+    scratch PNG — the exact §16.13 item 5 precedent, cap intact. Under (b) the provenance must
+    record the digest of the **decoded RGB buffer** fed to each side in addition to the file
+    digest, and the two must be equal.
+
+    Item 12's criterion stands either way: letterbox ratio near 1, so `max(w,h) ≈ 1024`.
+
+**Maintainer decisions — flagged, not ruled.** (i) The page itself: which page, its format, and —
+iff option 16(a) is preferred — raising §7.2's 400 KB cap. The two are quantitatively coupled and
+the choice should precede the recording run so it is not repeated. (ii) Scheduling the three
+§16.20 item 3(f) signatures. This gates the fixture commit and is a calendar problem, not an
+engineering one.
+
+**Deferrals, recorded rather than dropped (§16.23 item 1's rule applied to this ruling).** (i) The
+upstream environment's reproducibility window (§16.20 item 7 licenses less than it appears to)
+remains an accepted, named risk; recorded dependency versions make a later divergence
+attributable, not preventable. (ii) Whether upstream confidence capture succeeds is left to the
+recording run; item 9 closes the row either way, so nothing blocks on it. (iii) The choice between
+`xtask/tests/` integration tests and in-module `#[cfg(test)]` unittests for xtask's non-digest
+tests is left free — both run in the default tier; only item 1(e)'s digest test is bound to
+`xtask/tests/`, because it needs `pc-models`. (iv) The architect's five-property preservation
+table is **moot** under item 1 and is deliberately not carried forward; if a future ratification
+ever does replace the frozen gate, that table is the starting bar and this deferral is the pointer
+to it.
 
 ## 16. Summary of what v1 is NOT
 
