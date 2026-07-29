@@ -234,8 +234,14 @@ fn every_walker_visible_digest_has_its_sibling_path() {
     let mut walked = Vec::new();
     for group in discover_group_dirs() {
         let path = paths::recorded(PathBuf::from(&group).join(provenance::PROVENANCE_FILE_NAME));
-        let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).expect("readable")).expect("valid JSON");
+        // Name the file and the reason in both failure paths. `.expect("readable")` /
+        // `.expect("valid JSON")` identify neither, and this loop visits every group — so the one
+        // thing a reader needs on failure is which file (cookbook rule 13: diagnostics are part of
+        // the gate).
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+        let value: serde_json::Value = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("`{}` is not valid JSON: {error}", path.display()));
         walk(&value, &group, &mut walked);
     }
 

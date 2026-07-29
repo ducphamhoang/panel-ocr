@@ -37,8 +37,18 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn read_group(name: &str) -> GroupProvenance {
     let path = paths::recorded(PathBuf::from(name).join(provenance::PROVENANCE_FILE_NAME));
-    serde_json::from_slice(&std::fs::read(&path).expect("readable provenance"))
-        .unwrap_or_else(|error| panic!("`{}` is not canonical provenance: {error}", path.display()))
+    // Both failure paths name the file and the reason. `.expect("readable provenance")` used to
+    // sit on the read, which panics with a message that identifies neither — and with four
+    // provenance files in the tree (§16.24 item 19(c)) "readable provenance" tells a reader
+    // nothing. Cookbook rule 13's corollary: diagnostics are part of the gate.
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|error| panic!("failed to read provenance `{}`: {error}", path.display()));
+    serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+        panic!(
+            "`{}` does not parse as canonical provenance (§16.17 item 2): {error}",
+            path.display()
+        )
+    })
 }
 
 /// How many recorded groups carry §16.24 item 2's detector pins. **A literal, never derived from
