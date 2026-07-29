@@ -201,16 +201,35 @@ fn section_inter_area(body: &mut String) -> Result<bool> {
     // the `is_null()` skip below silently DROPPED this row from a generated document rather than
     // failing. §16.24 item 19(c)'s reader enumeration missed this consumer entirely.
     //
-    // A missing file stays a silent skip: `calibrate-goldens` is meant to run in a checkout where
-    // nothing has been recorded. A file that is PRESENT but does not carry the metrics is a
-    // different case and says so in the output, because that is the state the old code hid.
+    // FOUR states, distinguished, each with a TRUTHFUL message. Only absence is silent, because
+    // `calibrate-goldens` is meant to run in a checkout where nothing has been recorded. The first
+    // version of this fix collapsed the other three: it used `if let Ok(text) = read_to_string`,
+    // which hid an unreadable-but-present file as if it were absent, and `.ok()`, which reported a
+    // PARSE failure with the message "carries no `diagnostics.metrics_vs_reference`" — a false
+    // message, cookbook rule 1's corollary, and the same defect as §16.24 item 20(b)'s
+    // `NonRelativePath`-for-a-misplaced-path. Distinguishing them costs four lines.
     let provenance_path = paths::recorded_root().join("inter_area/PROVENANCE.json");
-    if let Ok(text) = std::fs::read_to_string(&provenance_path) {
-        match serde_json::from_str::<pc_testkit::provenance::GroupProvenance>(&text)
-            .ok()
-            .and_then(|parsed| parsed.diagnostics.get("metrics_vs_reference").cloned())
-        {
-            Some(metrics) => {
+    if provenance_path.is_file() {
+        let metrics = std::fs::read_to_string(&provenance_path)
+            .map_err(|error| format!("exists but could not be read: {error}"))
+            .and_then(|text| {
+                serde_json::from_str::<pc_testkit::provenance::GroupProvenance>(&text).map_err(
+                    |error| {
+                        format!("does not parse as canonical provenance (§16.17 item 2): {error}")
+                    },
+                )
+            })
+            .and_then(|parsed| {
+                parsed
+                    .diagnostics
+                    .get("metrics_vs_reference")
+                    .cloned()
+                    .ok_or_else(|| {
+                        "parses, but carries no `diagnostics.metrics_vs_reference`".to_owned()
+                    })
+            });
+        match metrics {
+            Ok(metrics) => {
                 let _ = writeln!(
                     body,
                     "| cv2-from-JPEG vs. cv2-from-PNG (decoder diagnostic, non-gating) | {}×{} | {:.6} | {} | {:.6} |",
@@ -221,11 +240,11 @@ fn section_inter_area(body: &mut String) -> Result<bool> {
                     metrics["ssim_as_gray"].as_f64().unwrap_or(f64::NAN),
                 );
             }
-            None => {
+            Err(why) => {
                 let _ = writeln!(
                     body,
                     "| cv2-from-JPEG vs. cv2-from-PNG (decoder diagnostic, non-gating) | — | **UNREADABLE** | — | — |\n\n\
-                     > `{}` exists but carries no `diagnostics.metrics_vs_reference`. Re-record with \
+                     > `{}` {why}. Re-record with \
                      `cargo xtask record-fixtures --only inter-area --force`. This row is reported \
                      rather than omitted deliberately: silently dropping it is how a provenance \
                      shape change went unnoticed (§16.24 item 19).",
@@ -301,8 +320,26 @@ fn write_verdict(body: &mut String, nlm_ok: bool, area_ok: bool) {
 }
 
 fn provenance(body: &mut String, path: &std::path::Path) {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    // Same discipline as the decoder-diagnostic row above: absence is silent (nothing recorded
+    // yet), but a file that EXISTS and cannot be read is reported into the document rather than
+    // dropped. The previous `let Ok(..) else { return }` made those two indistinguishable, so a
+    // corrupt or unreadable provenance file removed its own audit trail from the generated doc —
+    // which is the failure mode §16.24 item 19 is about.
+    if !path.is_file() {
         return;
+    }
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => {
+            let _ = writeln!(
+                body,
+                "> **Recording provenance `{}` could not be read: {error}.** Reported rather than \
+                 omitted: a missing provenance block would otherwise be indistinguishable from a \
+                 group that was never recorded.\n",
+                paths::display_relative(path)
+            );
+            return;
+        }
     };
     let _ = writeln!(
         body,
