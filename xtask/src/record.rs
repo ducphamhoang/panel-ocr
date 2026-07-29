@@ -143,12 +143,26 @@ pub fn run(
 /// work (re-record and rewrite the provenance), never less. The conservative answer is the safe one
 /// here, which is exactly why the polarity is worth stating.
 ///
-/// **Three conditions, because a weaker check still permits a false skip.** An earlier version of
-/// this helper compared only `schema_version`, which let a provenance that parses at v1 while
-/// *misdescribing its own artifacts* satisfy the skip — the "actively misdescribes itself" state
-/// `crates/pc-testkit/tests/model_signature.rs` exists to catch, reached here by the recorder
-/// declining to fix it. Since this crate owns both the validator and a digest routine, not using
-/// them was under-using the tools rather than a considered scope choice.
+/// **Four conditions, arrived at by three rounds of patching the reported case — which is itself
+/// the lesson.** The first version compared only `schema_version`, so a provenance parsing at v1
+/// while *misdescribing its own artifacts* satisfied the skip (the "actively misdescribes itself"
+/// state `crates/pc-testkit/tests/model_signature.rs` exists to catch, reached here by the recorder
+/// declining to fix it). The second added `validate()` and digest matching, but only in the
+/// provenance→disk direction, so **unbound fixture state** — a stray or renamed artifact declared by
+/// nothing and verified by nothing — still passed.
+///
+/// The conditions are therefore enumerated here rather than left implicit, because each round of
+/// "fix the case that was reported" produced a helper that looked finished and was not:
+///
+/// 1. `PROVENANCE.json` reads and parses at `PROVENANCE_SCHEMA_VERSION`.
+/// 2. `provenance::validate` returns no violations — every rule the checker owns, not one field.
+/// 3. **provenance → disk:** every committed declaration's digest matches the bytes.
+/// 4. **disk → provenance:** every file in the group directory is declared.
+///
+/// 3 and 4 are the same bidirectional rule `recorded_provenance.rs` needed five iterations to get
+/// right (cookbook rule 13: cardinality is not identity; rule 14: each reader of a format needs the
+/// whole invariant, not the convenient half). Having helped harden that gate and then written this
+/// one half-way is the recurrence worth naming.
 fn provenance_is_current(group: &str) -> bool {
     let path = paths::recorded_root()
         .join(group)
@@ -168,11 +182,10 @@ fn provenance_is_current(group: &str) -> bool {
     if !pc_testkit::provenance::validate(group, &parsed).is_empty() {
         return false;
     }
-    // 3. Every committed declaration matches the bytes on disk. This is the condition that makes
-    //    the skip mean "the recorded state is self-consistent" rather than "some files exist":
-    //    an output edited or truncated after recording leaves a provenance that parses and
-    //    validates while describing different bytes, and re-recording is exactly the fix.
-    parsed
+    // 3. PROVENANCE -> DISK. Every committed declaration matches the bytes on disk: an output
+    //    edited or truncated after recording leaves a provenance that parses and validates while
+    //    describing different bytes, and re-recording is exactly the fix.
+    let declared_matches = parsed
         .records
         .iter()
         .filter(|record| record.committed)
@@ -180,7 +193,50 @@ fn provenance_is_current(group: &str) -> bool {
             let artifact = paths::workspace_root().join(&record.output);
             pc_models::sha256_hex(&artifact)
                 .is_ok_and(|actual| actual.eq_ignore_ascii_case(&record.output_sha256))
-        })
+        });
+    if !declared_matches {
+        return false;
+    }
+
+    // 4. DISK -> PROVENANCE, the other direction. Every file in the group directory must be
+    //    declared. Without this the skip accepts *unbound fixture state*: a stray, renamed or
+    //    left-behind artifact sitting beside the declared ones, describing nothing and verified by
+    //    nothing, while the recorder reports the group complete.
+    //
+    //    This is `recorded_provenance.rs`'s bidirectional coverage rule (its declared/committed
+    //    path sets are asserted in BOTH directions) applied to the recorder. Checking only
+    //    direction 3 is the same defect that gate took five iterations to remove — cookbook rule
+    //    13's "cardinality is not identity", and rule 14's lesson that the readers of a format
+    //    each need the whole invariant, not the half that was convenient.
+    let group_dir = paths::recorded_root().join(group);
+    let declared: std::collections::BTreeSet<String> = parsed
+        .records
+        .iter()
+        .filter(|record| record.committed)
+        .map(|record| record.output.clone())
+        .collect();
+    let Ok(entries) = std::fs::read_dir(&group_dir) else {
+        return false;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else { return false };
+        let name = entry.file_name();
+        // The provenance file describes the others and does not describe itself.
+        if name == pc_testkit::provenance::PROVENANCE_FILE_NAME {
+            continue;
+        }
+        let Ok(relative) = entry
+            .path()
+            .strip_prefix(paths::workspace_root())
+            .map(Path::to_path_buf)
+        else {
+            return false;
+        };
+        if !declared.contains(&relative.to_string_lossy().replace('\\', "/")) {
+            return false;
+        }
+    }
+    true
 }
 
 // ------------------------------------------------------------------ group: nlm
