@@ -3992,20 +3992,40 @@ gating divergence; negative controls constructed in-test and never committed.
    `confidence: Option<f64>` with `NoOracleField` rows when absent. Either outcome is a closed
    verdict under item 3(e); neither blocks the fixture. The row is never gated regardless.
 
-   **PARTLY SUPERSEDED by §16.25, and one phrase above must not be cited.** The clause
-   *"with `NoOracleField` rows when absent"* is **withdrawn**: that variant is deleted, and §16.25
-   item 3 records why quoting it here was circular in the first place — the identifier occurs in this
-   spec exactly once, right here, in CamelCase taken from the draft this section was ruling on, so it
-   was this ruling repeating the draft's vocabulary while deciding a different question. Whole-field
-   absence is now reported as `OracleCoverage::Absent` on `ComparisonReport::coverage`.
+   **PARTLY SUPERSEDED by §16.25. THREE claims above are narrowed or withdrawn — all three, not
+   just the identifier.** An earlier version of this marker withdrew only the `NoOracleField` phrase
+   and left the two sentences after it standing, which is the same under-marking defect one level
+   deeper: the strongest claims were the ones left unqualified.
 
-   **What survives unchanged, and is independently grounded:** the DIAGNOSTIC-else-NO-ORACLE branch
-   itself, the obligation on the script to *attempt* capture, `confidence: Option<f64>` in the oracle
+   (i) *"with `NoOracleField` rows when absent"* — **WITHDRAWN.** The variant is deleted. §16.25 item
+   3 records why quoting it here was circular: the identifier occurs in this spec exactly once, right
+   here, in CamelCase taken from the draft this section was ruling on, so this was a ruling repeating
+   the draft's vocabulary while deciding a different question. Whole-field absence is now
+   `OracleCoverage::Absent` on `ComparisonReport::coverage`.
+
+   (ii) *"Either outcome is a closed verdict under item 3(e); neither blocks the fixture."* —
+   **NARROWED to the two outcomes this item actually enumerates**, captured → `DIAGNOSTIC` and
+   not-captured → `NO-ORACLE`. Neither of *those* blocks, and that still holds. But this item did not
+   contemplate a **third** state: capture that succeeds on some gated blocks and fails on others.
+   `Partial` is neither outcome, its partition row cannot close, and per §16.25 item 5 it **does
+   block** under §16.20 item 3(e). Read as a claim about confidence in general — "nothing about this
+   field ever blocks" — the sentence is now false, which is why it is narrowed rather than left to a
+   reader's charity.
+
+   (iii) *"The row is never gated regardless."* — **NARROWED: it binds the VALUE row.** The value is
+   never gated, for the epistemic reason §16.20 item 3(d) gives (a measured 0.079–0.089 noise floor
+   against 0.4 gates, so no tolerance avoids spanning kept-and-dropped). **Coverage is a different
+   row on a different subject**, it has no noise floor and no epsilon, and
+   `InconsistentOracleCoverage { field: "confidence" }` **is gating**. "Regardless" was doing more
+   work than the evidence supports.
+
+   **What survives untouched, and is independently grounded:** the DIAGNOSTIC-else-NO-ORACLE branch
+   itself; the obligation on the script to *attempt* capture; `confidence: Option<f64>` in the oracle
    schema (grounded in cookbook rule 7's finding that upstream's `#raw.json` does not persist
-   confidence, not in this section), and *"may not close as `OPEN` on this account"` — that clause
+   confidence, not in this section); and *"may not close as `OPEN` on this account"* — that clause
    forecloses `OPEN` for whole-document **absence** and, per §16.25 item 5, never for
-   **inconsistency**, which is why `Partial` blocks without contradicting it. Original wording
-   preserved per §16.19's convention.
+   **inconsistency**, which is precisely why `Partial` blocks without contradicting it. Original
+   wording preserved per §16.19's convention.
 
 10. **ERRATUM — §16.20 item 3(e)'s citation "§2.4/§2.5's field list" is wrong: §2.5 is
     `PageData`, the preprocessor's output, not the detector's.** The partition F1 owes is over
