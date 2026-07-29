@@ -42,7 +42,13 @@ impl Profile {
         ),
         (
             "text_detector",
-            &["model_path", "concurrent_models", "mask_refine_mode"],
+            &[
+                "model_path",
+                "concurrent_models",
+                "intra_threads",
+                "inter_threads",
+                "mask_refine_mode",
+            ],
         ),
         (
             "preprocessor",
@@ -103,6 +109,7 @@ impl Profile {
     pub fn validate_all(&self) -> Vec<ConfigError> {
         let mut errors = Vec::new();
         crate::validate::validate_general(&self.general, &mut errors);
+        crate::validate::validate_text_detector(&self.text_detector, &mut errors);
         crate::validate::validate_preprocessor(&self.preprocessor, &mut errors);
         crate::validate::validate_masker(&self.masker, &mut errors);
         crate::validate::validate_denoiser(&self.denoiser, &mut errors);
@@ -168,6 +175,10 @@ pub struct TextDetectorConfig {
     /// `Option<PathBuf>`, so the TOML text round-trips verbatim; use `model_path()`.
     pub model_path: String,
     pub concurrent_models: usize,
+    /// `0` delegates intra-op parallelism to ONNX Runtime; positive values pin it.
+    pub intra_threads: usize,
+    /// `0` delegates inter-op parallelism to ONNX Runtime; positive values pin it.
+    pub inter_threads: usize,
     pub mask_refine_mode: MaskRefineMode,
 }
 
@@ -176,6 +187,8 @@ impl Default for TextDetectorConfig {
         Self {
             model_path: String::new(),
             concurrent_models: 1,
+            intra_threads: 0,
+            inter_threads: 0,
             mask_refine_mode: MaskRefineMode::default(),
         }
     }

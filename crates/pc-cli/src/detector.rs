@@ -6,6 +6,7 @@
 //! Fully pinned; implemented, not stubbed.
 
 use crate::args::DetectorSpec;
+use pc_config::TextDetectorConfig;
 use pc_core::StageError;
 use pc_detect::{MockDetector, ReplayDetector, TextDetector};
 use pc_pipeline::{DetectorProvider, SharedDetector};
@@ -50,6 +51,8 @@ struct OnnxProvider {
     cli_override: Option<PathBuf>,
     profile_override: Option<PathBuf>,
     cache_root: PathBuf,
+    intra_threads: usize,
+    inter_threads: usize,
     outcome: OnceLock<Result<Arc<dyn TextDetector>, String>>,
     initializing: Mutex<()>,
     // Deliberate test instrumentation proving failed initialization is attempted once.
@@ -65,11 +68,14 @@ impl OnnxProvider {
         cli_override: Option<&Path>,
         profile_override: Option<&Path>,
         cache_root: &Path,
+        detector_config: &TextDetectorConfig,
     ) -> Self {
         Self {
             cli_override: cli_override.map(Path::to_path_buf),
             profile_override: profile_override.map(Path::to_path_buf),
             cache_root: cache_root.to_path_buf(),
+            intra_threads: detector_config.intra_threads,
+            inter_threads: detector_config.inter_threads,
             outcome: OnceLock::new(),
             initializing: Mutex::new(()),
             #[cfg(test)]
@@ -106,7 +112,12 @@ impl OnnxProvider {
         if !pc_detect::onnx::runtime_available() {
             return Err("ONNX Runtime is not loadable in this environment".to_string());
         }
-        let detector = pc_detect::onnx::OnnxDetector::from_path(&model_path)
+        let config = TextDetectorConfig {
+            intra_threads: self.intra_threads,
+            inter_threads: self.inter_threads,
+            ..TextDetectorConfig::default()
+        };
+        let detector = pc_detect::onnx::OnnxDetector::from_path_with_config(&model_path, &config)
             .map_err(|error| error.to_string())?;
         Ok(Arc::new(detector))
     }
@@ -169,7 +180,12 @@ mod tests {
     fn failed_initialization_is_latched_across_threads() {
         for _ in 0..25 {
             let cache = tempfile::tempdir().unwrap();
-            let provider = Arc::new(OnnxProvider::new(None, None, cache.path()));
+            let provider = Arc::new(OnnxProvider::new(
+                None,
+                None,
+                cache.path(),
+                &TextDetectorConfig::default(),
+            ));
             let barrier = Arc::new(Barrier::new(4));
 
             let results = std::thread::scope(|scope| {
@@ -210,7 +226,8 @@ mod tests {
     fn panicking_initialization_is_latched_across_threads() {
         for _ in 0..25 {
             let cache = tempfile::tempdir().unwrap();
-            let mut provider = OnnxProvider::new(None, None, cache.path());
+            let mut provider =
+                OnnxProvider::new(None, None, cache.path(), &TextDetectorConfig::default());
             provider.init_hook = Some(Box::new(|| panic!("initialization exploded")));
             let provider = Arc::new(provider);
             let barrier = Arc::new(Barrier::new(4));
@@ -302,12 +319,13 @@ pub fn build_provider(
     cli_override: Option<&Path>,
     profile_override: Option<&Path>,
     cache_root: &Path,
+    detector_config: &TextDetectorConfig,
 ) -> Result<Box<dyn DetectorProvider>, StageError> {
     match spec {
         DetectorSpec::Onnx => {
             #[cfg(not(feature = "onnx"))]
             {
-                let _ = (cli_override, profile_override, cache_root);
+                let _ = (cli_override, profile_override, cache_root, detector_config);
                 Err(StageError::Model(ONNX_UNAVAILABLE.to_string()))
             }
             #[cfg(feature = "onnx")]
@@ -316,6 +334,7 @@ pub fn build_provider(
                     cli_override,
                     profile_override,
                     cache_root,
+                    detector_config,
                 )))
             }
         }

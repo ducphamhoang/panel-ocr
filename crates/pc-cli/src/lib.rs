@@ -82,6 +82,7 @@ pub fn run_clean(args: CleanArgs) -> Result<i32> {
         args.model_path.as_deref(),
         profile.text_detector.model_path(),
         &cache_root,
+        &profile.text_detector,
     )?;
     let options = setup::build_clean_options(&args, profile, images.len(), &cache_root);
     run_pipeline(&images, options, provider.as_ref(), !args.hide_analytics)
@@ -116,6 +117,7 @@ pub fn run_ocr(args: OcrArgs) -> Result<i32> {
         None,
         profile.text_detector.model_path(),
         &cache_root,
+        &profile.text_detector,
     )?;
     let cache_dir = paths::image_cache_dir(&cache_root);
     let options = PipelineOptions {

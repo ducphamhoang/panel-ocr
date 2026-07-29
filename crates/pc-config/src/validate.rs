@@ -2,7 +2,9 @@
 //! **config-load** error (§6, §12.7(A)9) -- never a per-image runtime error.
 
 use crate::error::ConfigError;
-use crate::profile::{DenoiserConfig, GeneralConfig, MaskerConfig, PreprocessorConfig};
+use crate::profile::{
+    DenoiserConfig, GeneralConfig, MaskerConfig, PreprocessorConfig, TextDetectorConfig,
+};
 use std::cmp::Ordering;
 
 /// §6 / §12.3 step 6. `.jp2` is deliberately absent: it is a legal *input* suffix but
@@ -72,6 +74,23 @@ pub fn validate_general(cfg: &GeneralConfig, out: &mut Vec<ConfigError>) {
             field: "general.long_strip_aspect_ratio".into(),
             message: "must be greater than 0".into(),
         });
+    }
+}
+
+/// ONNX Runtime's thread-count setters receive a signed 32-bit integer in the C API.
+/// Zero is the runtime-default sentinel; positive values are explicit thread counts.
+pub fn validate_text_detector(cfg: &TextDetectorConfig, out: &mut Vec<ConfigError>) {
+    let max = i32::MAX as usize;
+    for (field, value) in [
+        ("text_detector.intra_threads", cfg.intra_threads),
+        ("text_detector.inter_threads", cfg.inter_threads),
+    ] {
+        if value > max {
+            out.push(ConfigError::Invalid {
+                field: field.into(),
+                message: format!("must be 0 or at most {max}"),
+            });
+        }
     }
 }
 

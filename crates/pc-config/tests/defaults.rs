@@ -92,6 +92,8 @@ fn text_detector_defaults() {
     assert_eq!(t.model_path, "");
     assert_eq!(t.model_path(), None);
     assert_eq!(t.concurrent_models, 1);
+    assert_eq!(t.intra_threads, 0);
+    assert_eq!(t.inter_threads, 0);
     // §8.3 step 5 / §15.2: v1 ships Simple.
     assert_eq!(t.mask_refine_mode, MaskRefineMode::Simple);
 }

@@ -28,9 +28,6 @@ pub const STRIDE: u32 = 64;
 /// `inference.py:86` calls it without a `color` argument. `114` is the yolov5s
 /// letterbox default, which comic-text-detector does not use.
 pub const PAD_VALUE: u8 = 0;
-/// CPU ONNX Runtime intra-op thread count (spec §8.3 step 3).
-pub const INTRA_THREADS: usize = 1;
-
 /// An RGB network input and the geometry needed to map its outputs back to the base image.
 #[derive(Debug, Clone)]
 pub struct Letterboxed {
@@ -314,6 +311,8 @@ use ort::{
     session::{builder::GraphOptimizationLevel, Session, SessionOutputs},
     value::{Outlet, Tensor},
 };
+#[cfg(feature = "onnx")]
+use pc_config::TextDetectorConfig;
 
 #[cfg(feature = "onnx")]
 #[derive(Debug)]
@@ -330,6 +329,21 @@ pub struct OnnxDetector {
 #[cfg(feature = "onnx")]
 impl OnnxDetector {
     pub fn from_path(model: &Path) -> Result<Self, StageError> {
+        Self::from_path_with_config(model, &TextDetectorConfig::default())
+    }
+
+    pub fn from_path_with_config(
+        model: &Path,
+        config: &TextDetectorConfig,
+    ) -> Result<Self, StageError> {
+        Self::from_path_with_threads(model, config.intra_threads, config.inter_threads)
+    }
+
+    fn from_path_with_threads(
+        model: &Path,
+        intra_threads: usize,
+        inter_threads: usize,
+    ) -> Result<Self, StageError> {
         // This pre-flight must precede every ort call so path errors remain actionable.
         ensure_model_file(model)?;
 
@@ -341,10 +355,10 @@ impl OnnxDetector {
             .map_err(|error| {
                 StageError::Model(format!("failed to configure {}: {error}", model.display()))
             })?;
-        builder = builder.with_intra_threads(INTRA_THREADS).map_err(|error| {
+        builder = builder.with_intra_threads(intra_threads).map_err(|error| {
             StageError::Model(format!("failed to configure {}: {error}", model.display()))
         })?;
-        builder = builder.with_inter_threads(INTRA_THREADS).map_err(|error| {
+        builder = builder.with_inter_threads(inter_threads).map_err(|error| {
             StageError::Model(format!("failed to configure {}: {error}", model.display()))
         })?;
         // No execution provider is registered: ONNX Runtime's default CPU provider is

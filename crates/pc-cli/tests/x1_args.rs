@@ -138,21 +138,35 @@ fn detector_spec_grammar() {
 #[test]
 fn only_the_mock_and_replay_providers_can_be_built_in_v1() {
     let cache_root = tempfile::tempdir().unwrap();
-    let error = detector::build_provider(&DetectorSpec::Onnx, None, None, cache_root.path())
-        .err()
-        .expect("onnx must not be buildable in v1");
+    let error = detector::build_provider(
+        &DetectorSpec::Onnx,
+        None,
+        None,
+        cache_root.path(),
+        &pc_config::TextDetectorConfig::default(),
+    )
+    .err()
+    .expect("onnx must not be buildable in v1");
     let message = error.to_string();
     assert!(message.contains("D1"), "{message}");
     assert!(message.contains("D4"), "{message}");
     assert!(message.contains("--detector replay"), "{message}");
 
-    assert!(detector::build_provider(&DetectorSpec::Mock, None, None, cache_root.path()).is_ok());
+    assert!(detector::build_provider(
+        &DetectorSpec::Mock,
+        None,
+        None,
+        cache_root.path(),
+        &pc_config::TextDetectorConfig::default(),
+    )
+    .is_ok());
     assert!(
         detector::build_provider(
             &DetectorSpec::Replay(PathBuf::from("/nope")),
             None,
             None,
-            cache_root.path()
+            cache_root.path(),
+            &pc_config::TextDetectorConfig::default(),
         )
         .is_ok(),
         "a replay provider builds; a missing fixture is a per-image error (§16.12 item 3)"
@@ -221,8 +235,14 @@ fn onnx_provider_defers_model_resolution_to_first_use() {
     let cache_root = tempfile::tempdir().unwrap();
     let models_dir = paths::models_dir(cache_root.path());
 
-    let provider = detector::build_provider(&DetectorSpec::Onnx, None, None, cache_root.path())
-        .expect("construction must not resolve, so it cannot fail on a missing model");
+    let provider = detector::build_provider(
+        &DetectorSpec::Onnx,
+        None,
+        None,
+        cache_root.path(),
+        &pc_config::TextDetectorConfig::default(),
+    )
+    .expect("construction must not resolve, so it cannot fail on a missing model");
 
     let error = provider
         .detector_for(std::path::Path::new("page01.png"))
@@ -244,7 +264,14 @@ fn onnx_provider_defers_model_resolution_to_first_use() {
     );
 
     // Coverage the `cfg(not(onnx))` gate removes from this configuration.
-    assert!(detector::build_provider(&DetectorSpec::Mock, None, None, cache_root.path()).is_ok());
+    assert!(detector::build_provider(
+        &DetectorSpec::Mock,
+        None,
+        None,
+        cache_root.path(),
+        &pc_config::TextDetectorConfig::default(),
+    )
+    .is_ok());
 }
 
 /// §6 / §13.1 — the precedence boundary between an explicit override and the managed cache.

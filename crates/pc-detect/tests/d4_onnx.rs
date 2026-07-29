@@ -15,8 +15,7 @@ use image::{Rgb, RgbImage};
 use pc_core::Rect;
 use pc_detect::onnx::{
     bind_outputs, decode_blocks, decode_mask, describe_outputs, ensure_model_file, letterbox,
-    resize_bilinear_rgb, to_nchw, OutputBinding, OutputMeta, INTRA_THREADS, NET_SIZE, PAD_VALUE,
-    STRIDE,
+    resize_bilinear_rgb, to_nchw, OutputBinding, OutputMeta, NET_SIZE, PAD_VALUE, STRIDE,
 };
 use pc_detect::yolo::{self, Candidate, LetterboxGeometry, ROW_STRIDE};
 
@@ -72,14 +71,13 @@ fn constants_match_the_spec() {
     // spec §8.3 step 3: letterbox to 1024x1024 with `stride = 64`, pad with
     // (0, 0, 0), matching upstream comic-text-detector's `letterbox` default
     // (`imgproc_utils.py:93-95`) and its call without a `color` argument (`inference.py:86`).
-    // `114` is the yolov5s default, which comic-text-detector does not use. CPU EP with
-    // `intra_threads = 1` (the parallelism is at the image level, §4.5). `INTRA_THREADS` is
-    // pinned as a constant because the session option it feeds is not otherwise observable
-    // from a test.
+    // `114` is the yolov5s default, which comic-text-detector does not use. Thread counts
+    // are configurable and default to 0, because §14.15/DEVIATION(15)'s Mutex<Session>
+    // serializes image-level inference; the old fixed 1 therefore made inference both
+    // mutex-serialized and single-threaded. The session options are not constants tested here.
     assert_eq!(NET_SIZE, 1024);
     assert_eq!(STRIDE, 64);
     assert_eq!(PAD_VALUE, 0);
-    assert_eq!(INTRA_THREADS, 1);
     // `auto = false`, so the stride never reduces the padding and the network input is
     // always exactly NET_SIZE square; the stride is nonetheless a divisor of it.
     assert_eq!(NET_SIZE % STRIDE, 0);

@@ -44,6 +44,34 @@ fn defaults_are_valid() {
     assert_valid(&Profile::default());
 }
 
+#[test]
+// §16.21 item 3: zero means "let ONNX Runtime choose", while recorded fixtures remain
+// reproducible because explicit counts such as 1 and 8 must still parse and serialize.
+fn onnx_thread_counts_default_and_explicit_values_round_trip() {
+    let defaults =
+        ProfileDocument::parse("[text_detector]\nintra_threads = 0\ninter_threads = 0\n").unwrap();
+    assert_eq!(defaults.profile().text_detector.intra_threads, 0);
+    assert_eq!(defaults.profile().text_detector.inter_threads, 0);
+
+    let mut explicit = Profile::default();
+    explicit.text_detector.intra_threads = 1;
+    explicit.text_detector.inter_threads = 8;
+    let serialized = ProfileDocument::from_profile(&explicit).to_toml_string();
+    let restored = ProfileDocument::parse(&serialized).unwrap();
+    assert_eq!(restored.profile().text_detector.intra_threads, 1);
+    assert_eq!(restored.profile().text_detector.inter_threads, 8);
+}
+
+#[test]
+// §16.21 item 3: a count beyond the signed 32-bit value accepted by ORT's C API is an
+// invalid configuration and must fail during profile load, before any image is processed.
+fn onnx_thread_counts_above_ort_limit_fail_at_config_load() {
+    for key in ["intra_threads", "inter_threads"] {
+        let text = format!("[text_detector]\n{key} = 2147483648\n");
+        assert_load_fails_naming(&text, key);
+    }
+}
+
 // ============================================================ [general]
 
 #[test]
