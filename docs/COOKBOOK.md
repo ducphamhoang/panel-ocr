@@ -511,3 +511,80 @@ row above was demonstrated by deliberately breaking the tree and watching the ga
 restoring it — and `git status --porcelain -- tests/fixtures/` being empty is a hard
 precondition before any commit, because a leaked probe is precisely the corruption this gate
 exists to detect.
+
+---
+
+## 14. When you change a shared format, enumerate its READERS
+
+Rule 13 asks what a gate enumerates about the artifacts. This is the same question one level
+up, and it cost a broken build: **when a ratified decision changes a shared on-disk format,
+enumerate every reader of that format, record the enumeration, and state the acceptance gate
+as a set covering all of them.**
+
+§16.24 item 1(a) made *"`recorded_provenance.rs` green with the file unmodified"* **the**
+acceptance gate for the `PROVENANCE.json` migration. That gate was correct, precisely aimed,
+and passed. It was also aimed at one of **two** frozen readers:
+`crates/pc-testkit/tests/model_signature.rs` hand-indexed `output` / `output_sha256` /
+`source_sha256` at top level, the schema moved them under `records[]`, and it failed. Two
+architects planned this, a Fable ruling adjudicated it, and the Orchestrator reviewed the
+drafted tests specifically for this defect class. None of the four enumerated the consumers.
+The stop-time review did.
+
+- **Record the enumeration; do not re-derive it.** Re-deriving it is what nobody did. §16.24
+  item 19(c) now lists all six readers and writers, and a new one carries the gate with it.
+- **A one-line grep is the whole cost.** `grep -rn "PROVENANCE" --include=*.rs crates/ xtask/`
+  found every reader in seconds, *after* the failure. It would have cost the same before.
+- **Producers are not the risk; readers are.** The writers were migrated as an obvious part of
+  the task. It is the reader nobody remembered that breaks, because a reader can be in a
+  different crate, in a test rather than in `src/`, and reach the format through a
+  hand-indexed `serde_json::Value` that no type system connects to the change.
+- **Hand-indexing is the drift vector.** `provenance["output"]` compiles forever and fails at
+  runtime; `GroupProvenance` fails at the parse with a path in the message. Where a shared
+  format has a typed definition, read through it — the writer and the reader then share one
+  definition and the next change is a parse error, not a silent absence.
+
+**Corollary — an adaptation needs a condition-by-condition table, not a claim.** "Nothing is
+weakened" is exactly the assertion rule 1 says to distrust when it arrives without evidence.
+The `model_signature.rs` adaptation was justified by counting: **7 checked conditions became
+9**, with three `.as_str().expect(...)` premise checks *absorbed* by a typed parse that is
+strictly stronger, and three genuinely new (`committed` is true, `source` names the model, and
+the parse itself as a named failure). Write the table; the arithmetic is the argument.
+
+**And the sharpest part of this one:** the reader that did **not** break is the more useful
+finding. `the_signature_group_records_its_provenance` sailed through the format change because
+it asserts only that the file is non-empty valid JSON and `is_object()`. **Had it been the only
+test, the migration would have looked clean.** A test whose name claims it checks that a group
+"records its provenance", whose assertion checks essentially nothing — rule 1's dominant defect
+class, caught in the act, by a migration it failed to notice.
+
+---
+
+## 15. A supporting example can refute the claim it is cited for — check the sign
+
+§16.20 item 12 wrote that our geometry *"agrees closely and consistently with item 3(b)'s
+identity"* and offered two measured pairs as evidence. The identity is
+`upstream.xyxy == bbox(ours.rect ∪ bbox(upstream.lines))`, and `Rect::merge`
+(`crates/pc-core/src/geometry.rs:60-67`) is `x1.min, y1.min, x2.max, y2.max` — so a bounding
+union is **monotone**, and the identity entails `upstream.x2 >= ours.x2` for any lines
+whatsoever. The second pair satisfies it (ours 86, upstream 90: widened by the union, as
+described). The first has ours `x2 = 111` against upstream `x2 = 110` — **one pixel in the
+direction a union cannot produce.** It is evidence *against* the claim, printed in support of it.
+
+- **Derive the constraint your evidence must satisfy, then check each data point against it.**
+  The monotonicity fact is two lines of reasoning from code that was already committed. Nobody
+  ran it, and the numbers sat in a ratified section for a full session.
+- **Tolerance words are a smell inside a no-tolerance ruling.** "Closely" appeared in the same
+  breath as item 3(c)'s prohibition on epsilons in gating rows. When a sentence needs a hedge to
+  stay true, the hedge is where the defect is hiding.
+- **Two data points do not support "consistently."** One regime, two samples, one of them
+  contradictory, generalised to a claim about portability. Rule 3's discipline applies: say on
+  what input you checked, and how many.
+- **Decompose a composite claim before trusting it.** §16.24 item 18(b) splits the identity into
+  a *structural* leg (a law about upstream's `group_output`) and an *empirical* leg (the two
+  engines' regression heads agree). Only the empirical leg failed — and it had never been
+  measured in that regime. Without the split, the failure is unattributable and the natural
+  overcorrection is to distrust the whole identity.
+- **Assert the entailed inequalities alongside the equality, for the message.** Equality implies
+  them, so it adds no power — it adds a diagnostic that says *"a bounding union cannot narrow an
+  edge, so this is an engine-geometry divergence, not a line-union difference."* Had that existed
+  as prose, this would have been caught when the section was written.

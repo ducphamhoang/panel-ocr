@@ -3462,6 +3462,16 @@ decision; it wrote no code.
     upstream `[29,105,90,261]`, the trailing-edge gap being upstream's line union. Geometry is
     portable here; presence is not.
 
+    **The geometry half of the paragraph above is SUPERSEDED — see §16.24 item 18.** It is
+    preserved verbatim rather than deleted, per §16.19's convention. In short: a bounding union
+    is monotone, so item 3(b)'s identity entails `upstream.x2 >= ours.x2`; the first pair has
+    ours `x2 = 111` against upstream `x2 = 110`, which a union cannot produce. That pair is
+    therefore evidence *against* the identity, cited in support of it, and the attribution of
+    its gap to "upstream's line union" is impossible as transcribed. The words "closely" and
+    "consistently" are both withdrawn, as is the "not evidence of a port defect" reassurance
+    this same sentence was carrying. **Item 12's conclusion is unaffected and in fact
+    strengthened** — see §16.24 item 18(g).
+
     **The criterion this yields:** the oracle fixture must be a full page whose letterbox
     ratio is near 1, so confidences sit far from the 0.4 gate. That is what §7.2's "one or two
     full manga pages" was already asking for; this item supplies the missing *reason*, so a
@@ -4059,6 +4069,178 @@ gating divergence; negative controls constructed in-test and never committed.
     digest, and the two must be equal.
 
     Item 12's criterion stands either way: letterbox ratio near 1, so `max(w,h) ≈ 1024`.
+
+18. **ERRATUM to §16.20 item 12's geometry sentence — the identity is two legs, and one of the two
+    cited pairs refutes the leg it is cited to support (joint architects, 2026-07-29).** Found by
+    the Senior Rust Engineer while drafting the comparator's controls; verified independently by
+    the Orchestrator against `:3461` and by the Technical Architect against the code. Both
+    architects agree, so this is a joint ratification and needed no tie-break.
+
+    (a) **The structural fact.** `Rect::merge` (`crates/pc-core/src/geometry.rs:60-67`) is
+    `x1.min, y1.min, x2.max, y2.max`, so a bounding union is monotone non-increasing in `x1,y1`
+    and non-decreasing in `x2,y2` **for any second operand**. Item 3(b)'s identity therefore
+    entails, per pair and independently of what upstream's lines are:
+    `upstream.x1 <= ours.x1`, `upstream.y1 <= ours.y1`, `upstream.x2 >= ours.x2`,
+    `upstream.y2 >= ours.y2`. Pair 2 (ours `(29,105,86,261)`, upstream `[29,105,90,261]`)
+    satisfies all four — three edges exact, `x2` widened +4 by the union. Pair 1 (ours
+    `(40,23,111,207)`, upstream `[40,23,110,207]`) satisfies three and **violates
+    `upstream.x2 >= ours.x2` by one**, in the direction a union cannot produce.
+
+    (b) **The leg decomposition, which is why the failure is attributable at all.**
+    `upstream.xyxy == bbox(ours.rect ∪ bbox(upstream.lines))` silently composes two claims of
+    different kinds. **Leg 2 (structural):**
+    `upstream.xyxy == bbox(upstream.rect_yolo ∪ bbox(upstream.lines))` — a law about upstream's
+    own `group_output`. **Leg 1 (empirical):** `upstream.rect_yolo == ours.rect` — a
+    *measurement*, engine-, input- and scale-dependent. Pair 1 violates **leg 1**. The identity's
+    algebra is not in question; leg 1's precondition is. Leg 1 is validated at letterbox ratio ≈ 1
+    (10/10 blocks, 40/40 coordinates on the 12-box page) and **never validated at r ≈ 3.0–3.8**.
+
+    (c) **Blast radius, stated so this is not over-corrected.** One leg, one edge, one pair, on an
+    input class item 12 itself excludes as the oracle fixture. The record's other geometry claims
+    are internally consistent and untouched, and item 3(b) is not undermined.
+
+    (d) **Three candidate causes, recorded OPEN with the discriminator named.** (1) **Transcription
+    swap** — if the real numbers are ours `110` / upstream `111`, both pairs become one mechanism
+    at two magnitudes (+1 and +4), all eight inequalities hold, and the sentence's own attribution
+    becomes true of both. Parsimonious, and a single-character slip in a sentence whose other
+    example has the identical shape with opposite sign. (2) **Truncation straddle** —
+    `yolo.rs:145-171` does `(x * ratio) as i32`, which truncates, matching upstream's
+    `astype(np.int32)`; `clamp` is not implicated (111 ≪ 219 for `nightmare`). With
+    `r = 2.985` and `ratio_x = 219/654 = 0.3349`, base-space values of `111.02` and `110.98`
+    truncate to 111 and 110 — a whole-pixel divergence from **0.04 px** of disagreement. At
+    r ≈ 3.0–3.8 roughly nine in ten network-input pixels are interpolated, so item 5's bilinear
+    weight difference applies to nearly the whole input rather than a minority of it. (3) **A
+    systematic per-edge offset** — a real port defect in rescale, letterbox geometry, or the
+    §2.1 inclusive/exclusive convention. **This erratum does not assert any of the three**;
+    asserting the straddle would be closing a row against an unmeasured mechanism, which is item
+    3(e)'s error in a different costume.
+
+    (e) **The discriminator, and the run is commissioned.** Re-run both sides over all seven
+    committed `tests/fixtures/upstream/demo_bubbles/*_raw.png` (GPL-3, licence-clean) plus the
+    model — item 12 records 21 upstream blocks, so ~84 coordinates, enough for a distribution
+    rather than two points. Needs **no page decision**, so §16.24 item 17 does not gate it. Upstream
+    pinned at `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3` through `cv2.dnn.readNetFromONNX`
+    (item 6). Capture per block per side: network-space `letterbox_xyxy`; `ratio_x/ratio_y/dw/dh/r`;
+    **`base_xyxy_pretruncation` — the actual discriminator, requiring a local probe in `rescale`
+    and upstream's pre-`astype` array**; the final `rect`; upstream `xyxy`, full `lines`,
+    `len(lines)`, `mask_score`; `residual_leg1 = upstream.xyxy − ours.rect`; and
+    `residual_full = upstream.xyxy − bbox(ours ∪ bbox(lines))`, which must be all-zero.
+
+    (f) **Conditional gate on F1's recording.** Branch (1) or (2): recording proceeds unaffected,
+    because item 12's own criterion already excludes the r ≈ 3 regime. **Branch (3): the fix and
+    its ratification land BEFORE the recording run**, on §16.20 item 8's precedent that the
+    `PAD_VALUE` erratum had to land first since the pad colour perturbs every recorded box.
+    Discovering a systematic offset after the page is recorded and signatures collected means
+    re-recording and re-signing, which §16.23 item 5 budgets once and only for DBNet. **The run is
+    therefore sequenced before the recording run, not after.**
+
+    (g) **Item 12's conclusion is preserved and STRENGTHENED, not reopened.** The ruling —
+    demo_bubbles cannot serve as the oracle fixture, and the page must sit near letterbox scale 1 —
+    rests on the **box-presence** measurement (0.037 survival margin against a 0.079–0.089 noise
+    floor), which this defect does not touch. The erratum supplies a *second, independent* reason
+    for the same conclusion: **letterbox ratio ≈ 1 is the precondition of leg 1**, so the criterion
+    protects box geometry as well as box presence. The geometry sentence was the wrong evidence
+    precisely because it measured leg 1 in the one regime where leg 1 is not expected to hold.
+
+    (h) **The residual report is ratified, DIAGNOSTIC-only, with four non-optional conditions.**
+    This is item 11's producing-vs-comparing split one level down: *measuring* a residual is a
+    recording-time act; *accepting* one is a ratification. (i) The gating identity stays exact and
+    the report cannot reach it — `Expectations` gains **no** residual field and no epsilon, so
+    there is no parameter through which a residual could influence a verdict. (ii) Residuals must
+    be **zero** for green; a non-zero residual is a finding, not an absorbed quantity, and the only
+    sanctioned exits are: fix our arithmetic, ratify a named per-pair mechanism as
+    `Explained { entry, per_edge }` with an **exact** per-edge constant (the ratification landing
+    first, per item 3(e)), or select a different page. There is no fourth exit, and an epsilon, an
+    inequality, an IoU or a per-edge band are all refused — item 5's `dw = 284` arithmetic shows a
+    ±3 px band absorbs a one-pixel letterbox-padding error, the §14.14 defect class, and item 12's
+    own data would have been *invisible* under any band. (iii) Report **both** residual forms plus
+    the pre-truncation floats and `len(lines)`, because the sign pattern is what attributes a
+    failure to leg 1 versus leg 2 — a composite-only report would have left this contradiction as
+    undiagnosable as the record did. (iv) **More than one `Explained` pair on a single page
+    escalates** to fixing the mechanism; two independent one-off mechanisms on one page is not a
+    coincidence, and without this cap the instrument decays into a tolerance spelled as a list.
+
+    (i) **Additive strengthening, no ratification needed (cookbook rule 8 exit 1):** `compare()`
+    asserts leg 2's four monotonicity inequalities *in addition to* the equality. Equality already
+    implies them, so this adds no power — it adds a **message**: `upstream.x2 < ours.x2` should
+    report that a bounding union cannot narrow an edge and this is therefore a leg-1
+    engine-geometry divergence, not a line-union difference. Diagnostics are part of the gate
+    (cookbook rule 13). **Had this existed as prose in item 3(b), the contradiction would have been
+    caught when item 12 was written.**
+
+    (j) **Classification note, so a later row cites the right register.** If branch (2) holds the
+    mechanism is *shared* with upstream — both sides truncate — so it is **not** a §14 deviation.
+    §14 records deliberate divergences; this would be a §16.x finding about shared engine
+    sensitivity. Item 3(e) permits a row to close as `EXPLAINED-§14.x`, so pointing at §14 for a
+    non-divergence would put a false deviation in the register.
+
+    (k) **Self-correction carried forward (cookbook rule 10).** The architect's F1 plan called the
+    line-less degenerate branch "the common case". That is wrong: it conflated *we* never
+    synthesizing lines — always true, and irrelevant to which branch fires — with *upstream*
+    finding none, which item 9 records firing once on the candidate page. The branch is
+    **rare-but-real**, which is what §16.20 item 3's "not hypothetical" meant. The consequence is
+    uncomfortable and worth stating: the degenerate branch is the **least**-evidenced part of the
+    identity, so (e)'s per-block `len(lines)` census is the first real evidence on it.
+
+19. **ERRATUM to item 1(a) — the migration's acceptance gate named ONE consumer, and there are
+    two. The frozen `model_signature.rs` broke (joint architects, 2026-07-29).** Caught by the
+    Codex stop-time review, not by the planning pass and not by the Orchestrator's pre-implementation
+    test review.
+
+    (a) **What broke.** Item 1(a) made *"`cargo test -p pc-testkit --test recorded_provenance` green
+    with the test file unmodified"* **the** acceptance gate, phrasing the preservation requirement as
+    if `recorded_provenance.rs` were the only reader.
+    `crates/pc-testkit/tests/model_signature.rs::the_committed_provenance_describes_the_committed_signature_byte_for_byte`
+    is a second frozen reader, and it hand-indexed three keys at top level — `output`,
+    `output_sha256`, `source_sha256` — which the canonical schema moved under `records[]`. It failed
+    at `:104` with *"PROVENANCE.json records `output` as a string"*. Item 1(a)'s gate passed
+    throughout: the declared-path set was preserved exactly, so the gate was correct and merely
+    aimed at one of two targets.
+
+    (b) **The defect is the single-consumer framing, and the general rule follows from it.** **A
+    ratified change to a shared on-disk format must enumerate every reader of that format, record
+    the enumeration, and state the acceptance gate as a set covering all of them.** The enumeration
+    is recorded rather than re-derived, because re-deriving it is what nobody did. This is cookbook
+    rule 13 applied one level up: we asked exhaustively what the gate enumerates about the *files*
+    and never asked what enumerates the *consumers*.
+
+    (c) **The enumeration, recorded (2026-07-29).** Readers of `PROVENANCE.json`:
+    `crates/pc-testkit/tests/provenance_schema.rs` and `xtask/tests/provenance_digests.rs` (typed
+    schema); `crates/pc-testkit/tests/recorded_provenance.rs` (generic key walker);
+    `crates/pc-testkit/tests/model_signature.rs` (**was** hand-indexed, now typed);
+    `xtask/src/model_signature.rs` and `xtask/src/record.rs` (writers, now writing through
+    `pc_testkit::provenance`). Any future reader added to this list carries item 1(a)'s gate with it.
+
+    (d) **The adaptation is authorised, in the same category as item 1(f).** The test's assertions
+    were never in question — only the JSON path it read them from, which changed by ratified
+    decision. Nothing is weakened. It now parses through
+    `pc_testkit::provenance::GroupProvenance` and looks its record up **by name**, never
+    `records[0]`, since positional indexing is what let it drift. Preserved verbatim: all three
+    failure messages, including the explanation that recording performs two non-atomic renames so an
+    inconsistent pair means either a hand-edit or a half-committed pair.
+
+    (e) **An adaptation must be justified by a condition-by-condition table, not by the claim that
+    nothing was weakened.** *"Nothing is weakened"* is precisely the assertion cookbook rule 1 says
+    to distrust when it appears without evidence. For this adaptation: **7 checked conditions became
+    9.** The three `.as_str().expect(...)` premise checks are *absorbed* by the typed parse, which is
+    strictly stronger — it type-checks every field rather than three. Three conditions are genuinely
+    new: `record.committed` must be true (*"the **committed** signature"* is meaningless otherwise),
+    `record.source` must name the model file (otherwise `source_sha256` could describe anything), and
+    the typed parse itself is a named failure carrying the path. The record-*set* assertion went into
+    a separate sibling test, `the_model_signature_group_declares_exactly_one_record`, so a set drift
+    fails under a precisely-named test rather than inside a byte-for-byte consistency test; the
+    consistency test still looks its record up independently, because execution order is not
+    guaranteed and a premise must not rest on another test having run.
+
+    (f) **The test that did NOT break is the more useful lesson.** `model_signature.rs`'s other
+    reader, `the_signature_group_records_its_provenance`, passed the migration untouched — because it
+    asserts only that the file is non-empty valid JSON and `is_object()`. **Had it been the only
+    test, the migration would have looked clean.** That is cookbook rule 1's dominant defect class
+    caught in the act: a test whose name claims it checks that the group "records its provenance",
+    whose assertion checks almost nothing. It is deliberately left as-is — strengthening it would
+    duplicate `every_recorded_group_parses_and_validates` with strictly less reach, unlike the digest
+    redundancy of item 1(b), which buys genuinely different coverage — but it is recorded here as a
+    known weak gate rather than counted as coverage.
 
 **Maintainer decisions.** (i) The page, its format, and the cap — **RESOLVED 2026-07-29, see item
 17.** (ii) Scheduling the three §16.20 item 3(f) signatures. This gates the fixture commit and is a
