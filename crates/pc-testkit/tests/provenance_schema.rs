@@ -947,6 +947,36 @@ fn duplicate_record_names_are_rejected() {
 }
 
 #[test]
+// spec §16.24 item 2 — duplicate declared paths are forbidden within one provenance group,
+// even when the records have different names. This does NOT cover duplicate paths across
+// groups; that whole-tree half remains the frozen walker's responsibility.
+fn duplicate_record_outputs_are_rejected_within_a_group() {
+    let mut duplicate = valid_group();
+    let duplicate_path = duplicate.records[0].output.clone();
+    let mut second = duplicate.records[0].clone();
+    second.name = "ray".into();
+    duplicate.records.push(second);
+    let violations = provenance::validate("nlm", &duplicate);
+    assert_eq!(
+        violations.len(),
+        1,
+        "expected one violation, got {violations:?}"
+    );
+    assert_eq!(
+        format!("{violations:?}"),
+        format!("[DuplicateRecordOutput {{ path: {:?} }}]", duplicate_path),
+        "the violation must identify the duplicated output path"
+    );
+
+    let mut legal = valid_group();
+    let mut distinct = legal.records[0].clone();
+    distinct.name = "ray".into();
+    distinct.output = "tests/fixtures/recorded/nlm/ray_h10_t7_s21.png".into();
+    legal.records.push(distinct);
+    assert_eq!(provenance::validate("nlm", &legal), Vec::<Violation>::new());
+}
+
+#[test]
 // spec §16.13 item 4 ("a missing tool is always a reported skip, never a Rust stand-in") — a
 // provenance file with no records describes no recording, letting a group directory exist while
 // claiming nothing. `schema_version` is pinned in the same test so a future shape change cannot

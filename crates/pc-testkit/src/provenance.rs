@@ -111,6 +111,11 @@ pub enum Violation {
     DuplicateRecordName {
         name: String,
     },
+    /// Duplicate output paths within one provenance group. Cross-group duplicates remain the
+    /// frozen whole-tree walker's responsibility; `validate` only sees one group.
+    DuplicateRecordOutput {
+        path: String,
+    },
     MalformedDigest {
         at: String,
         field: &'static str,
@@ -232,10 +237,16 @@ pub fn validate(directory_name: &str, group: &GroupProvenance) -> Vec<Violation>
     }
 
     let mut names = BTreeSet::new();
+    let mut outputs = BTreeSet::new();
     for record in &group.records {
         if !names.insert(record.name.clone()) {
             violations.push(Violation::DuplicateRecordName {
                 name: record.name.clone(),
+            });
+        }
+        if !outputs.insert(record.output.clone()) {
+            violations.push(Violation::DuplicateRecordOutput {
+                path: record.output.clone(),
             });
         }
         validate_digest(
