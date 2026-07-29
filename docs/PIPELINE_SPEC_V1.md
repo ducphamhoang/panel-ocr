@@ -3253,7 +3253,17 @@ decision; it wrote no code.
    measurement that forces this.
 
    (d) **`confidence`, `language` and `raw_mask` are DIAGNOSTIC or NO-ORACLE rows only,
-   never gated.** `raw_mask` has no exact oracle in v1 at all: upstream's preprocessor calls
+   never gated.** **(QUALIFIED by §16.25 item 5 — read it before citing this clause. "Never gated"
+   binds the field's *value*, which is what the prohibition is about: item 5 records that it is an
+   **epistemic** limit, grounded in a measured 0.079–0.089 noise floor against 0.4 gates, so no
+   tolerance exists that does not span "kept" and "dropped". It does **not** bind the field's
+   *coverage* — whether the oracle artifact carries the field on some gated blocks and not others.
+   Coverage has no noise floor and no epsilon; presence is exactly decidable, so gating it cannot
+   import the defect this clause exists to prevent. `InconsistentOracleCoverage { field: "confidence"
+   | "language" }` is therefore a **gating** row and does not contradict this clause: it says the
+   partition cannot be completed, not that the values disagree. `raw_mask` is unaffected either way —
+   it is not read per block, so it has no coverage state, and its NO-ORACLE bucket is settled
+   unconditionally here and by §16.24 item 7.)** `raw_mask` has no exact oracle in v1 at all: upstream's preprocessor calls
    the detector with `refine_mode=REFINEMASK_ANNOTATION` and `keep_undetected_mask=True`,
    i.e. the full `refine_mask` algorithm that §14.12 puts out of scope — measured **IoU
    0.258**, upstream 2,950 non-zero px against our 11,103. The refine arithmetic is gated by
@@ -3924,7 +3934,12 @@ gating divergence; negative controls constructed in-test and never committed.
 
 6. **The comparator's observable contract — a merge, with the seam stated.** Adopted from the
    engineer: the divergence **class** system (`Gating` / `Diagnostic` / `NoOracle`) reconciling
-   item 3(d) with item 10; deterministic emission order; **no computed floats in any variant**, so
+   item 3(d) with item 10 — **`NoOracle` is SUPERSEDED by §16.25, which deletes the class and the
+   `NoOracleField` variant it existed for; the surviving classes are `Gating` and `Diagnostic`, and
+   what `NoOracle` was carrying moved to `ComparisonReport::coverage` as an artifact property. The
+   original three-class wording is preserved here per §16.19's convention; §16.25 items 2 and 4 are
+   the reasoning, and item 8 records that deleting it amends this ratified enumeration rather than
+   following from it.** The rest of this item stands unchanged: deterministic emission order; **no computed floats in any variant**, so
    controls assert the whole ordered vector with one exact `assert_eq!`; per-fault isolation
    tests; the extra-block-on-*our*-side control (rule 13's missing direction — item 10 names only
    the upstream-side deletion); the line-union positive case built on item 12's measured pair
@@ -3976,6 +3991,21 @@ gating divergence; negative controls constructed in-test and never committed.
    item 5's own decomposition proves the value is obtainable — and the oracle schema keeps
    `confidence: Option<f64>` with `NoOracleField` rows when absent. Either outcome is a closed
    verdict under item 3(e); neither blocks the fixture. The row is never gated regardless.
+
+   **PARTLY SUPERSEDED by §16.25, and one phrase above must not be cited.** The clause
+   *"with `NoOracleField` rows when absent"* is **withdrawn**: that variant is deleted, and §16.25
+   item 3 records why quoting it here was circular in the first place — the identifier occurs in this
+   spec exactly once, right here, in CamelCase taken from the draft this section was ruling on, so it
+   was this ruling repeating the draft's vocabulary while deciding a different question. Whole-field
+   absence is now reported as `OracleCoverage::Absent` on `ComparisonReport::coverage`.
+
+   **What survives unchanged, and is independently grounded:** the DIAGNOSTIC-else-NO-ORACLE branch
+   itself, the obligation on the script to *attempt* capture, `confidence: Option<f64>` in the oracle
+   schema (grounded in cookbook rule 7's finding that upstream's `#raw.json` does not persist
+   confidence, not in this section), and *"may not close as `OPEN` on this account"` — that clause
+   forecloses `OPEN` for whole-document **absence** and, per §16.25 item 5, never for
+   **inconsistency**, which is why `Partial` blocks without contradicting it. Original wording
+   preserved per §16.19's convention.
 
 10. **ERRATUM — §16.20 item 3(e)'s citation "§2.4/§2.5's field list" is wrong: §2.5 is
     `PageData`, the preprocessor's output, not the detector's.** The partition F1 owes is over
