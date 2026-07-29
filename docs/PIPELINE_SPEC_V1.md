@@ -3992,10 +3992,22 @@ gating divergence; negative controls constructed in-test and never committed.
     equality between the doc table's field column and the serialized key set, **both directions**,
     duplicates rejected; every `EXPLAINED-§x.y` anchor present in the spec; no `OPEN` row once the
     fixture is present; three complete, role-distinct, non-self signatures. Also ratified: the
-    **two-equation** accounting reading —
+    **two-equation** accounting reading, since the literal "equals both totals" is unsatisfiable
+    with one-sided extras, as both plans independently found. **The terms are RESTATED by item 20(c)'s
+    rename** — the original spelling was
     `pairs + class_duplicates + documented_upstream_only == upstream_total` and
-    `pairs + documented_ours_only == ours_total` — since the literal "equals both totals" is
-    unsatisfiable with one-sided extras, as both plans independently found.
+    `pairs + documented_ours_only == ours_total`, kept here only so the mapping is checkable:
+
+    ```
+    pairs + class_duplicates + documented_split_merge_upstream + open_upstream == upstream_total
+    pairs + coverage_filtered_ours + documented_split_merge_ours + open_ours   == ours_total
+    ```
+
+    Old→new mapping, recorded **once** so no future reader has to resolve it semantically:
+    `documented_upstream_only ≡ documented_split_merge_upstream + open_upstream`;
+    `documented_ours_only ≡ coverage_filtered_ours + documented_split_merge_ours + open_ours`. The
+    sums are term-for-term identical to item 20(a)'s partition reading, so its one-gating-row
+    conclusion is untouched.
 
 12. **DECIDED — `demo_bubbles` detector artifacts: record to scratch for §10.7(B)15's non-gating
     report, commit nothing, and the four §16.13 item 8 tests stay `#[ignore]`d.** The architect
@@ -4257,11 +4269,15 @@ gating divergence; negative controls constructed in-test and never committed.
     *documented* mechanisms.** Ratified here rather than left to implementation because it decides a
     **frozen test's** expected vector, so the choice must land before the test is written.
 
-    On the upstream side, `class_duplicates` counts entries whose mechanism is `ClassDuplicateOf`, and
-    `documented_upstream_only` counts **every other** unmatched-upstream entry — `DocumentedSplitMerge`
-    and `Open` alike. `documented_ours_only` is the whole unmatched-ours count. Item 11's two equations
-    therefore close whenever total accounting holds, and a mechanism's *adequacy* is adjudicated
-    separately, by the row it raises.
+    Every unmatched entry on a side falls under exactly one term, and after (c)'s rename each term
+    names exactly one mechanism class: upstream, `class_duplicates` / `documented_split_merge_upstream`
+    / `open_upstream`; ours, `coverage_filtered_ours` / `documented_split_merge_ours` / `open_ours`.
+    Item 11's two equations therefore close whenever total accounting holds, and a mechanism's
+    *adequacy* is adjudicated separately, by the row it raises — **not** by whether it is counted.
+
+    The reading this displaces, stated so the ratification is legible: the terms do **not** count only
+    genuinely *documented* mechanisms, leaving `Open` outside the sums. Under the pre-rename spelling
+    that distinction was invisible, which is why (c) renames.
 
     (a) **Consequence, and the reason this is ratified:** an `Open` entry raises exactly **one**
     gating row (`OpenMechanism`), not two (`OpenMechanism` + `AccountingMismatch`). That is what makes
@@ -4290,14 +4306,14 @@ gating divergence; negative controls constructed in-test and never committed.
     the literal would have removed the only guard against "compared 0 boxes, 0 divergences → PASS".
     Corrected here; the two guards defend **different** bypasses and both are required:
 
-    - **Derived, from the signed entry list:** `class_duplicates`, `documented_*`, and any `open_*`
-      term. These guard against **inflation** — with independent literal counts a caller could set
-      `documented_upstream_only = 4` while listing three entries, closing the arithmetic with no
-      fourth row (cookbook rule 13's iteration-2 defect, "cardinality is not identity", re-imported
-      into the comparator, in a test nobody re-audits once signatures are collected). Derived, closing
-      the arithmetic requires **adding an entry**, and an entry either cites a register anchor (whose
-      existence item 11's anchor test verifies) or is `Open` and raises its gating row. Inflation
-      becomes a documented lie under a human signature rather than an arithmetic bypass.
+    - **Derived, from the signed entry lists, never authored:** `class_duplicates`,
+      `documented_split_merge_*`, `open_*`, `coverage_filtered_ours`. These guard against
+      **inflation**: derived, closing the arithmetic requires **adding an entry**, and an entry either
+      cites a checkable register anchor or is `Open` and raises its gating row. Grounds, per the Fable
+      ruling: cookbook rule 13's recorded preference — *"prefer asserting the expected set; the count
+      comes free"* — where the signed entry lists **are** the set; and **unrepresentability beats
+      detection**, since a declared-count design admits count-vs-entry inconsistency and then detects
+      it by convention, while the derived design makes it inexpressible.
     - **Hard-coded literals, authored and signed:** `pairs`, `upstream_total`, `ours_total`. These
       guard against **vacuity** — the empty-pairing failure item 3(b) names. They may **not** be
       derived from the artifacts, and this is not a stylistic preference: `upstream_total` derived from
@@ -4306,9 +4322,10 @@ gating divergence; negative controls constructed in-test and never committed.
       circle in one step.
 
     The deleted-box control resolves cleanly under this split, which is the check that the split is
-    right: authored `pairs = 4`, `upstream_total = 5`, `ours_total = 4`; derived
-    `documented_upstream_only = 1` from the single `Open` entry. Both equations close — `4 + 0 + 1 = 5`
-    and `4 + 0 = 4` — and the fault yields exactly one gating row (`OpenMechanism`).
+    right: authored `pairs = 4`, `upstream_total = 5`, `ours_total = 4`; derived `open_upstream = 1`
+    from the single `Open` entry, every other mechanism term zero. Both equations close —
+    `4 + 0 + 0 + 1 = 5` upstream and `4 + 0 + 0 + 0 = 4` ours — and the fault yields exactly one gating
+    row (`OpenMechanism`). Item 21(b) confirms this as the frozen vector.
 
     **Binding: declared-unmatched == computed-unmatched, both directions**, where computed is
     `artifact − paired` over the *declared* pairs. This is a set difference over a supplied pairing,
@@ -4316,18 +4333,66 @@ gating divergence; negative controls constructed in-test and never committed.
     the second door this clause originally missed entirely: a **phantom** entry for a box that is not
     actually unmatched.
 
-    **The derivation is load-bearing for (a)'s own conclusion, not an addition to it.** Trace the
-    deleted-box control with the *mechanism* counts also caller-authored: `pairs` falls to 11, declared
-    `documented_ours_only` is 0, `ours_total` is 12 — so the equation fails anyway and the fault
-    produces two gating rows, which is exactly what (a) claims the partition reading avoids. **The
-    partition reading closes only if the mechanism counts are computed from the actually-unmatched
-    set.** Recorded this way because (a) read as sufficient on its own and was not.
+    **CORRECTION OF RECORD — two supporting traces I transcribed here are FALSE and are withdrawn.**
+    An earlier version of this clause rested the bindings on two arguments from the Technical
+    Architect. The Fable ruling found both wrong, and the bindings stand on the replacement grounds
+    above instead:
+
+    - The **bypass trace** ("set `documented_upstream_only = 4` while listing three entries, closing
+      the arithmetic with no fourth row") fails against the design actually drafted: the comparator
+      cross-checks every declared term against the entry list and raises a gating `AccountingMismatch`
+      on any inconsistency, so there was never a silent close. Its "a test nobody re-audits after
+      signatures" framing also mislocated the check, which is comparator behaviour exercised by CI
+      controls on every run.
+    - The **"load-bearing derivation" trace** ("`pairs` falls to 11, declared `documented_ours_only`
+      is 0, `ours_total` is 12 — two gating rows") assumes the truth-pair literals are kept against a
+      *perturbed* artifact, i.e. an **un-re-authored table** — a reading item 4 already forecloses
+      (*"a 1-px perturbation still pairs — the table says so"*). Authored for the artifacts under
+      comparison, the control closes: `4 + 0 + 0 + 1 = 5` upstream, `4 + 0 + 0 + 0 = 4` ours, one
+      gating row.
+
+    So item 20 as first written was **correct on (a) and under-specified on (b)** — not wrong on (a),
+    which the withdrawn trace claimed. Recorded rather than silently deleted because the correction
+    chain is itself the evidence that these clauses were checked.
 
     **Required of F1-C** (obligations, not citations): a test asserting that the three injected faults
     are reported exactly, with no `AccountingMismatch` accompanying the `Open` entry; and a test
     asserting that declaring a documented difference does not silence the per-box row.
 
-    (c) **Naming — UNDER ADJUDICATION, do not treat the spelling below as settled.**
+    (c) **Naming — RESOLVED: RENAME. The Technical Architect wins (Fable tie-break, 2026-07-29),
+    refined with side suffixes so every term names exactly one mechanism class on exactly one side.**
+
+    Ratified spellings, binding on the spec, the Rust identifiers, every `AccountingMismatch` and
+    report field string, and `docs/DETECTOR_ORACLE.md` when it is written:
+
+    | side | term | mechanism |
+    |---|---|---|
+    | upstream | `class_duplicates` (unsuffixed — the mechanism is upstream-side-only by ratified definition) | `ClassDuplicateOf` |
+    | upstream | `documented_split_merge_upstream` | `DocumentedSplitMerge` |
+    | upstream | `open_upstream` | `Open` |
+    | ours | `coverage_filtered_ours` — unmatched-ours entries explained by *upstream's* line-less coverage filter | `CoverageFilteredUpstream` |
+    | ours | `documented_split_merge_ours` | `DocumentedSplitMerge` |
+    | ours | `open_ours` | `Open` |
+
+    Item 11's equations are restated in the same edit, with the old→new mapping recorded there once.
+    **Rename in spec, Rust type and doc together or in none of them** — the engineer's condition,
+    adopted whole: a spec term differing from the identifier is cookbook rule 14's drift vector.
+
+    **Why keep-and-pin lost.** Its continuity argument protected a *spelling* whose meaning item
+    20(a) had already overridden — continuity of characters while the semantics invert is the opposite
+    of continuity for a reader, and the mapping line it offered concedes that every future reader must
+    perform a translation the spec could perform once, here. My own earlier 20(c) text was that
+    position's best refutation: a name that "actively misleads", whose literal reading is "the more
+    natural one from the field name alone", kept alive by a standing *"recorded so it is not fixed"*
+    warning. Rule 1 makes name-vs-substance divergence this project's **dominant** defect class, and
+    keep-and-pin converts it from a defect we hunt into an exception we maintain — at a site whose
+    failure message a reader meets without §16.24 open. And the cost asymmetry is measured, not
+    asserted: a grep found the identifiers in exactly two spec items and one scratchpad draft. **Zero
+    code, fixture, provenance, signature or doc readers** — the rename's entire cost was this edit,
+    and it stops being free the moment the fixture commits.
+
+    The original text of this clause, recorded because the disagreement was real and the losing
+    position was reasonable:
     `documented_upstream_only` counts entries that are not all documented, so the name actively
     misleads, and the *literal* reading is the more natural one from the field name alone. The two
     Opus architects disagree: the Senior Rust Engineer holds "keep item 11's name, pin the meaning
@@ -4341,10 +4406,67 @@ gating divergence; negative controls constructed in-test and never committed.
     `pairs + class_duplicates + documented_split_merge + open_upstream == upstream_total`,
     arithmetically identical and equally satisfiable under item 10.
 
-    A Fable tie-break is in progress per `CLAUDE.md`. **Until it lands, the semantics of (a) and (b)
-    are binding and the spelling is not.** Whichever way it rules, the rename must be applied in the
-    spec, the Rust type and the doc **or in none of them** — a spec term differing from the
-    identifier is cookbook rule 14's drift vector reintroduced.
+21. **F1-C comparator rulings: the phantom door, and NO fault-collapse rule (Fable tie-break,
+    2026-07-29).** Both settle the frozen test's expected vector, which is why they are ratified before
+    the test is written rather than discovered during implementation.
+
+    (a) **The phantom door is ADOPTED.** `Expectations`' declared-unmatched entries must equal the
+    comparator's computed unmatched set, **both directions**, where computed is `artifact − paired`
+    over the *declared* pairs. That is a set difference over a supplied pairing — verification, not
+    invention — so item 4's "the comparator never invents a pairing" is respected. It closes a door
+    item 20(b) missed entirely: a **phantom** entry declaring a box unmatched when it is in fact
+    paired. New gating variant `PhantomUnmatched { side, index }`, with one containment-style control.
+
+    (b) **The fault-collapse rule is REJECTED, and the frozen vector is THREE rows.** The premise —
+    that a deleted box perturbs `pairs`, `upstream_total` and `ours_total` and so forces a fourth row —
+    **dissolves under re-authoring.** Item 10's control authors its table for the *perturbed* artifacts
+    (item 4): the pairing list has 4 entries, authored `pairs = 4`, all 4 resolve, authored
+    `ours_total = 4` and `upstream_total = 5` match the artifacts, and derived `open_upstream = 1`
+    closes both equations. **Nothing authored is perturbed, because the author authored for what is
+    there.** The deleted box surfaces exactly once, as `OpenMechanism { side: Upstream, index: 4 }`.
+
+    The frozen three-fault vector, confirmed: `GeometryIdentity { ours: (500,600,617,672), expected:
+    (500,600,617,672), upstream: (500,600,618,672) }` (gating) → `ConfidenceDelta { ours:
+    (700,800,760,830), 0.437, 0.438 }` (diagnostic) → `OpenMechanism { side: Upstream, index: 4 }`
+    (gating); `pairs_compared == 4`; gating 2, diagnostic 1.
+
+    Answering the either/or directly: the authored `pairs` counts the pairs the author declared **for
+    the artifacts under comparison**, and since the comparator separately verifies that every declared
+    pair resolves, declared and resolved coincide on every input an exact vector is promised for.
+    Neither "the deletion suppresses the pairs-count check" nor "the literal silently tracks
+    declared-only" is the ruling — an unresolved declared pair fails the pairs check *and* raises
+    `PairingIndexOutOfRange`.
+
+    (c) **Where the three literals genuinely ARE perturbed — a stale table, i.e. artifact drift under
+    signed `Expectations` — multiple true rows are the CORRECT output.** Each names a real,
+    independently-stated inconsistency, which is rule 13's corollary working rather than
+    double-reporting: a re-record that drifts is exactly the event §16.24 item 5 makes "a reviewed
+    event, not a file swap that keeps CI green", and the reviewer wants all three signals.
+
+    (d) **Why suppression is refused outright, and the bound is ZERO.** A rule suppressing "the derived
+    checks a defect necessarily perturbs" requires the comparator to decide which of its own findings
+    caused which others; a bug in that causal judgment **silently hides real rows**, and no frozen
+    assertion anywhere needs the machinery. The instinct to bound such a rule was right; the correct
+    bound turned out to be zero. Both this finding and the sharp form of item 20(b)'s withdrawn trace
+    fail from the same root — the un-re-authored-table reading of the deletion control, which item 4
+    forecloses.
+
+    (e) **Ratified instead — the assertion discipline**, which is what actually protects the first
+    write: exact whole-vector assertions only over structurally-sound tables, and structural-defect
+    controls assert **containment plus gating-non-empty, never sibling-absence**.
+
+    (f) **Sign precision on item 18(h)(iii), because rule 15 is literally about signs.** The
+    one-directional attribution is **per edge**: the union-impossible directions are
+    `residual_leg1.x1 > 0`, `y1 > 0`, `x2 < 0`, `y2 < 0` — each of those *proves* leg 1, while the
+    complementary directions prove nothing, being consistent with either leg. **"A negative component
+    proves leg 1" is true only of `x2`/`y2` and would be a sign error on `x1`/`y1` if transcribed
+    bare** — which is exactly how it read in my first draft.
+
+    (g) **Deferral, recorded per §16.23 item 1.** Verification of `DocumentedSplitMerge` register
+    anchors that appear only in test source stays deferred to the recording commit. One consequence
+    noted rather than buried: with the mechanism counts now derived, in-module blindness to a
+    *mislabelled* `DocumentedSplitMerge` is total, which strengthens the case for the anchor-grep
+    option when that deferral is taken up.
 
 **Maintainer decisions.** (i) The page, its format, and the cap — **RESOLVED 2026-07-29, see item
 17.** (ii) Scheduling the three §16.20 item 3(f) signatures. This gates the fixture commit and is a
