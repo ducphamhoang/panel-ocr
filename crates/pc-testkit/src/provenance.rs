@@ -292,6 +292,22 @@ pub fn validate(directory_name: &str, group: &GroupProvenance) -> Vec<Violation>
         (false, None) => {}
     }
     validate_freeform(&group.diagnostics, "diagnostics", &mut violations);
+    // `tool_versions` is `BTreeMap<String, String>` — see the note in `validate_upstream` on
+    // `dependency_versions`: the `String` type stops a nested object, not a digest-shaped value.
+    for (key, value) in &group.tool_versions {
+        if is_canonical_digest(value) {
+            violations.push(Violation::DigestLikeValueOutsideStructuralSlot {
+                at: "tool_versions".into(),
+                key: key.clone(),
+            });
+        }
+        if looks_like_digest_key(key) {
+            violations.push(Violation::DigestLikeKeyOutsideStructuralSlot {
+                at: "tool_versions".into(),
+                key: key.clone(),
+            });
+        }
+    }
 
     violations.sort();
     violations.dedup();
@@ -306,9 +322,15 @@ fn validate_detector(
     validate_path(violations, "detector", "input_page", &detector.input_page);
     let expected_prefix = format!("{RECORDED_PREFIX}/{DETECTOR_GROUP}/");
     if !detector.input_page.starts_with(&expected_prefix) {
-        violations.push(Violation::NonRelativePath {
-            at: "detector".into(),
-            field: "input_page",
+        // `CommittedPathOutsideGroup`, NOT `NonRelativePath`: a relative path in the wrong
+        // directory is misplaced, not non-relative, and saying otherwise is a false message
+        // (cookbook rule 1's corollary). It also used to collapse under `dedup()` with
+        // `validate_path`'s genuine violation above when the path was absolute, making
+        // "absolute" and "wrong directory" indistinguishable in the output. §16.24 item 2
+        // requires the page to live inside the declaring group, and `:251` already reports
+        // exactly this failure class for record outputs.
+        violations.push(Violation::CommittedPathOutsideGroup {
+            at: "detector.input_page".into(),
             path: detector.input_page.clone(),
         });
     }
@@ -392,6 +414,17 @@ fn validate_ours(violations: &mut Vec<Violation>, ours: &OursPins) {
             value: ours.panel_ocr_commit.clone(),
         });
     }
+    // R11/R12 reach EVERY free-form map, not just `params`/`diagnostics`. `profile_non_default`
+    // is `BTreeMap<String, Value>` built by diffing against the profile defaults (§16.24 item
+    // 3(a)), so it accepts arbitrary JSON and is exactly the shape a digest can hide in. The
+    // sweep's whole purpose is that the typed layer enumerates *declarations* while the sweep
+    // enumerates *digests present in the file*, and the two populations must match; a map the
+    // sweep does not visit breaks that invariant silently.
+    validate_freeform(
+        &ours.profile_non_default,
+        "detector.ours.profile_non_default",
+        violations,
+    );
 }
 
 fn validate_upstream(violations: &mut Vec<Violation>, upstream: &UpstreamPins) {
@@ -429,6 +462,33 @@ fn validate_upstream(violations: &mut Vec<Violation>, upstream: &UpstreamPins) {
     }
     if upstream.dependency_versions.is_empty() {
         violations.push(Violation::EmptyDependencyVersions);
+    }
+    // Same reasoning as `validate_ours`: the upstream side's `profile_non_default` is free-form
+    // and must be swept. This side matters more, not less — it records a profile produced by a
+    // *third-party* tool run, so its contents are the least predictable in the document.
+    validate_freeform(
+        &upstream.profile_non_default,
+        "detector.upstream.profile_non_default",
+        violations,
+    );
+    // `dependency_versions` and `tool_versions` are `BTreeMap<String, String>`, so a nested
+    // object cannot hide in them, but a digest-shaped *value* still can: `{"opencv": "<64 hex>"}`
+    // parses fine and would be a digest present in the file and absent from the verified set.
+    // R12 applies by value shape, so check it here rather than assuming the `String` type is a
+    // safeguard — it constrains the shape, not the content.
+    for (key, value) in &upstream.dependency_versions {
+        if is_canonical_digest(value) {
+            violations.push(Violation::DigestLikeValueOutsideStructuralSlot {
+                at: "detector.upstream.dependency_versions".into(),
+                key: key.clone(),
+            });
+        }
+        if looks_like_digest_key(key) {
+            violations.push(Violation::DigestLikeKeyOutsideStructuralSlot {
+                at: "detector.upstream.dependency_versions".into(),
+                key: key.clone(),
+            });
+        }
     }
 }
 

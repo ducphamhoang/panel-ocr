@@ -152,6 +152,16 @@ fn the_detector_group_model_digest_equals_the_pc_models_constant() {
         .join(provenance::DETECTOR_GROUP)
         .join(provenance::PROVENANCE_FILE_NAME);
     if !path.is_file() {
+        // DORMANT, and said out loud on purpose (§16.24 item 19(f) / cookbook rule 6): this test
+        // is one of the compensating legs §16.24 item 2 traded the walker dodge for, and with no
+        // detector group recorded it executes ZERO assertions while reporting as passed. A silent
+        // early return here is a green test concealing an unenforced condition. Falsifying all
+        // three legs -- corrupt each digest by one nibble and watch them fail -- is a named line
+        // item on the atomic recording commit.
+        println!(
+            "DORMANT: no detector group recorded yet, so this compensating leg asserted nothing \
+             (§16.24 item 2's condition is UNENFORCED until the recording commit)"
+        );
         return;
     }
     let group = read_group(provenance::DETECTOR_GROUP);
@@ -176,6 +186,16 @@ fn the_detector_group_pad_value_equals_the_implementation_constant() {
         .join(provenance::DETECTOR_GROUP)
         .join(provenance::PROVENANCE_FILE_NAME);
     if !path.is_file() {
+        // DORMANT, and said out loud on purpose (§16.24 item 19(f) / cookbook rule 6): this test
+        // is one of the compensating legs §16.24 item 2 traded the walker dodge for, and with no
+        // detector group recorded it executes ZERO assertions while reporting as passed. A silent
+        // early return here is a green test concealing an unenforced condition. Falsifying all
+        // three legs -- corrupt each digest by one nibble and watch them fail -- is a named line
+        // item on the atomic recording commit.
+        println!(
+            "DORMANT: no detector group recorded yet, so this compensating leg asserted nothing \
+             (§16.24 item 2's condition is UNENFORCED until the recording commit)"
+        );
         return;
     }
     let pins = read_group(provenance::DETECTOR_GROUP)
@@ -202,6 +222,16 @@ fn our_recorded_decoded_rgb_digest_equals_the_decoded_committed_page() {
         .join(provenance::DETECTOR_GROUP)
         .join(provenance::PROVENANCE_FILE_NAME);
     if !path.is_file() {
+        // DORMANT, and said out loud on purpose (§16.24 item 19(f) / cookbook rule 6): this test
+        // is one of the compensating legs §16.24 item 2 traded the walker dodge for, and with no
+        // detector group recorded it executes ZERO assertions while reporting as passed. A silent
+        // early return here is a green test concealing an unenforced condition. Falsifying all
+        // three legs -- corrupt each digest by one nibble and watch them fail -- is a named line
+        // item on the atomic recording commit.
+        println!(
+            "DORMANT: no detector group recorded yet, so this compensating leg asserted nothing \
+             (§16.24 item 2's condition is UNENFORCED until the recording commit)"
+        );
         return;
     }
     let group = read_group(provenance::DETECTOR_GROUP);

@@ -337,6 +337,144 @@ fn a_digest_hidden_in_params_is_rejected_by_key_and_by_value() {
 }
 
 #[test]
+// spec §16.24 item 3(c) — the sweeps must reach EVERY free-form map, not only `params` and
+// `diagnostics`. Found by the review gate after F1-A landed: `validate` swept `record.params`
+// and `group.diagnostics` but neither `profile_non_default`, so a digest parked in a profile
+// map was a digest present in the file and absent from the verified set — precisely the
+// invariant the sweeps exist to maintain.
+//
+// The upstream side matters most: its `profile_non_default` records a profile produced by a
+// third-party tool run, so its contents are the least predictable in the document.
+//
+// Falsifiable in both directions: remove either `validate_freeform` call in `validate_ours` /
+// `validate_upstream` and the matching half fails; a profile map holding ordinary values must
+// produce NO violation, which the control below asserts so this cannot pass by over-reporting.
+fn a_digest_hidden_in_a_detector_profile_map_is_rejected_on_both_sides() {
+    let hex = "c6cc1002c209ffadd182f2ebd3162b53b55bbb92f99ee038ebaf419bfed94b8d";
+
+    let mut ours = valid_detector_group();
+    ours.detector
+        .as_mut()
+        .expect("detector pins")
+        .ours
+        .profile_non_default
+        .insert("checksum".into(), serde_json::json!(hex));
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &ours),
+        vec![Violation::DigestLikeValueOutsideStructuralSlot {
+            at: "detector.ours.profile_non_default".into(),
+            key: "checksum".into(),
+        }]
+    );
+
+    let mut upstream = valid_detector_group();
+    upstream
+        .detector
+        .as_mut()
+        .expect("detector pins")
+        .upstream
+        .profile_non_default
+        .insert("sha_256".into(), serde_json::json!("not-a-digest"));
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &upstream),
+        vec![Violation::DigestLikeKeyOutsideStructuralSlot {
+            at: "detector.upstream.profile_non_default".into(),
+            key: "sha_256".into(),
+        }]
+    );
+
+    // Nested, since a one-level sweep would pass both cases above and still miss this.
+    let mut nested = valid_detector_group();
+    nested
+        .detector
+        .as_mut()
+        .expect("detector pins")
+        .upstream
+        .profile_non_default
+        .insert(
+            "masker".into(),
+            serde_json::json!({ "tier": { "file_hash": "x" } }),
+        );
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &nested),
+        vec![Violation::DigestLikeKeyOutsideStructuralSlot {
+            at: "detector.upstream.profile_non_default".into(),
+            key: "file_hash".into(),
+        }]
+    );
+
+    // The other direction: a profile map carrying legitimate non-default keys must be clean, or
+    // the rule would fire on every real recording and get widened back out.
+    let mut legitimate = valid_detector_group();
+    let pins = legitimate.detector.as_mut().expect("detector pins");
+    pins.ours
+        .profile_non_default
+        .insert("intra_threads".into(), serde_json::json!(8));
+    pins.upstream
+        .profile_non_default
+        .insert("mask_growth_step_pixels".into(), serde_json::json!(2));
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &legitimate),
+        Vec::<Violation>::new(),
+        "ordinary non-default profile keys must not be reported"
+    );
+}
+
+#[test]
+// spec §16.24 item 3(c). `tool_versions` and `dependency_versions` are `BTreeMap<String, String>`,
+// so the type stops a nested object — but NOT a digest-shaped value. `{"opencv": "<64 hex>"}`
+// parses fine and would be a digest present in the file and outside the verified set. R12 is a
+// rule about value *shape*, so the `String` type is not a safeguard against it.
+//
+// Both directions: real version strings must stay clean, which the control asserts.
+fn a_digest_shaped_version_string_is_rejected() {
+    let hex = "c6cc1002c209ffadd182f2ebd3162b53b55bbb92f99ee038ebaf419bfed94b8d";
+
+    let mut group = valid_group();
+    group.tool_versions.insert("opencv".into(), hex.into());
+    assert_eq!(
+        provenance::validate("nlm", &group),
+        vec![Violation::DigestLikeValueOutsideStructuralSlot {
+            at: "tool_versions".into(),
+            key: "opencv".into(),
+        }]
+    );
+
+    let mut deps = valid_detector_group();
+    deps.detector
+        .as_mut()
+        .expect("detector pins")
+        .upstream
+        .dependency_versions
+        .insert("torch".into(), hex.into());
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &deps),
+        vec![Violation::DigestLikeValueOutsideStructuralSlot {
+            at: "detector.upstream.dependency_versions".into(),
+            key: "torch".into(),
+        }]
+    );
+
+    // Control: ordinary versions are not digests, so neither map may be reported.
+    let mut clean = valid_detector_group();
+    clean
+        .tool_versions
+        .insert("opencv".into(), "5.0.0".to_owned());
+    clean
+        .detector
+        .as_mut()
+        .expect("detector pins")
+        .upstream
+        .dependency_versions
+        .insert("torch".into(), "2.4.1".to_owned());
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &clean),
+        Vec::<Violation>::new(),
+        "ordinary version strings must not be reported"
+    );
+}
+
+#[test]
 // spec §16.24 item 3(c) — uppercase-digest rejection, explicitly ratified. An uppercase digest
 // VERIFIES at `recorded_provenance.rs:177` (which lowercases first), so it is exactly the
 // spelling that passes the existing gate while making two provenance files textually
