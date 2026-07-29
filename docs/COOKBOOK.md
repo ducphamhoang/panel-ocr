@@ -638,6 +638,16 @@ The stop-time review did.
   the hits per file (`| awk -F: '{print $1}' | sort | uniq -c`) so a truncated read is visible as a
   number, and never write "this is all of them" next to a command whose output you did not read to
   the end.
+
+  **A case-sensitive filter is a filter, and this recurred.** Scanning §16.26 for lines that would
+  trip its own gate, the pattern was written from the spec's *printed* verb list — `SUPERSEDED`,
+  `NARROWED` — all uppercase, and it silently skipped the line reading `superseded by §10.5/§13`.
+  Four trip-lines existed; the scan reported three. The miss was caught only by re-running with
+  `grep -i` on a hunch. The spec's verb list is displayed in the case the markers happen to use, so
+  a pattern copied from prose inherits a restriction the prose never intended: **when the artifact
+  you are grepping is human text, case, plurals and inflections are part of the enumeration, not
+  decoration.** Same failure shape as the `head -40` above — a filter narrower than the question,
+  trusted because it returned results.
 - **Producers are not the risk; readers are.** The writers were migrated as an obvious part of
   the task. It is the reader nobody remembered that breaks, because a reader can be in a
   different crate, in a test rather than in `src/`, and reach the format through a
@@ -704,6 +714,42 @@ Three fixes, in descending value:
 class of defect, check whether it is *triggered* by conflict. If so, it cannot see agreement,
 and the cheapest repair is a reader with no stake in the decision — or better, a check that
 needs no reader at all.
+
+---
+
+## 14b. Run the entry that ratifies a gate through the gate
+
+§16.26 ratifies a supersession-marker gate. Its own Layer A example was written as
+`**SUPERSEDES: §16.20 item 3(d)**` — a *real* anchor, in a code fence, and the only such token in
+the file. The drafted parser has no fence-awareness, so the entry would have failed the gate it
+ratifies three ways at once: no back-pointer at the named target, a marker count of 4 against a
+pinned 3, and an extra row in the ratified set. **The first red the gate ever produced would have
+been caused by its own ratification.**
+
+Nobody had run it because the measurement predated the entry — the draft was measured at an earlier
+commit, and the ratification was written afterwards and never re-scanned. That gap is structural,
+not careless: a gate is designed against the artifact as it *was*, and the ratification changes the
+artifact.
+
+- **The check is one command and it belongs in the ratification, not after it.** Scan the new
+  section with the gate's own pattern before committing. If the gate is not implemented yet, scan
+  by hand — the pattern is written down in the entry.
+- **A gate over human text must be discussable inside that text.** Otherwise the document cannot
+  document its own convention. The fix is a non-parsing placeholder (`§X item N`) plus a stated
+  rule that mentions use it, not fence-awareness in the parser — fences are not the only place a
+  mention appears, and a parser exception is a bypass waiting to be widened.
+- **Where a scanner is line-based, line breaks become semantic.** Re-wrapping a paragraph can
+  create or destroy a claim. This one bit twice: the replacement text for §16.26 item 6 was wrapped
+  with the verb beside three live anchors, manufacturing three unpinned phantom rows, where the
+  wording it replaced had separated them *by accident*. So an editor, a formatter, or a
+  line-length tool can turn the gate red without changing a word.
+- **Pin the false positives your own prose creates; do not reword the quote.** Two of §16.26's
+  examples are verbatim spec lines that are claim-shaped to the scanner. Rewording them to dodge it
+  would destroy the entry's virtue — that each example is a real line of this spec — so they are
+  pinned in the constant and commented as quotations.
+
+Generalised: **an artifact that asserts a rule about a class is a member of that class.** A lint
+config is linted, a schema validates, a spec section about spec sections is a spec section.
 
 ---
 

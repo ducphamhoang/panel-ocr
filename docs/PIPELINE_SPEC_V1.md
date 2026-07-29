@@ -4825,6 +4825,133 @@ required a ratification before implementation.
     correcting — writing a lesson ahead of the ratification it depends on is its own small defect,
     and the paragraph carries an anchor to this section so a future reader sees which came first.
 
+## 16.26 The supersession marker becomes machine-readable (convention, 2026-07-29)
+
+What this spec cites as "§16.19's convention" — the old wording preserved verbatim, with a marker at
+the old site — was right and unenforced. It failed three times in the F1 sequence
+(§16.20 item 3(d), §16.24 item 6, §16.24 item 9): each time the new entry stated what it
+amended, the old site stayed bare, and the old site is the one a future reader lands on.
+§16.19 itself left its one target, §16.12 item 2, bare — that row is in the pinned set below.
+This entry makes the convention checkable.
+
+1. **Measured first, and the measurement changed the design.** A prose scan over the verbs
+   (`SUPERSEDED`, `amended`, `ERRATUM`, `QUALIFIED`, `withdrawn`, `NARROWED`, `RE-GROUNDED`, plus
+   `supersedes` and case variants — the list is abbreviated, and a re-measurement with only the
+   seven printed verbs will not reproduce 51) finds
+   51 occurrences across 91 sections and 343 items, yielding 26 candidate claims after a direction
+   rule (a *claim* names an older target; a *back-pointer* names a newer claimer) plus `by`- and
+   parenthesised-marker filters. Of the 26, **18** name a target carrying no back-pointer;
+   hand-auditing those 18: **~10 real, ~8 false positives.** Three structural causes, each a real
+   line of this spec:
+
+   - **Quoted anchors.** §16.24 item 10 says *"§16.20 item 3(e)'s citation `"§2.4/§2.5's field
+     list"` is wrong"* — the target is 3(e); §2.4/§2.5 are quoted content. Four flags.
+   - **Slash-lists defeat a `by` filter.** In *"superseded by §10.5/§13's crate column"*, `by`
+     attaches to the list, so §13 survives as a phantom claim.
+   - **Citing someone else's amendment.** *"per §16.20 item 3(a) as amended by §16.22 item 6"*,
+     sitting in §16.21, which claims nothing.
+
+   Every additional heuristic moved flags between the two error columns rather than reducing them.
+   **A gate wrong half the time gets allowlisted into uselessness** — cookbook rule 13's bypass by
+   another road, and worse than no gate because it looks like coverage.
+
+2. **DECIDED: two layers, because enforcement and discovery are different jobs.**
+
+   **Layer A — enforcement.** An explicit marker, written by the author at the moment they know the
+   target:
+
+   ```
+   **SUPERSEDES: §X item N**
+   ```
+
+   It carries no verb list, no distance heuristic and **zero false positives**, because the author
+   declares the anchor instead of a parser inferring it. Layer A is what the gate enforces: for
+   every marker, the named target's own span must contain a pointer back to the claiming section.
+   Mentions of the marker in spec prose — including this example — use placeholder anchors (`§X`),
+   which the parser does not resolve; the syntax is live everywhere in this file, code fences
+   included. A gate that could not be discussed inside the document it guards would be its own
+   worst clause, and this example carried a real anchor until the step-1a review caught it
+   (item 7).
+
+   **Layer B — tripwire.** The prose scan survives, pinned as a **28-row verbatim set** (26 measured
+   pre-convention pairs, plus the two rows item 6 records for this entry's own quotations), and its
+   only job is to fail when a *new* claim is written in prose rather than with a marker. That
+   absorbs today's ambiguity without anyone adjudicating the eight false positives now.
+
+3. **Span delimitation, with its leniencies named rather than pattern-matched.** An item's span
+   runs from its `N. ` marker to the next `^N. ` in the same section. Two deliberate leniencies:
+   sub-items are **not** separate spans (a claim on `item 3(d)` resolves to item 3, because
+   sub-items have no reliable terminator and the real back-pointers sit inside the parent item);
+   and `step N` anchors fall back to the **whole section**, because §8.3 has no parseable items.
+   A bare `§N` target with no item scopes to the whole section — the only available reading — and
+   must still resolve (item 4). This third case is not decoration: six or more of the pinned rows
+   are bare-section targets, so an implementer hits it immediately.
+   Both are bounded and enumerated. Getting this lenient makes the gate vacuous — a pointer
+   anywhere in the file would count — and getting it strict produces false failures on
+   multi-paragraph items, which is why it is ratified rather than left to the implementation.
+
+4. **Three prohibitions, asserted rather than commented.** A pointer elsewhere in the file does not
+   count (the check is span-scoped, proven on synthetic text in both directions); **an unresolvable
+   anchor is a FAILURE, not a skip** — the drafting measurement script itself had
+   `if target not in spans: continue`, which is exactly the bypass this gate exists to prevent; and
+   the marker count is **pinned**, so the gate cannot pass by finding zero markers.
+
+5. **Allowlist is a RATCHET, not a retroactive pass.** The pinned prose pairs are asserted as an
+   exact set — additions and removals both fail —
+   migrating a claim to the marker form updates the constant in the same commit. The ~10 genuine
+   back-pointers still missing require writing normative text into §8.3, §11.1, §13 and others, and
+   adjudicating 18 flags first; that is architects' work and a **separate task**, not a side effect
+   of drafting a test.
+
+6. **Bootstrapping, stated because the gate refuses to be vacuous.** Layer A starts at zero markers,
+   so its pinned marker count (item 4's third prohibition) fails `0 ≠ 3` until three purely additive
+   markers of the form given in item 2 land in §16.25 items 5, 7 and 8, targeting §16.20 item 3(d),
+   §16.24 item 6 and §16.24 item 9 — the sites whose back-pointers already exist and are green.
+   (That sentence is deliberately worded to keep the literal verb off a line carrying a live anchor;
+   see item 8.) That failure
+   **is the gate working.** Two of item 1's verbatim quotes above are themselves claim-shaped to the
+   Layer B scanner — quoted-anchor false positives of exactly the class item 1 names — and are
+   pinned in Layer B's constant as `(16.26, 13)` and `(16.26, 16.20 item 3)`, commented as
+   quotations. Rewording a real quote to dodge the scanner would be worse than pinning it: item 1's
+   whole virtue is that each example is a real line of this spec. The gate lives at
+   `crates/pc-testkit/tests/spec_supersession.rs`; a fourth claim raises the pinned count and
+   extends the ratified-set constant in the same commit as its marker and back-pointer.
+   Consequence: the test and the first markers land in one commit, and this entry is the
+   ratification the marker syntax needed before appearing in normative text — required by
+   `CLAUDE.md` step 1a, which was added in the same session and whose first effect was to stop this
+   from being self-approved.
+
+7. **The step-1a review that this entry is the first subject of, recorded because its findings
+   changed the entry.** Reviewer: Fable, as fresh reader, 2026-07-29; method: §16.26 compared line
+   by line against the engineer's draft, with every number re-derived and every quoted example
+   re-checked against the spec line it cites. Six edits resulted, and one was **blocking**: the
+   Layer A example at item 2 originally carried a *real* anchor, and since it is the file's only
+   such token the gate's own ratification entry would have failed the gate three ways — no
+   back-pointer at the named target, a marker count of 4 ≠ 3, and an extra row in the ratified set.
+   Two number defects of the historical class were also corrected: "failed five times" (the source
+   supports **three** marker failures; the other two of `CLAUDE.md`'s five defects are scope
+   over-generalisations, not bare old sites) and the `~10 real / ~8 false` denominator (**18**, the
+   candidates whose target carries no back-pointer — not the 26 candidates, and 8/18 ≈ 44% is what
+   item 1's "wrong half the time" rests on). The attribution in the preamble was also narrowed:
+   §16.19 is *cited* for this convention rather than having established it. Recorded because the
+   defects were the exact class step 1a was created to catch, on its first use, in an entry whose
+   own subject is unenforced conventions — the cheapest available evidence that the step is not
+   ceremony.
+
+8. **The scanner is line-based, so line breaks in this file are semantic — found by walking into it
+   while applying item 7's edits.** Layer B pairs a verb with the anchors on the *same line*, so a
+   supersession verb and a live `§N` anchor sharing one wrapped line produce a claim, and moving a
+   line break can create or destroy one. This is not hypothetical: the replacement text for item 6
+   was wrapped with the literal verb beside three live anchors, manufacturing three unpinned phantom
+   rows, where the wording it replaced had kept them on separate lines by accident. Two
+   consequences. (a) **Editing prose near a supersession verb requires re-running the scan**, which
+   is why item 7's review is recorded as a method and not a signature — the check is mechanical and
+   nobody's care substitutes for it. (b) The one-sentence rule for authors: *keep a supersession
+   verb and a live section anchor off the same physical line unless you intend a claim*, and if you
+   do intend one, write the marker from item 2 instead. Recorded because a reader who reformats this
+   file — an editor re-wrapping a paragraph, a tool normalising line length — can turn the gate red
+   or green without touching a word, and would otherwise have no warning.
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:
