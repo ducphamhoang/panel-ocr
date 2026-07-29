@@ -458,7 +458,7 @@ Format `{uuid}_{stem}{suffix}` mirrors upstream `OutputPathGenerator` (`output_s
 4. **`--fail-fast`** flips (1) to abort-on-first-`Failed`, for CI and debugging.
 5. **Exit codes:** `0` all images completed (skips allowed); `2` at least one image failed but others succeeded; `1` fatal condition. A summary table is always printed listing failed/skipped images with reasons.
 6. **Sub-image conditions are never errors:** blank precise mask for a box (detector noise) → `WARN`, box dropped; mask fit exceeded `mask_max_standard_deviation` → recorded `failed: true`, box left uncleaned, image still exported; zero boxes on a page → `Skipped { NoTextDetected }` (upstream produces an export with an empty mask; we follow upstream and still export the untouched image, but mark the outcome so the summary is honest — the exported file is byte-equivalent to a copy of the input for `masked_output`).
-7. **Determinism requirement:** identical inputs + identical config must produce identical outputs, including ordering of boxes and of analytics entries, regardless of thread count. This forbids the `set`-iteration nondeterminism upstream has in `resolve_overlaps` (§9.3, §14.2).
+7. **Determinism requirement:** identical inputs + identical config must produce identical outputs, including ordering of boxes and of analytics entries, regardless of thread count. This forbids the `set`-iteration nondeterminism upstream has in `resolve_overlaps` (§9.3, §14.2). **Carve-out (§16.22 item 2):** this guarantee holds **unconditionally for the CPU execution provider**, and thread-count invariance is measured, not assumed (§16.21 item 2). The opt-in CUDA provider is **exempt** — measured to differ from itself between identical runs (§16.22 item 3). CI, fixtures, recordings and every gate remain under the unconditional clause; nothing produced on GPU may feed any of them.
 
 ---
 
@@ -657,7 +657,7 @@ Write the scaled RGB image to `base_image_dest` as PNG (compression default) whe
   sha256 `1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f`) — resolved/downloaded/verified by `pc-models`.
 - Preprocess (port of `inference.preprocess_img` + `letterbox`): letterbox to `1024×1024` with `stride=64, auto=false`, i.e. scale by `r = min(1024/h, 1024/w)` (no upscaling beyond `r=1`... upstream `letterbox` default `scaleup=True`; keep upstream behaviour: allow upscale), resize with bilinear, pad **right/bottom** with `(0,0,0)` (upstream default: `imgproc_utils.py:95`; call without `color`: `inference.py:86`) to reach the padded size; record `(dw, dh)` = total padding in x/y. Channel order: RGB, NCHW, `f32 / 255.0`.
 - Outputs (3): `blks` `[1, N, 5 + n_classes]` (n_classes = 2), with verified real shapes `blk` `[1, 64512, 7]`, `mask`/`seg` `[1, 1, 1024, 1024]`, and `lines_map`/`det` `[1, 2, 1024, 1024]`; `64512 = 3 × (128² + 64² + 32²)` for a 1024 input at strides 8/16/32. If the second output has 2 channels and the third has 1, swap them (upstream guards for this: `inference.py:181-185`). Bind by index, but log the actual output names/shapes once at `DEBUG` so a model swap is diagnosable.
-- Execution provider: CPU only, `intra_threads = 1` (parallelism is at the image level), session created once and shared.
+- Execution provider: **CPU by default**, `[text_detector] intra_threads` defaulting to **`0`** (all physical cores), session created once and shared. **Amended by §16.21 item 1 and §16.22 item 1.** The former text read *"CPU only, `intra_threads = 1` (parallelism is at the image level)"* — that parenthetical was false in the shipped design, because §14.15's `Mutex<Session>` means image-level parallelism never reaches the detector, so inference was serialized *and* single-threaded (~150 s/page). `1` remains expressible. CUDA is available opt-in via `device = "cuda"` under §16.22's binding conditions; it is quarantined from every gate, fixture and recording.
 
 **4 — YOLO postprocess** (`src/yolo.rs`, port of `postprocess_yolo` + yolov5 `non_max_suppression`):
 
@@ -687,7 +687,7 @@ Write the scaled RGB image to `base_image_dest` as PNG (compression default) whe
 
 **7 — Emit** `PageDataRaw` (surviving blocks in NMS order) + `DetectAnalytic`.
 
-**Explicitly out of scope for stage 1 in v1:** DBNet line-polygon extraction (`SegDetectorRepresenter`), line→block assignment, block splitting at distance gaps, `examine_textblk` orientation/font-size estimation, scattered-line synthesis, the `_raw_boxes.png` debug visualization (needs font rendering), GPU EPs, multi-model concurrency > shared session, torch `.pt` loading.
+**Explicitly out of scope for stage 1 in v1:** DBNet line-polygon extraction (`SegDetectorRepresenter`), line→block assignment, block splitting at distance gaps, `examine_textblk` orientation/font-size estimation, scattered-line synthesis, the `_raw_boxes.png` debug visualization (needs font rendering), multi-model concurrency > shared session, torch `.pt` loading. **GPU EPs: amended by §16.22 item 1** — CUDA moves to v1.5 as an opt-in, gate-quarantined provider; CoreML, DirectML, `.pt` loading and multi-device dispatch remain v2.
 
 ### 8.4 Dependencies on other stages
 
@@ -3454,6 +3454,288 @@ decision; it wrote no code.
     and §11.7 use them for — masking and denoise comparisons on a fixed input — where no
     detection gate is involved.
 
+## 16.21 Detector threading erratum — `intra_threads = 1` rested on a false premise (Fable tie-break, 2026-07-29)
+
+1. **ERRATUM: §8.3 step 3's `intra_threads = 1` is corrected to a configurable value
+   defaulting to `0` (all physical cores).** Line 660 read *"Execution provider: CPU only,
+   `intra_threads = 1` (parallelism is at the image level), session created once and
+   shared."*
+
+   **The parenthetical justification was already false in the shipped design.** §14.15 /
+   `DEVIATION(15)` makes the detector session a single `Mutex<Session>` shared across the
+   whole run (`crates/pc-detect/src/onnx.rs`), so image-level parallelism **cannot reach the
+   detector at all** — inference is serialized by the mutex *and* single-threaded inside it.
+   Two separately-ratified decisions contradicted each other, and the cost was the entire
+   per-page runtime.
+
+   This is therefore an **erratum**, not a change of mind about performance: the normative
+   line's stated premise did not hold. Recorded the same way as §16.20 item 8's `PAD_VALUE`
+   erratum, and like that one it authorises a **frozen-test edit** —
+   `crates/pc-detect/tests/d4_onnx.rs`'s `assert_eq!(INTRA_THREADS, 1)` and the
+   `constants_match_the_spec` comment block. This ruling is the recorded joint sign-off;
+   the edit may land only after this section is in the tree.
+
+2. **Measured, three times independently, that thread count changes speed and not results.**
+   This is what licenses the change; without it the new default would be a gamble against
+   §5 item 7.
+
+   | source | 1 thread | 4 | 8 | 16 / 20 | output |
+   |---|---|---|---|---|---|
+   | Opus Senior Rust Engineer | 149.28 s | 39.46 s | 20.28 s | 12.69 s (16) | 0 of 3,597,312 floats differ |
+   | Orchestrator | 142.41 s | 37.89 s | 20.81 s | 27.87 s (20) | bit-identical, all three outputs |
+   | Fable | 140.7 s | 38.6 s | 20.1 s | 29.7 s (20) | all 3,597,312 bit-identical |
+
+   Each run also included a same-thread-count control, itself bit-identical, so the
+   comparison isolates thread count from run-to-run noise. End-to-end confirmation: one page
+   through the release binary took **156.65 s**.
+
+3. **The default is `0`, not a hardcoded count.** Two of the three measurements show **20
+   threads slower than 8** (27.87 s and 29.7 s against ~20.5 s) — oversubscription is real
+   on the measured hardware, so any fixed number is wrong somewhere. `0` defers to ONNX
+   Runtime's physical-core default. Implementation note: confirm `with_intra_threads(0)`
+   reaches ORT's default semantics in `ort` rc.12; if the builder rejects `0`, fall back to
+   `std::thread::available_parallelism`.
+
+   `1` — and any explicit value — remains expressible via `[text_detector] intra_threads`,
+   because it is what every fixture recorded before this change used.
+
+4. **No new §14 register entry.** Upstream's `cv2.dnn` defaults to all cores, so
+   `intra_threads = 1` was itself an *undocumented deviation from upstream*; raising it
+   moves us toward upstream rather than away. §14 records deliberate divergences, and this
+   removes one.
+
+5. **Not a fixture-affecting change**, on the evidence in item 2 — but `PROVENANCE.json`
+   records the thread count actually used, per §16.20 item 3(a) as amended by §16.22 item 6.
+   Provenance records facts, not inferences.
+
+6. **The 11× gap against `cv2.dnn` is a separate, open finding and is NOT closed by this
+   erratum.** Measured at matched thread count on identical model bytes: `cv2.dnn` at 16
+   threads **1.20 s** against our `ort` CPU EP at 16 threads **13.6 s**. So even after this
+   change a CPU-only user — the default build, and what CI would run — carries ~13 s of
+   inference per page against upstream's ~1.2 s.
+
+   Ratified as a **bounded investigation**, not a runtime replacement: profile to name the
+   hot nodes, examine session options, execution mode, thread affinity under WSL2, and an
+   `ort`/ORT *version* bump as a candidate. Hard constraints: the model bytes are immutable
+   (sha256-pinned by §16.16); no runtime replacement in v1.5, because it would invalidate
+   §16.16's recorded signature, the D4 surface, and §16.20 item 6's *"the oracle is upstream
+   + cv2.dnn"* pinning; and any fix that perturbs recorded floats — **including a version
+   bump** — is fixture-affecting and triggers re-record plus re-sign, so it must arrive with
+   measurements before adoption.
+
+## 16.22 GPU execution providers move to v1.5, opt-in and quarantined (Fable tie-break, 2026-07-29)
+
+The maintainer asked for GPU support on an RTX 4090. The two Opus subagents split — the
+architect sequenced a full CUDA path into v1.5, the Senior Rust Engineer argued for the
+config surface only with real CUDA held at v2 where the spec already had it. Fable ruled for
+shipping it, with the engineer's objections converted into binding conditions. Recorded here
+because it is a **scope change**, not a gap-fill.
+
+1. **DECIDED: CUDA ships in v1.5, opt-in.** Line 3464's *"GPU execution providers
+   (CUDA/CoreML/DirectML), `.pt`/torch loading, multi-device dispatch — v2"* is amended:
+   **CUDA moves to v1.5**; CoreML, DirectML, `.pt`/torch loading and multi-device dispatch
+   stay v2. Line 690's out-of-scope list and line 660's "CPU only" are amended accordingly.
+
+   DirectML is rejected on read evidence rather than packaging preference:
+   `ort/src/ep/directml.rs` gates `supported_by_platform()` on
+   `cfg!(target_os = "windows")`. TensorRT/NVRTX need `libnvinfer.so.10`, which no `ort`
+   distribution ships.
+
+2. **CARVE-OUT to §5 item 7 (line 461), which is the clause CUDA actually violates.** §5
+   item 7 requires *"identical inputs + identical config must produce identical outputs …
+   regardless of thread count."* A CUDA run measurably breaks this. The guarantee therefore
+   holds **unconditionally for the CPU execution provider**; the opt-in CUDA provider is
+   exempted, and CI, fixtures, recordings and every gate remain under the unconditional
+   clause.
+
+   **Correction to the record:** the Senior Rust Engineer argued GPU breaks §8.7(A)6. It does
+   not — that test drives `ReplayDetector`, so **no model executes**. Right conclusion, wrong
+   statute; noted because a future reader would follow the citation.
+
+3. **CUDA is not bit-reproducible against itself, and the magnitude of the
+   nondeterminism is itself nondeterministic.** Two independent measurements of two identical
+   back-to-back CUDA sessions on the same page:
+
+   | measurement | `blk` | `seg` | `det` |
+   |---|---|---|---|
+   | Opus Senior Rust Engineer | 0 | 91 values, maxabs 1.19e-07 | 0 |
+   | Fable | bit-identical | 2,367 values, maxabs 1.07e-06 | **52,465 values (2.5% of the map), maxabs 3.4e-04** |
+
+   Mechanism: `ConvAlgorithmSearch::Exhaustive` is `#[default]` in `ort` rc.12
+   (`src/ep/cuda.rs:57`, whose own doc note says so) — cuDNN benchmarks convolution
+   algorithms per session and may choose differently. **Our session options must pin
+   `Heuristic` or `Default`**; shipping the Exhaustive default is forbidden. That minimises,
+   and does not eliminate, run-to-run drift.
+
+4. **Cross-provider divergence, measured.** CPU vs CUDA on the same page: max |Δconfidence|
+   **0.0880** and mean 0.0033 on geometry-identical boxes — squarely on §16.20 item 5's
+   0.079–0.089 noise floor, where item 3(c) already ruled no confidence tolerance is
+   defensible; 37 of 61 pre-NMS rows differ; and **one CUDA-only box `(606,631,724,703)`**
+   with no CPU-only counterpart, so §16.20 item 3(b)'s box accounting cannot close. Speed:
+   CUDA inference 13–17 ms against 13.6 s on our CPU EP at 16 threads.
+
+   Recorded as a **diagnostic**, never a gate.
+
+5. **Binding conditions — all of them, and the reason the objections above do not block
+   shipping.** Non-reproducibility, box-set drift and the noise floor are arguments against
+   *gating* GPU output, which nobody proposed. Once GPU is quarantined from every
+   correctness-bearing artifact, misplacement degrades **speed, never correctness**:
+
+   (a) **Opt-in only.** `device = "cpu"` is the default; `"cuda"` must be explicit. Never
+   auto-detected.
+
+   (b) **Recording hard-refuses GPU.** `xtask record-fixtures` and every fixture-producing
+   path *fail* if `device != cpu` — a refusal, not a discouraged override.
+
+   (c) **Loud refusal at session creation.** EP registration uses error-on-failure, and with
+   `device = "cuda"` a registration failure is a **rendered fatal refusal** through §16.19's
+   provider-declared-fatality machinery. `ort`'s default is the opposite:
+   `ExecutionProviderDispatch { error_on_failure: false }` (`src/ep/mod.rs`), documented as
+   *"silently fail and fall back to … the CPU provider."* Countermanding that is the single
+   most important line in the feature — a run reporting success while secretly executing at
+   ~150 s/page is worse than a crash because it is invisible, and it is what §14 item 7's
+   *"an opt-in setting must not silently behave differently"* exists to prevent.
+
+   (d) **Downgrade-guard test.** `ort-sys`'s build-time resolver silently falls back to the
+   CPU-only `none` distribution when the requested feature set has no distribution for the
+   target (`build/download/resolve.rs:73-79`, `log::warning!` then `find_dist(&target,
+   "none")`). A `cuda`-feature-gated test must assert CUDA registration *succeeds*, so this
+   is caught by tooling rather than by a confused user.
+
+   (e) **"We are on GPU" is not claimable, and must not be claimed.** ONNX Runtime assigns
+   nodes to providers **per node**; unsupported operators fall back to CPU silently.
+   `ort` rc.12 exposes no session provider list (no Rust counterpart to Python's
+   `session.get_providers()`) and no placement introspection (`src/ep/mod.rs` documents that
+   a compiled-in EP "does not always mean the execution provider is usable for a specific
+   session"). Report **what was requested and what registered** — never per-node placement.
+
+   (f) **The device policy resolver is model-agnostic**, so v1.5's LaMa inpainting reuses it
+   instead of growing a second one.
+
+   (g) **Sequenced after §16.21's threading fix and after F1 records.** §16.20 item 11 names
+   the missing oracle gate as the project's highest-value open risk; it does not wait behind
+   new scope.
+
+   (h) **Runtime prerequisite, and it is the user's to satisfy.** `ort`'s CUDA distribution
+   ships `libonnxruntime_providers_cuda.so` but none of its dependencies. Verified by `ldd`:
+   `libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12`, `libcudnn.so.9`,
+   `libcufft.so.11`, `libcurand.so.10` — i.e. **CUDA 12 runtime and cuDNN 9**. Confirmed
+   satisfiable by user-local pip wheels (`nvidia-cuda-runtime-cu12`, `nvidia-cublas-cu12`,
+   `nvidia-cudnn-cu12`, `nvidia-cufft-cu12`, `nvidia-curand-cu12`), ~1.5–2 GB, no `sudo`,
+   and verified running inference on the target hardware.
+
+   Use the **cu12** distribution, not cu13, despite a driver reporting CUDA 13.1: 13.1 is the
+   driver's *maximum* supported version and CUDA 12 is backward-compatible with it; cu12 is
+   the resolver's default with no `CUDA_HOME` and no `nvcc`; and decisively, `ort`'s
+   `ep::cuda::preload_dylibs` carries hardcoded CUDA-12-only library lists with no cu13
+   variant, so choosing cu13 breaks the one helper that locates these libraries. `nvcc` is
+   not required at all — we load prebuilt kernels rather than compiling any.
+
+6. **§16.20 item 3(a) is amended: `PROVENANCE.json` must also pin *our* execution provider
+   and thread count.** It already pins which backend consumed the model on upstream's side,
+   noted there as "load-bearing, not bookkeeping." With a second provider and a variable
+   thread count in the tree, the same symmetry becomes load-bearing on ours.
+
+7. **§16.20 item 3(d) is reaffirmed unchanged.** `raw_mask` stays NO-ORACLE. The upgrade path
+   is documented as blocked on `MaskRefineMode::Annotation` landing with its own
+   ratification — see §16.23 item 2.
+
+## 16.23 v1.5 scope and sequence (Fable tie-break, 2026-07-29)
+
+1. **Both plans had scope omissions, in both directions.** The Opus Senior Rust Engineer
+   correctly found three spec-assigned v1.5 items missing from the brief — LaMa inpainting,
+   PSD/layered export, legacy INI config import — and its point stands that a "v1.5 plan"
+   silently dropping LaMa and PSD is not one. But it then omitted **Lab-space coloured NLM +
+   `color_filter_strength`**, also spec-assigned v1.5, which both plans forgot; and it treated
+   dropping the font-rendering debug visualisations as free when they are a flat v1.5 item.
+   **Silent dropping cuts both ways: a deferral needs ratifying by the same standard.**
+
+   **v1.5 ships:** §16.21's threading erratum; F1 and its due prerequisites; CUDA per §16.22;
+   LaMa inpainting; PSD/layered export; legacy INI import; Lab-space coloured NLM +
+   `color_filter_strength` (landing it also retires §14 item 7's one-time WARN); DBNet line
+   synthesis plus line-based splitting/merging and orientation/font-size estimation;
+   `MaskRefineMode::Annotation`; and §16.21 item 6's bounded CPU-EP investigation.
+
+   **Ratified deferrals, recorded rather than omitted:** font-rendering debug visualisations
+   (`_raw_boxes.png`, `_boxes.png`, `_boxes_final.png`, `_mask_fitments.png`,
+   `_std_devs.png`) → **v2**, since a font stack for debug-only artifacts gating nothing is
+   poor value, and the maskers they would debug are already gated by §8.7(A)4/5's synthetic
+   primaries. Tesseract/non-Japanese OCR and OCR result parsers, post-action hooks, memory
+   watcher, i18n, and `stitch_all` are all spec-marked "v1.5+", so deferring them is
+   spec-compliant, and each is recorded here as deferred.
+
+   **Not built:** the `heuristic_median` O(n²) improvement
+   (`crates/pc-mask/src/border.rs`) — measured at ≤1% of pipeline runtime. Revisit only if
+   profiling after §16.21 contradicts that.
+
+2. **`MaskRefineMode::Annotation` must NOT land before F1 records.** Requested as a way to
+   make §16.20 item 3(d)'s `raw_mask` row gateable; refused on four independent grounds, any
+   one sufficient:
+
+   (a) **It is circular.** Flipping the row to gateable requires the Annotation port to be
+   faithful, which is exactly what has no gate — using an ungated new port to manufacture
+   the oracle that should have gated it. That is cookbook rule 7 one level up.
+
+   (b) §16.20 item 3(e) **already** forbids closing a row against a ratification that does
+   not yet exist.
+
+   (c) It **inverts the risk ordering.** §15 item 2 calls `refine_mask` *"the single riskiest
+   numerical port in the whole project"*; sequencing the largest open risk (no upstream
+   agreement check at all) behind it maximises the unguarded window.
+
+   (d) **Waiting costs nothing.** F1 records `Simple`-mode output — v1's shipped default — so
+   Annotation landing later invalidates no fixture. Order: F1 records with `raw_mask`
+   NO-ORACLE exactly as ratified → Annotation lands with its own upstream comparison on the
+   committed page → a new §16.x may then upgrade the row. **Annotation is opt-in and `Simple`
+   remains the v1.5 default**, so default-path fixture churn for that task is zero.
+
+3. **§16.20 item 3(b)'s reconstruction identity does NOT collapse to plain equality once we
+   synthesize our own DBNet lines.** The gate structure is bound now so the DBNet task cannot
+   be planned against a false assumption.
+
+   The mechanism is dispositive. Boxes come from YOLO's **regression** head and are measured
+   portable — 10/10 blocks and 40/40 coordinates on a 12-box page, and the `blk` tensor was
+   bit-identical even across CUDA reruns (§16.22 item 3). Line polygons come from
+   **thresholding** the `det` map through `SegDetectorRepresenter` — contour extraction plus
+   polygon approximation plus unclip — and that map differs across engines at maxabs 0.00966
+   over 92.77% of pixels against a binarisation threshold near 0.3. **Sub-LSB value noise
+   becomes contour topology**: one contour splits into two, or two merge. §16.20 item 3(c)
+   already forbids the only instruments (epsilon, IoU) that could absorb topology
+   instability.
+
+   Therefore, when line synthesis lands: the exact gate anchors on the **YOLO-regression
+   rects**; line polygons get their own row(s), **presumptively DIAGNOSTIC**, carrying
+   quantitative diagnostics (per-block line count, bbox-of-lines delta) and never an epsilon
+   gate; and final post-union rects are compared by a reconstruction identity using each
+   side's own recorded lines, with residuals closing as `EXPLAINED-§14.x` or the row staying
+   `OPEN` and blocking. If implementation-time measurement shows line topology is stable
+   enough to gate exactly, **upgrading requires a new §16.x** — the plan must not assume it.
+
+4. **§14 item 17 must be re-ratified before DBNet lines land.** Its recorded risk evidence is
+   that the deviation is *vacuous for v1* — v1 synthesizes no lines, so every block is
+   line-less by construction — and that the filter has never fired. **Both halves evaporate
+   the moment lines exist.** §16.20 item 3(e) forbids closing a row against a ratification
+   that does not yet exist; the mirror rule is hereby stated: **a ratification whose stated
+   justification is "vacuous for v1" may not silently carry into a version where it is not
+   vacuous.** Re-ratification is a §16.x amendment, not code, and it gates the DBNet task.
+
+5. **Execution sequence.** `V15-0` is this ratification pass (§16.21, §16.22, §16.23) and
+   **lands before any v1.5 code**; then **PERF-1** (§16.21's threading change, including the
+   authorised frozen-test edit); then **F1** — the `PROVENANCE.json` schema and checker due
+   under §16.17 item 2, un-stubbing `xtask record-fixtures --only detector`, the §16.20 item
+   3(b) comparator with item 10's negative controls, `docs/DETECTOR_ORACLE.md`, the
+   completeness partition and the three signatures; then **GPU-1** (device config, the
+   model-agnostic policy resolver, §16.19-integrated fatal refusal, recording refusal — no
+   CUDA linkage); then **GPU-2** (the `cuda` feature and its guards); then §16.21 item 6's
+   investigation, which may run any time after PERF-1; then legacy INI import and Lab NLM
+   batched; then LaMa; then PSD; then **DBNet lines**, which change default detector output
+   and therefore end with an F1 re-record and full re-sign, budgeted once, up front; then
+   **Annotation** last.
+
+   The committed page fixture and §7.2's 400 KB cap remain the one open prerequisite, per
+   §16.20 item 10. It gates only the final fixture *commit* — not building F1's machinery —
+   and is a maintainer decision rather than an engineering task.
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:
@@ -3461,7 +3743,7 @@ Global out-of-scope list, so Codex has one place to check before building anythi
 - **Inpainting** (LaMa, `InpainterConfig`, `_inpainting.png`, `_clean_inpaint.png`, any inpainting fallback for failed masks) — v1.5.
 - **PSD / layered export** (`LayeredExport`, per-image and bulk PSD, `koharu-psd` port) — v1.5.
 - **GUI** (`egui`, staleness-aware recompute, OCR review window, `Output`-driven image viewer) — v2.
-- **GPU execution providers** (CUDA/CoreML/DirectML), `.pt`/torch loading, multi-device dispatch — v2.
+- **GPU execution providers**: **CUDA — v1.5, opt-in** (§16.22; `device = "cuda"`, quarantined from every gate/fixture/recording, requires user-provided CUDA 12 + cuDNN 9 runtime libraries). CoreML, DirectML, `.pt`/torch loading and multi-device dispatch — v2.
 - **Windows support** — v2 (Linux + macOS only).
 - **Legacy INI config import** — v1.5 (`pc-config` is TOML-only in v1).
 - **Tesseract / non-Japanese OCR engines**, OCR review/edit workflows, OCR result *parsers* (import) — v1.5+.
