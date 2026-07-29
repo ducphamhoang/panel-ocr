@@ -267,37 +267,58 @@ deliberate, documented state — but never count them as coverage.
 
 ---
 
-## 7. Never accept a snapshot as its own expected value
+## 7. Never accept a produced output as its own expected value
 
-§15.10(a), and the reason it exists. Accepting a snapshot declares *"whatever the code
-emitted is the truth."* If the code was wrong that day, the bug is frozen as the expected
-value and the test defends it forever — it then proves only that the code still does what
-it did, never that it matches the spec.
+Accepting a snapshot declares *"whatever the code emitted is the truth."* If the code was
+wrong that day, the bug is frozen as the expected value and the test defends it forever —
+it then proves only that the code still does what it did, never that it matches the spec.
+
+**Snapshots were dropped project-wide** by §16.20 (Fable tie-break); `insta` is out of the
+manifest and both former sites use hand-written assertions. The principle did not go away
+with them — it moved to **F1's recorded detector fixture** plus a committed upstream oracle
+run (§16.20 item 3, `docs/DETECTOR_ORACLE.md`). Read rule 12 for *why* it moved, which is
+the more useful lesson.
 
 The break in the circle must come from **outside the code under test**:
 
-- A hand-trace derived from the spec text (§15.10(a) as originally written).
-- A recorded run of upstream PanelCleaner (rule 3) — a stronger oracle for any value
-  upstream also produces, since it is the reference implementation rather than one
-  person's reading of the spec.
+- A hand-trace derived from the spec text.
+- A recorded run of upstream PanelCleaner (rule 3) — but **per field, not per site.**
+  Upstream is a real oracle for `scale`, `image_size` and box geometry, and *not* for
+  `raw_mask` (a different algorithm — measured IoU 0.258, since v1 ships
+  `MaskRefineMode::Simple` and upstream runs `refine_mask`), `mask_coverage` (a different
+  operand — upstream's `group_output` gets the *unrefined* mask, ≈2× apart), or
+  `confidence` (not persisted at all). For the §9.7(B)11 tiers it is *worse* than a
+  hand-trace, because §14.2, §14.3 and §14.13 all perturb that stage's input. "Upstream is
+  a stronger oracle" is true only where upstream computes the same quantity.
 
-**And it must not be self-attested.** §16.13 item 4's rule: the reviewer has to be
-independent of whoever produced the snapshot. If I derive the expected value using the
-same reading of the spec that produced the code, and generate the JSON by running that
-code, a misreading confirms itself. Same reason F3 needed a *recorded model signature*
+**And it must not be self-attested.** §16.13 item 4: the reviewer has to be independent of
+whoever produced the artifact. If I derive the expected value using the same reading of the
+spec that produced the code, and generate the output by running that code, a misreading
+confirms itself. Same reason F3 needed a *recorded model signature*
 (`tests/fixtures/recorded/model_signature/`, sha256-verified against the real artifact by
 `xtask/src/model_signature.rs:91`) instead of asserting `ROW_STRIDE == ROW_STRIDE`.
 
-An upstream run narrows the human's job from *verify this arithmetic* to *review this diff
-table*, but it does not remove it — someone still has to rule on each divergence
-(ratified deviation vs bug), and rule 3 has already shown divergences exist.
+**Running the oracle is not the same act as judging it.** Producing the upstream run may be
+done by whoever produced the artifact — every degree of freedom (version, commit, profile,
+model sha256 *and backend*, page sha256, command line) is enumerated in committed
+provenance and reproducible by a third party, so nothing can be smuggled in. **Signing the
+verdicts may not.** That asymmetry is what lets an agent do the mechanical work while the
+human's job shrinks to a checkable list.
 
-CI enforcement: workflow-level `INSTA_UPDATE: "no"`, a pending-file check matching **both**
-`*.snap.new` and `*.pending-snap` (insta persists file and inline snapshots differently),
-and a path allowlist. That allowlist carries an in-file CAVEAT that its two paths are
-UNVERIFIED — derived from insta's naming convention, since no `assert_json_snapshot!` call
-exists yet. **The failure direction is deliberate:** a wrong path there blocks the build
-rather than letting an unsanctioned snapshot through.
+**Prefer an exact identity to a tolerance.** Where a divergence has a known mechanism,
+state it as an equation and assert it. Concrete: `upstream.xyxy == bbox(ours.rect ∪
+bbox(upstream.lines))` held 8/8 coordinates on one page and, when deliberately attacked on a
+12-box page it had never seen, **10/10 blocks and 40/40 coordinates**. A tolerance would
+have bought nothing and cost real detection power — ±3 px per edge is ±12–19% of area on
+small boxes, and would absorb exactly the off-by-one letterbox error §14.14 exists for.
+
+**Know which quantities are unmeasurable before promising to measure them.** Two independent
+probes found that a **1-LSB** input difference (our f32-exact bilinear vs OpenCV's
+fixed-point weights: max Δ 1, 77% of pixels identical) moves a detection confidence by
+**0.079–0.089**, while §8.3 step 4's objectness and class gates both sit at 0.4. So no
+defensible confidence tolerance exists — one spanning the noise also spans "kept" and
+"dropped". Geometry, measured under the same perturbation, stayed exact. Gate geometry;
+record confidence as a diagnostic and say so.
 
 ---
 
@@ -379,3 +400,50 @@ a claim, not a verification.** Re-run the suite yourself; read the diff.
   user-local `uv`.
 - **Committing is pre-authorized** once `CLAUDE.md`'s verification bar is met — all of it
   actually run, not assumed. **Pushing still requires being asked.**
+- **`git commit -a` does not stage untracked files.** It silently committed a `CLAUDE.md`
+  edit while leaving out the new file the commit was *about*. `git status --porcelain` after
+  every commit; `??` lines mean the commit is incomplete.
+
+---
+
+## 12. Check that a review gate points at the artifact that carries the risk
+
+The most expensive kind of wrong safeguard is not a missing one — it is one that exists,
+looks rigorous, and guards a copy.
+
+§15.10(a) mandated a hand-traced human review before the first `insta` snapshot could be
+committed. Sound-sounding, and aimed at nothing. Under `ReplayDetector` (§7.2.1) the
+snapshot's `rect`, `class_index` and `confidence` are **copied out of
+`_detector_blocks.json` untouched** (`crates/pc-detect/src/lib.rs`); the only values it
+computes are `mask_coverage`, the survivor set, `scale` and `image_size`. So the gate
+reviewed a transcription, while the recorded fixture — the artifact that actually accepts
+model output as truth, and the one a wrong `PAD_VALUE` or a mis-cropped mask would poison —
+had **no safeguard at all.**
+
+Both Opus reviewers converged on this independently, from opposite directions, and Fable's
+ruling was that an amendment strengthening the snapshot review *"does not cure that
+inversion — it decorates it."* The fix was to delete the snapshots and re-aim the obligation
+at the recording step.
+
+**The test to run on any gate you write or inherit:** trace the value backwards from the
+assertion to where it was *produced*. If the answer is "another committed file", the gate is
+checking a copy, and the risk lives one hop upstream. A gate on derived data can only catch
+derivation bugs — never the input it derived from.
+
+Two related traps in the same family:
+
+- **A dependency graph that hides the same inversion.** `insta` was declared in the
+  workspace manifest and used by zero crates, while a CI job policed snapshot *paths* with
+  an allowlist derived from insta's naming convention rather than from any real macro call —
+  the job's own comment admitted the paths were UNVERIFIED. A guard whose expectations were
+  never confronted with reality is rule 9 in a different costume.
+- **A constant change that turns a passing test vacuous — or worse, silently valid.** When
+  `PAD_VALUE` moved 114 → 0, six assertions comparing pixels against `Rgb([PAD_VALUE; 3])`
+  stayed sound only because no test's content colour was black. A seventh
+  (`to_nchw_divides_by_255_and_not_by_256`) used `PAD_VALUE` as its sample byte, where
+  `0/255 == 0/256` — that one *failed*, which is the lucky outcome. **After changing any
+  constant a test compares against, re-derive whether each assertion can still fail.** And
+  check the non-test direction too: the change was safe only because nothing identifies the
+  pad region *by colour* (`crop_letterbox` uses `dw`/`dh` geometry), so a black-bordered
+  page cannot be mistaken for padding. That was the real risk, and it needed a grep, not an
+  assumption.
