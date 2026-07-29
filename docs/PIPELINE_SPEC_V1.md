@@ -4913,13 +4913,38 @@ This entry makes the convention checkable.
    Layer B scanner — quoted-anchor false positives of exactly the class item 1 names — and are
    pinned in Layer B's constant as `(16.26, 13)` and `(16.26, 16.20 item 3)`, commented as
    quotations. Rewording a real quote to dodge the scanner would be worse than pinning it: item 1's
-   whole virtue is that each example is a real line of this spec. The gate lives at
+   whole virtue is that each example is a real line of this spec. The gate **will** live at
    `crates/pc-testkit/tests/spec_supersession.rs`; a fourth claim raises the pinned count and
    extends the ratified-set constant in the same commit as its marker and back-pointer.
    Consequence: the test and the first markers land in one commit, and this entry is the
    ratification the marker syntax needed before appearing in normative text — required by
    `CLAUDE.md` step 1a, which was added in the same session and whose first effect was to stop this
    from being self-approved.
+
+   **STATUS, 2026-07-29: THIS CONVENTION IS NOT YET ENFORCED. No such test file exists.** The
+   entry above ratifies the convention and its enforcement design; the enforcing test is written
+   and six of its seven assertions pass, but it is **parked**, so nothing in the tree currently
+   checks any of it. Read every "the gate enforces" sentence above as *"the gate will enforce, once
+   the blocker below clears."*
+
+   The blocker is a **fourth span rule**, which item 3 reserves for ratification rather than
+   leaving to the implementation. `every_pinned_pre_convention_target_still_resolves` fails on the
+   pinned row `("8.7", "7.2.1")` because `§7.2.1` **is a real subsection** — it is the bold-text
+   heading `**7.2.1 ReplayDetector binding and artifact format…**`, not a `###` heading — so the
+   outline parser cannot see it. Measured: it is the **only** bold-text subsection of that form in
+   this file, and its block contains **zero** verb-bearing lines, so teaching the parser to
+   recognise it shifts no pinned row. Two readings are open — recognise the bold form, or let a
+   sub-*section* resolve to its parent the way item 3 already lets a sub-*item* resolve to its
+   parent — and §8.3's 32 analogous `**N — Title.**` markers are the precedent. Either way `§7.2.999`
+   must still fail.
+
+   **Recorded here, at the claiming end, because the alternative is the exact defect this section
+   exists to correct.** An entry asserting an enforcement that does not exist is an unenforced
+   convention — the thing item 1 measured 51 occurrences of — and it would have been invisible to a
+   reader who trusted the prose. It was caught by a stop-time review, not by the author, which is
+   item 7's lesson recurring one commit later: **the transcription of a ratification needs a reader
+   even when the ratification was itself reviewed.** Delete this STATUS block only in the commit
+   that lands the test.
 
 7. **The step-1a review that this entry is the first subject of, recorded because its findings
    changed the entry.** Reviewer: Fable, as fresh reader, 2026-07-29; method: §16.26 compared line
