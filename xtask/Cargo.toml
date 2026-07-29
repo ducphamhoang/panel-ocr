@@ -32,3 +32,8 @@ image      = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 sha2       = { workspace = true }
+
+[dev-dependencies]
+# Falsifying `provenance_is_current`'s four conditions needs a throwaway workspace tree; the
+# alternative is mutating `tests/fixtures/recorded/`, which is the corruption those gates detect.
+tempfile = { workspace = true }

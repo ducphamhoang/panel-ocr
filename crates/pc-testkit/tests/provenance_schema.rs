@@ -1027,3 +1027,341 @@ fn an_absent_option_is_omitted_from_the_json_never_written_as_null() {
         .expect("the scratch record exists");
     assert!(scratch.get("source_sha256").is_none(), "{scratch}");
 }
+
+// ── the five rules the F1 review found untested or half-tested ───────────────
+
+#[test]
+// spec §16.24 item 3(a) — R3, the group-level `tool`. "Every recorded artifact carries the tool
+// that produced it": a provenance naming no tool describes a recording nobody can attribute, and
+// cookbook rule 3's "pin what you compared against" is unsatisfiable without it.
+//
+// Untested until now. `the_upstream_side_must_be_fully_pinned` covers the OTHER `EmptyField`
+// sites (R19, `at: "detector.upstream"`), so deleting the group-level check at
+// `provenance.rs:218-223` left every test green. This test fails on that deletion and that one
+// alone, because `at` is the DIRECTORY name — the two sites are distinguishable by `at`.
+//
+// Does NOT cover: whether a whitespace-only or placeholder tool name (`" "`, `"TODO"`) is
+// acceptable. The rule is `String::is_empty`, not `trim().is_empty()`, so `" "` passes today;
+// nothing has ratified that either way, so nothing here freezes it.
+fn a_group_must_name_the_tool_that_produced_it() {
+    let mut plain = valid_group();
+    plain.tool = String::new();
+    assert_eq!(
+        provenance::validate("nlm", &plain),
+        vec![Violation::EmptyField {
+            at: "nlm".into(),
+            field: "tool",
+        }]
+    );
+
+    // The detector group too, and with a DIFFERENT `at` — which is what proves the reported
+    // location is the directory under check rather than a constant.
+    let mut detector = valid_detector_group();
+    detector.tool = String::new();
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &detector),
+        vec![Violation::EmptyField {
+            at: "detector".into(),
+            field: "tool",
+        }]
+    );
+
+    // The other direction: a named tool must produce nothing. The controls carry real tool names
+    // and are asserted clean by `the_valid_control_documents_have_no_violations`; this adds the
+    // minimal non-empty case, so the rule cannot be "any tool shorter than the control's".
+    let mut minimal = valid_group();
+    minimal.tool = "x".into();
+    assert_eq!(
+        provenance::validate("nlm", &minimal),
+        Vec::<Violation>::new()
+    );
+}
+
+#[test]
+// spec §16.24 item 3(a) — R4, the group-level `command_line`, the field that makes a recording
+// re-runnable ("an oracle nobody can re-run is not an oracle", cookbook rule 3).
+//
+// Untested until now, and the reason it slipped is worth naming: `EmptyField { field:
+// "command_line" }` IS asserted by `the_upstream_side_must_be_fully_pinned` — at
+// `at: "detector.upstream"`, a different check (R19) on a different struct. Same variant, same
+// field name, different rule. A grep for the variant said "covered"; the group-level site had
+// nothing.
+//
+// The third case below is the sharp one: a DETECTOR group whose upstream command line is intact
+// and whose group-level one is empty. Exactly one violation, at `at: "detector"`. Delete
+// `provenance.rs:224-229` and this fails while every existing test stays green.
+//
+// Does NOT cover: that the recorded command line actually reproduces the artifact — the string is
+// pinned as non-empty, never executed. Nothing here checks it names a real subcommand.
+fn a_group_must_record_the_command_line_that_produced_it() {
+    let mut plain = valid_group();
+    plain.command_line = String::new();
+    assert_eq!(
+        provenance::validate("nlm", &plain),
+        vec![Violation::EmptyField {
+            at: "nlm".into(),
+            field: "command_line",
+        }]
+    );
+
+    let mut both_empty = valid_group();
+    both_empty.tool = String::new();
+    both_empty.command_line = String::new();
+    assert_eq!(
+        provenance::validate("nlm", &both_empty),
+        vec![
+            Violation::EmptyField {
+                at: "nlm".into(),
+                field: "command_line",
+            },
+            Violation::EmptyField {
+                at: "nlm".into(),
+                field: "tool",
+            },
+        ],
+        "R3 and R4 are independent: neither may absorb the other"
+    );
+
+    // The group-level rule is not the upstream rule. This document's upstream side is fully
+    // pinned, so the only violation is the group-level one.
+    let mut detector = valid_detector_group();
+    detector.command_line = String::new();
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &detector),
+        vec![Violation::EmptyField {
+            at: "detector".into(),
+            field: "command_line",
+        }]
+    );
+
+    let mut minimal = valid_group();
+    minimal.command_line = "x".into();
+    assert_eq!(
+        provenance::validate("nlm", &minimal),
+        Vec::<Violation>::new()
+    );
+}
+
+#[test]
+// spec §16.24 item 1(a)/(c) — R7, and it exists to protect the FROZEN walker, not this checker.
+// `recorded_provenance.rs:107` matches on the KEY: a `source_sha256` with no `source` sibling is
+// collected, the sibling lookup returns `None`, and `:112-119` **panics**. R7 is the rule that
+// turns that panic into a named violation with the record's name in it.
+//
+// Untested until now — `Violation::DigestWithoutPath` had no test at all, in either direction.
+//
+// The second case pins that R7 and R6 are INDEPENDENT: an orphan digest that is also malformed
+// must report both, or one rule would mask the other exactly the way `the_two_sides_...`'s
+// `both_malformed` case guards against for R23/R6.
+//
+// Does NOT cover: the mirror case (`source` with no `source_sha256`) — that is LEGAL and asserted
+// legal below, because §16.24 item 1(e) deliberately keeps upstream digests out of these files.
+// It also does not re-verify the walker itself; `every_walker_visible_digest_has_its_sibling_path`
+// owns that, over the committed files rather than a synthetic one.
+fn a_source_digest_without_its_source_path_is_rejected() {
+    let good = "c6cc1002c209ffadd182f2ebd3162b53b55bbb92f99ee038ebaf419bfed94b8d";
+
+    let mut orphan = valid_group();
+    orphan.records[0].source = None;
+    orphan.records[0].source_sha256 = Some(good.into());
+    assert_eq!(
+        provenance::validate("nlm", &orphan),
+        vec![Violation::DigestWithoutPath {
+            at: "nightmare".into(),
+            field: "source_sha256",
+        }]
+    );
+
+    let mut orphan_and_malformed = valid_group();
+    orphan_and_malformed.records[0].source = None;
+    orphan_and_malformed.records[0].source_sha256 = Some("deadbeef".into());
+    assert_eq!(
+        provenance::validate("nlm", &orphan_and_malformed),
+        vec![
+            Violation::MalformedDigest {
+                at: "nightmare".into(),
+                field: "source_sha256",
+                value: "deadbeef".into(),
+            },
+            Violation::DigestWithoutPath {
+                at: "nightmare".into(),
+                field: "source_sha256",
+            },
+        ],
+        "R6 and R7 are independent: a malformed orphan digest must report both"
+    );
+
+    // Both legal shapes must stay clean, or R7 would fire on every real recording.
+    let mut paired = valid_group();
+    paired.records[0].source_sha256 = Some(good.into());
+    assert_eq!(
+        provenance::validate("nlm", &paired),
+        Vec::<Violation>::new(),
+        "a source WITH its digest is the shape R7 exists to permit"
+    );
+
+    let mut neither = valid_group();
+    neither.records[0].source = None;
+    neither.records[0].source_sha256 = None;
+    assert_eq!(
+        provenance::validate("nlm", &neither),
+        Vec::<Violation>::new(),
+        "§16.24 item 1(e): a record may name no source at all"
+    );
+}
+
+#[test]
+// spec §16.24 item 3(c) — R6 at the two digest slots no test reached. R6 is one rule applied at
+// SIX slots, and coverage was per-slot, not per-rule:
+//
+//   already covered — `records[].output_sha256` (`a_non_canonical_digest_is_rejected`, four bad
+//   spellings), `detector.model_digest` (`the_model_must_be_a_bare_filename_...`), and both
+//   `decoded_rgb_digest`s (`the_two_sides_must_declare_the_same_decoded_rgb_buffer`'s
+//   `both_malformed` case);
+//   added here — `records[].source_sha256` and `detector.input_page_sha256`.
+//
+// This is cookbook rule 13 at the slot level: `a_non_canonical_digest_is_rejected` iterates four
+// SPELLINGS of one slot, so a `validate_digest` call dropped from either slot below left it green.
+// Both new slots are checked with the uppercase spelling, because uppercase is the one that
+// VERIFIES at `recorded_provenance.rs:177` (it lowercases first) while making two provenance
+// files textually incomparable.
+//
+// Does NOT cover: that any digest equals real bytes. R6 is shape only — `xtask/tests/
+// provenance_digests.rs` owns the identities, and this file must not depend on `pc-models`.
+fn r6_reaches_the_source_and_input_page_digest_slots_too() {
+    let upper = "C6CC1002C209FFADD182F2EBD3162B53B55BBB92F99EE038EBAF419BFED94B8D";
+
+    // `source` is present, so R7 does not fire and this isolates R6 at the source slot.
+    let mut source = valid_group();
+    source.records[0].source_sha256 = Some(upper.into());
+    assert_eq!(
+        provenance::validate("nlm", &source),
+        vec![Violation::MalformedDigest {
+            at: "nightmare".into(),
+            field: "source_sha256",
+            value: upper.into(),
+        }]
+    );
+
+    let mut page = valid_detector_group();
+    if let Some(pins) = page.detector.as_mut() {
+        pins.input_page_sha256 = upper.into();
+    }
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &page),
+        vec![Violation::MalformedDigest {
+            at: "detector".into(),
+            field: "input_page_sha256",
+            value: upper.into(),
+        }]
+    );
+
+    let mut truncated = valid_detector_group();
+    if let Some(pins) = truncated.detector.as_mut() {
+        pins.input_page_sha256 = "2".repeat(63);
+    }
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &truncated),
+        vec![Violation::MalformedDigest {
+            at: "detector".into(),
+            field: "input_page_sha256",
+            value: "2".repeat(63),
+        }],
+        "63 hex characters is the off-by-one a length check must catch"
+    );
+}
+
+#[test]
+// spec §16.20 item 3's closing ¶ — R8 at the two path slots no test reached, plus the
+// `detector.input_page` locality check that shares its failure surface.
+//
+//   already covered — `records[].output` (`an_absolute_or_escaping_path_is_rejected`, absolute
+//   and `..`);
+//   added here — `records[].source` and `detector.input_page`.
+//
+// The `..` case for `input_page` is deliberately kept INSIDE the group prefix, so the locality
+// check at `provenance.rs:324-336` cannot fire and R8 is isolated. The absolute case then asserts
+// the exact PAIR, which is the property the comment at `provenance.rs:325-331` was written for:
+// before it, an absolute misplaced page reported `NonRelativePath` twice and `dedup()` collapsed
+// the two into one, making "absolute" and "wrong directory" indistinguishable. Two violations
+// with two different `at` values is the observable form of that fix, and nothing asserted it.
+//
+// Does NOT cover: that any path exists on disk, or that `source` points at a vendored upstream
+// asset rather than an arbitrary relative path. R8 is shape only.
+fn r8_reaches_the_source_and_input_page_path_slots_too() {
+    let absolute_source = "/home/maintainer/panel-ocr/tests/fixtures/upstream/nightmare.png";
+    let mut source = valid_group();
+    source.records[0].source = Some(absolute_source.into());
+    assert_eq!(
+        provenance::validate("nlm", &source),
+        vec![Violation::NonRelativePath {
+            at: "nightmare".into(),
+            field: "source",
+            path: absolute_source.into(),
+        }]
+    );
+
+    let escaping_source = "tests/fixtures/upstream/../../../etc/passwd";
+    let mut escaping = valid_group();
+    escaping.records[0].source = Some(escaping_source.into());
+    assert_eq!(
+        provenance::validate("nlm", &escaping),
+        vec![Violation::NonRelativePath {
+            at: "nightmare".into(),
+            field: "source",
+            path: escaping_source.into(),
+        }]
+    );
+
+    // Inside the group prefix, so locality is satisfied and R8 fires alone.
+    let sneaky_page = "tests/fixtures/recorded/detector/../detector/page01.jpg";
+    let mut inside = valid_detector_group();
+    if let Some(pins) = inside.detector.as_mut() {
+        pins.input_page = sneaky_page.into();
+    }
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &inside),
+        vec![Violation::NonRelativePath {
+            at: "detector".into(),
+            field: "input_page",
+            path: sneaky_page.into(),
+        }]
+    );
+
+    // Absolute: BOTH rules fire, with distinct `at` values, and neither may be swallowed.
+    let absolute_page = "/home/maintainer/panel-ocr/tests/fixtures/recorded/detector/page01.jpg";
+    let mut outside = valid_detector_group();
+    if let Some(pins) = outside.detector.as_mut() {
+        pins.input_page = absolute_page.into();
+    }
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &outside),
+        vec![
+            Violation::NonRelativePath {
+                at: "detector".into(),
+                field: "input_page",
+                path: absolute_page.into(),
+            },
+            Violation::CommittedPathOutsideGroup {
+                at: "detector.input_page".into(),
+                path: absolute_page.into(),
+            },
+        ],
+        "an absolute page is BOTH non-relative and outside its group; `dedup()` must not \
+         collapse the two"
+    );
+
+    // A relative page in the wrong group is misplaced only — not non-relative.
+    let wrong_group = "tests/fixtures/recorded/nlm/page01.jpg";
+    let mut misplaced = valid_detector_group();
+    if let Some(pins) = misplaced.detector.as_mut() {
+        pins.input_page = wrong_group.into();
+    }
+    assert_eq!(
+        provenance::validate(provenance::DETECTOR_GROUP, &misplaced),
+        vec![Violation::CommittedPathOutsideGroup {
+            at: "detector.input_page".into(),
+            path: wrong_group.into(),
+        }]
+    );
+}

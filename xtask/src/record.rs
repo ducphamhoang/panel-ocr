@@ -164,7 +164,20 @@ pub fn run(
 /// whole invariant, not the convenient half). Having helped harden that gate and then written this
 /// one half-way is the recurrence worth naming.
 fn provenance_is_current(group: &str) -> bool {
-    let path = paths::recorded_root()
+    provenance_is_current_under(&paths::workspace_root(), group)
+}
+
+/// [`provenance_is_current`] against an explicit workspace root.
+///
+/// Extracted for exactly one reason: with the root hard-wired to `paths::workspace_root()`, the
+/// only way to make any of the four conditions FAIL is to mutate the committed fixture tree — and
+/// a leaked probe is precisely the corruption the recorded-fixture gates exist to detect (cookbook
+/// rule 13's closing note). Every condition was therefore asserted only in its passing case, so
+/// any one of them could be deleted with the suite still green. `provenance_is_current` is this
+/// function at `paths::workspace_root()` and nothing else.
+fn provenance_is_current_under(workspace_root: &Path, group: &str) -> bool {
+    let recorded_root = workspace_root.join(pc_testkit::provenance::RECORDED_PREFIX);
+    let path = recorded_root
         .join(group)
         .join(pc_testkit::provenance::PROVENANCE_FILE_NAME);
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -190,7 +203,7 @@ fn provenance_is_current(group: &str) -> bool {
         .iter()
         .filter(|record| record.committed)
         .all(|record| {
-            let artifact = paths::workspace_root().join(&record.output);
+            let artifact = workspace_root.join(&record.output);
             pc_models::sha256_hex(&artifact)
                 .is_ok_and(|actual| actual.eq_ignore_ascii_case(&record.output_sha256))
         });
@@ -208,7 +221,7 @@ fn provenance_is_current(group: &str) -> bool {
     //    direction 3 is the same defect that gate took five iterations to remove — cookbook rule
     //    13's "cardinality is not identity", and rule 14's lesson that the readers of a format
     //    each need the whole invariant, not the half that was convenient.
-    let group_dir = paths::recorded_root().join(group);
+    let group_dir = recorded_root.join(group);
     let declared: std::collections::BTreeSet<String> = parsed
         .records
         .iter()
@@ -227,7 +240,7 @@ fn provenance_is_current(group: &str) -> bool {
         }
         let Ok(relative) = entry
             .path()
-            .strip_prefix(paths::workspace_root())
+            .strip_prefix(workspace_root)
             .map(Path::to_path_buf)
         else {
             return false;
@@ -526,4 +539,421 @@ fn inter_area_provenance(reference: &Value, diagnostic: &Value) -> Result<GroupP
         detector: None,
         diagnostics: BTreeMap::from([("metrics_vs_reference".into(), metrics)]),
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// spec §16.13 item 6 + §16.24 item 1 — `provenance_is_current`'s four conditions, falsified.
+//
+// The helper took three rounds to get right and every round was accepted on the PASSING case
+// alone: nothing anywhere asserted that a stale, invalid, tampered or unbound group reads as NOT
+// current. Any one condition could be deleted and the suite stayed green. Each test below asserts
+// BOTH polarities on the SAME tree — `true` before the perturbation and `false` after — so a
+// helper that always answers `true` and one that always answers `false` both fail (cookbook
+// rule 6: prove the check ran; rule 1: name the concrete wrong value).
+//
+// All of these are CI-safe: temp directory, `serde_json`, `sha2`. No model, no network, no Python,
+// no committed fixture touched. §16.20 item 11's split puts comparing frozen JSON in CI and
+// producing artifacts on the maintainer's machine, and these only compare.
+#[cfg(test)]
+mod provenance_is_current_falsification {
+    use super::*;
+    use pc_testkit::provenance::{
+        ArtifactRecord, GroupProvenance, PROVENANCE_FILE_NAME, PROVENANCE_SCHEMA_VERSION,
+        RECORDED_PREFIX,
+    };
+    use sha2::{Digest, Sha256};
+    use std::path::PathBuf;
+
+    const GROUP: &str = "nlm";
+
+    /// sha256 over bytes we hold in memory, via `sha2` directly — deliberately NOT
+    /// `pc_models::sha256_hex`, which is the function condition 3 calls. Deriving the expected
+    /// digest from the implementation under test is cookbook rule 1's `f(x) == f(x)`.
+    fn digest(bytes: &[u8]) -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    struct Tree {
+        _dir: tempfile::TempDir,
+        root: PathBuf,
+    }
+
+    impl Tree {
+        fn group_dir(&self) -> PathBuf {
+            self.root.join(RECORDED_PREFIX).join(GROUP)
+        }
+        fn provenance_path(&self) -> PathBuf {
+            self.group_dir().join(PROVENANCE_FILE_NAME)
+        }
+        fn artifact(&self, bubble: &str) -> PathBuf {
+            self.group_dir().join(nlm_reference_name(bubble))
+        }
+        fn read(&self) -> GroupProvenance {
+            let text = std::fs::read_to_string(self.provenance_path()).expect("readable");
+            serde_json::from_str(&text).expect("parses")
+        }
+        fn write(&self, provenance: &GroupProvenance) {
+            write_provenance(&self.provenance_path(), provenance).expect("writable");
+        }
+        fn write_raw(&self, bytes: &[u8]) {
+            std::fs::write(self.provenance_path(), bytes).expect("writable");
+        }
+        fn is_current(&self) -> bool {
+            provenance_is_current_under(&self.root, GROUP)
+        }
+    }
+
+    /// A complete `nlm` recorded state in a throwaway workspace: both `NLM_BUBBLES` artifacts and
+    /// a provenance describing exactly them, in the shape `nlm_provenance` writes (§16.24 item
+    /// 1(e): `source` named, `source_sha256` absent). Canonicalised so `strip_prefix` inside the
+    /// helper matches textually on platforms where the temp root is a symlink.
+    fn valid_tree() -> Tree {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path().canonicalize().expect("canonical temp root");
+        let group_dir = root.join(RECORDED_PREFIX).join(GROUP);
+        std::fs::create_dir_all(&group_dir).expect("create group dir");
+
+        let records = NLM_BUBBLES
+            .iter()
+            .map(|bubble| {
+                let name = nlm_reference_name(bubble);
+                let bytes = format!("not-really-a-png:{bubble}").into_bytes();
+                std::fs::write(group_dir.join(&name), &bytes).expect("write artifact");
+                ArtifactRecord {
+                    name: (*bubble).into(),
+                    output: format!("{RECORDED_PREFIX}/{GROUP}/{name}"),
+                    output_sha256: digest(&bytes),
+                    committed: true,
+                    source: Some(format!(
+                        "tests/fixtures/upstream/demo_bubbles/{bubble}_bubble_raw.png"
+                    )),
+                    source_sha256: None,
+                    params: BTreeMap::from([
+                        ("h".into(), serde_json::json!(10)),
+                        ("searchWindowSize".into(), serde_json::json!(21)),
+                        ("templateWindowSize".into(), serde_json::json!(7)),
+                    ]),
+                }
+            })
+            .collect();
+
+        let tree = Tree { _dir: dir, root };
+        tree.write(&GroupProvenance {
+            schema_version: PROVENANCE_SCHEMA_VERSION,
+            group: GROUP.into(),
+            tool: "cv2.fastNlMeansDenoising".into(),
+            command_line: "cargo xtask record-fixtures --only nlm".into(),
+            tool_versions: BTreeMap::from([("opencv".into(), "5.0.0".into())]),
+            records,
+            detector: None,
+            diagnostics: BTreeMap::new(),
+        });
+        tree
+    }
+
+    #[test]
+    // CONDITION 1 — "reads and parses". The `let Ok(..) else { return false }` pair cannot be
+    // *deleted* and still compile, so what this binds is the polarity and the absence of a panic:
+    // an unreadable or unparsable provenance must answer `false` (re-record) rather than `true`
+    // (skip) or an abort that kills the whole run. Replace either `else` arm with `true`, or
+    // switch the parse to `unwrap_or_default()`, and this goes red.
+    //
+    // Case (c) is the one worth having: `deny_unknown_fields`. §16.24 item 1's migration turns a
+    // pre-migration file into an unknown-field parse error, which is exactly the state the
+    // maintainer ran the recorder to fix — and the state the first version of this helper reported
+    // as "already present".
+    //
+    // Does NOT cover: an I/O failure that is not "absent" (permissions, a directory in place of
+    // the file). Both take the same `Err` arm; neither is constructed here.
+    fn an_unreadable_or_unparsable_provenance_is_not_current() {
+        let tree = valid_tree();
+        assert!(
+            tree.is_current(),
+            "baseline: a complete nlm tree must read as current, or every `false` below is vacuous"
+        );
+        let good = tree.read();
+
+        std::fs::remove_file(tree.provenance_path()).expect("removable");
+        assert!(!tree.is_current(), "(a) no PROVENANCE.json at all");
+
+        tree.write_raw(b"{ this is not json");
+        assert!(!tree.is_current(), "(b) present but not JSON");
+
+        // (c) valid JSON, rejected by `deny_unknown_fields` — the pre-migration shape.
+        let mut value = serde_json::to_value(&good).expect("serialisable");
+        value["records"][0]["sha256"] = serde_json::json!("0".repeat(64));
+        tree.write_raw(serde_json::to_string(&value).expect("text").as_bytes());
+        assert!(
+            !tree.is_current(),
+            "(c) an unknown key must not parse: `deny_unknown_fields` is this reader's half of \
+             §16.24 item 1"
+        );
+
+        // (d) valid JSON, a required field missing.
+        let mut value = serde_json::to_value(&good).expect("serialisable");
+        value
+            .as_object_mut()
+            .expect("object")
+            .remove("records")
+            .expect("records was present");
+        tree.write_raw(serde_json::to_string(&value).expect("text").as_bytes());
+        assert!(!tree.is_current(), "(d) a required field is missing");
+
+        tree.write(&good);
+        assert!(
+            tree.is_current(),
+            "restoring the file restores currency — every `false` above came from the \
+             perturbation, not from a broken tree"
+        );
+    }
+
+    #[test]
+    // CONDITION 2 — "`schema_version` matches the schema this binary writes".
+    //
+    // **This test does NOT falsify the deletion of condition 2**, and saying so is the point:
+    // `validate`'s R1 tests the identical predicate, so condition 3 subsumes condition 2 and the
+    // boolean result is unchanged by removing it. What this test binds is the *behaviour* the
+    // docstring promises — a provenance at any other version is not current — which fails only if
+    // BOTH the version check and the `validate` call are removed. The docstring enumerates four
+    // independent conditions; on the evidence here there are three and a fast path. That
+    // redundancy is flagged, not resolved.
+    //
+    // Does NOT cover: a version that parses at v1 while meaning something else (no second version
+    // exists yet, so nothing here can distinguish "rejects non-v1" from "rejects != the constant").
+    fn a_provenance_at_another_schema_version_is_not_current() {
+        let tree = valid_tree();
+        assert!(tree.is_current(), "baseline");
+
+        for version in [PROVENANCE_SCHEMA_VERSION + 1, 0] {
+            let mut parsed = tree.read();
+            parsed.schema_version = version;
+            tree.write(&parsed);
+            assert!(
+                !tree.is_current(),
+                "schema_version {version} is not the version this binary writes"
+            );
+        }
+    }
+
+    #[test]
+    // CONDITION 3 — "`validate` returns no violations". Both perturbations are invisible to the
+    // other three conditions: no digest changes, no filename changes, nothing on disk moves. So
+    // deleting the `validate` call turns this red and nothing else.
+    //
+    // R2 (group name vs directory) and R3 (the group must name its tool) are chosen deliberately:
+    // R3 is one of the rules that had no checker test either, and this is the second reader that
+    // depends on it (cookbook rule 14 — every reader of the format needs the whole invariant).
+    //
+    // Does NOT cover: the other 21 rules individually. It proves the verdict is consulted, not
+    // that every rule gates the recorder; `crates/pc-testkit/tests/provenance_schema.rs` owns
+    // per-rule coverage.
+    fn a_structurally_invalid_provenance_is_not_current() {
+        let tree = valid_tree();
+        assert!(tree.is_current(), "baseline");
+
+        let mut wrong_group = tree.read();
+        wrong_group.group = "inter_area".into();
+        tree.write(&wrong_group);
+        assert!(
+            !tree.is_current(),
+            "R2: a provenance describing another group is not this group's recorded state"
+        );
+
+        let mut no_tool = tree.read();
+        no_tool.group = GROUP.into();
+        no_tool.tool = String::new();
+        tree.write(&no_tool);
+        assert!(!tree.is_current(), "R3: the tool must be named");
+    }
+
+    #[test]
+    // CONDITION 4, PROVENANCE → DISK — "every committed declaration's digest matches the bytes".
+    //
+    // Isolated from the disk → provenance half: in (a) and (b) the file keeps its name and stays
+    // declared, so the reverse direction is satisfied throughout and only this half can see the
+    // change. (c) is the sharper isolation — a declared file that is *gone* is invisible to a walk
+    // over what IS on disk, so only this direction can report it.
+    //
+    // Does NOT cover: uncommitted (`committed: false`) declarations, which are scratch and
+    // deliberately unverified (§16.13 item 6); or the digest of `source`, which §16.24 item 1(e)
+    // keeps out of these files entirely.
+    fn a_committed_declaration_whose_bytes_changed_is_not_current() {
+        let tree = valid_tree();
+        assert!(tree.is_current(), "baseline");
+        let artifact = tree.artifact(NLM_BUBBLES[0]);
+        let original = std::fs::read(&artifact).expect("readable artifact");
+
+        let mut appended = original.clone();
+        appended.push(b'!');
+        std::fs::write(&artifact, &appended).expect("writable");
+        assert!(
+            !tree.is_current(),
+            "(a) one appended byte: the provenance parses, validates and names the right file, \
+             and describes different bytes"
+        );
+
+        std::fs::write(&artifact, &original).expect("writable");
+        assert!(
+            tree.is_current(),
+            "restoring the bytes restores currency — the check is on content, not on mtime"
+        );
+
+        std::fs::write(&artifact, b"").expect("writable");
+        assert!(!tree.is_current(), "(b) truncated to empty");
+
+        std::fs::remove_file(&artifact).expect("removable");
+        assert!(
+            !tree.is_current(),
+            "(c) a declared artifact missing from disk — only this direction enumerates \
+             declarations, so only this direction can see it"
+        );
+    }
+
+    #[test]
+    // CONDITION 4, DISK → PROVENANCE — "every file in the group directory is declared". The
+    // orphan probe is cookbook rule 13's own: copying a fixture to `nlm/undeclared_orphan.png`
+    // passed the recorded-fixture gate for four iterations. Unbound fixture state is trusted by
+    // every consuming golden test while being verified by nothing.
+    //
+    // Isolated from the provenance → disk half: no declaration changes and no declared file is
+    // touched, so that half is satisfied throughout. Delete the `read_dir` loop and only this test
+    // goes red.
+    //
+    // The exempt set is asserted rather than assumed (rule 13's corollary — "a broad exemption is
+    // the bypass wearing different clothes"): the baseline passes with `PROVENANCE.json` present,
+    // and an exemption-SHAPED name must still fail.
+    //
+    // Does NOT cover: a file in a nested subdirectory. The walk is non-recursive, which is safe
+    // only because the directory entry itself must be declared and a directory cannot match a
+    // committed digest — asserted below as the reason, not assumed.
+    fn an_undeclared_file_in_the_group_directory_is_not_current() {
+        let tree = valid_tree();
+        assert!(tree.is_current(), "baseline");
+
+        let orphan = tree.group_dir().join("undeclared_orphan.png");
+        std::fs::write(&orphan, b"declared by nothing, verified by nothing").expect("writable");
+        assert!(
+            !tree.is_current(),
+            "an undeclared file is unbound fixture state"
+        );
+        std::fs::remove_file(&orphan).expect("removable");
+        assert!(tree.is_current(), "removing the orphan restores currency");
+
+        let lookalike = tree.group_dir().join("PROVENANCE.json.bak");
+        std::fs::write(&lookalike, b"{}").expect("writable");
+        assert!(
+            !tree.is_current(),
+            "only the exact `PROVENANCE.json` name is exempt; a stray file must not pass by \
+             merely looking exemption-shaped"
+        );
+        std::fs::remove_file(&lookalike).expect("removable");
+
+        let stash = tree.group_dir().join("stash");
+        std::fs::create_dir(&stash).expect("creatable");
+        assert!(
+            !tree.is_current(),
+            "an undeclared subdirectory is unbound state too — this is why non-recursion is safe"
+        );
+    }
+
+    #[test]
+    // RESIDUAL HOLE 1 — **parameter drift is NOT detected.** A known gap, pinned rather than
+    // closed.
+    //
+    // `params` is a claim about how the bytes were produced, and the four conditions never read
+    // it: 1 and 2 look at the header, 3 sweeps `params` for digest shapes but never for agreement
+    // with anything, and 4 compares bytes against a digest the same document supplies. So a
+    // provenance may declare `h = 999` beside an artifact whose own filename says `_h10_`, and the
+    // recorder reports the group complete.
+    //
+    // Today this is caught only INCIDENTALLY, and only for `nlm`/`inter_area`, because re-running
+    // the tool with different parameters changes the FILENAME (`nlm_reference_name`) as well as
+    // the bytes — so condition 4 fires for the wrong reason. The detector group does not have that
+    // luck: its outputs are `page01_detector_blocks.json` regardless of `pad_value`, thresholds or
+    // profile, and a re-record under different parameters lands on the same path.
+    //
+    // Not closed here, deliberately. Closing it needs a parameter fingerprint the schema does not
+    // have — the filename encoding is incidental and group-specific, and a check keyed on it would
+    // be exactly the "lucky" coverage that fails silently the first time a group does not encode
+    // its parameters. Which mechanism to add is an architect decision, so this test states the
+    // current behaviour and its cost.
+    //
+    // **If this test ever fails, the gap has been closed**: that is a behaviour change to route to
+    // both architects (cookbook rule 8, exit 2), not a test to edit.
+    //
+    // Does NOT cover: params drift that also changes the bytes — condition 4 catches that, for the
+    // bytes rather than for the parameters.
+    fn parameter_drift_with_unchanged_bytes_is_not_detected_known_gap() {
+        let tree = valid_tree();
+        assert!(tree.is_current(), "baseline");
+
+        let mut drifted = tree.read();
+        assert!(
+            drifted.records[0].output.contains("_h10_t7_s21"),
+            "the artifact's own filename encodes h=10 — that is what `params` below contradicts"
+        );
+        drifted.records[0]
+            .params
+            .insert("h".into(), serde_json::json!(999));
+        tree.write(&drifted);
+
+        assert!(
+            tree.is_current(),
+            "KNOWN GAP (§16.13 item 6): `params` contradicts the filename beside it and the \
+             group still reads as current. Nothing compares declared parameters to anything."
+        );
+    }
+
+    #[test]
+    // RESIDUAL HOLE 2 — **tool-version drift is NOT detected, and cannot be by this helper's
+    // inputs.** The answer to "can `provenance_is_current` detect a re-record under a different
+    // tool version?" is no, for a structural reason rather than a missing line: the helper takes a
+    // group name, reads one file and hashes some bytes. It never asks the environment what version
+    // of cv2/PIL/numpy is installed, so it has nothing to compare `tool_versions` against — even
+    // though `run` has already discovered the interpreter (`PythonTooling::discover`) by the time
+    // it is called.
+    //
+    // The consequence is the one that matters, and it is not hypothetical: on a machine whose cv2
+    // WOULD produce different bytes, this helper still answers "current" — the artifacts on disk
+    // match the digests recorded by the old version — so the recorder SKIPS and the drift is never
+    // observed. Condition 4 can only compare bytes to the digest that shipped with them; it cannot
+    // notice bytes that were never produced.
+    //
+    // The second half is sharper: `tool_versions` is `#[serde(default)]` and no rule requires it
+    // non-empty for a non-detector group, so a provenance recording NO versions at all reads as
+    // current. Contrast R21, which does require `dependency_versions` non-empty — but only on the
+    // detector's upstream side.
+    //
+    // **If either assertion ever fails, the gap has been closed** — architects, not a test edit.
+    //
+    // Does NOT cover: the detector group's `dependency_versions`, whose non-emptiness R21 does
+    // enforce; nor whether a version change would in fact change any bytes.
+    fn tool_version_drift_is_not_detected_known_gap() {
+        let tree = valid_tree();
+        assert!(tree.is_current(), "baseline");
+
+        let mut drifted = tree.read();
+        drifted
+            .tool_versions
+            .insert("opencv".into(), "1.0.0-never-installed".into());
+        tree.write(&drifted);
+        assert!(
+            tree.is_current(),
+            "KNOWN GAP: a version that is not the one installed, and nothing compares the \
+             recorded versions with the environment (cookbook rule 3: 'pin what you compared \
+             against' — pinned, never checked)"
+        );
+
+        let mut absent = tree.read();
+        absent.tool_versions.clear();
+        tree.write(&absent);
+        assert!(
+            tree.is_current(),
+            "KNOWN GAP: a non-detector group may record NO tool versions at all and still read \
+             as current"
+        );
+    }
 }
