@@ -429,7 +429,14 @@ A deeper instance of the same defect in that draft: a *document property* ("upst
 record confidence") and a *comparison finding* shared one output channel. Nothing diverges when
 one side simply has no data — calling it a divergence is a category error, and it is what made
 a vector length depend on block count. **Check that each output channel carries one kind of
-claim.**
+claim.** Ratified as **§16.25** (joint architects), which adds the reusable discriminator: *does
+the row's truth depend on the relation between two sides, or on one artifact alone?*
+
+*Honest note on this paragraph:* it was committed **before** either architect ruled on the
+redesign it describes. Both concurred, so the record is consistent — but had they rejected it,
+this entry would have needed correcting. Writing a lesson ahead of the ratification it depends
+on is its own small defect, and the §-anchor above exists so a future reader can see which came
+first.
 
 ---
 

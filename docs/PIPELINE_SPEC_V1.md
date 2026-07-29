@@ -4558,6 +4558,170 @@ table is **moot** under item 1 and is deliberately not carried forward; if a fut
 ever does replace the frozen gate, that table is the starting bar and this deferral is the pointer
 to it.
 
+## 16.25 `NoOracleField` is replaced by per-field coverage (cookbook rule 8 exit 2, joint architects, 2026-07-29)
+
+An **amendment**, not a drafting correction. Both Opus architects concur; no tie-break was needed.
+Two of F1-C's drafted tests change their expected vectors, and by rule 8's forcedness test neither
+reading was forced — the Senior Rust Engineer's own draft contained both — so this is exit 2 and
+required a ratification before implementation.
+
+1. **The defect: `NoOracleField` was unsatisfiable, and this is a proof rather than a judgment.**
+   The variant was a per-pair `Divergence` in class `NoOracle`, emitted when an upstream block lacks
+   `confidence`/`language`. Two drafted sites expected **two** such rows on a `bare_block` pair;
+   five expected **zero** on the same input shape. The Technical Architect closed the diagnosis by
+   finding two sites that are **byte-identical in every field** — same `Rect::new(100,200,160,240)`,
+   same `class_index: 0`, same `confidence: 0.775`, same `bare_block([100,200,160,240])`, same
+   `LineLess` branch, same exact geometry — and expect opposite results. Any function of
+   `(ours_block, upstream_block, branch, geometry)` returns the same value at both, so **no
+   pair-local predicate can satisfy both.** The unrelated clauses an implementer produced
+   (`unmatched_*.is_empty()`, branch, identity-held) were not poor judgment; they were the only
+   remaining degrees of freedom. Recorded because "the delegate wrote a curve-fit" and "the
+   specification it was given was contradictory" call for different responses.
+
+2. **`NoOracleField` is a category error, and the general rule is worth more than the fix.**
+   `divergences` lists findings about the *comparison*; "upstream did not record confidence" is a
+   property of one *input document*. Nothing diverges — one side simply has no data — and that is
+   what made a vector length depend on block count. The report therefore has **three channels, not
+   one**: *findings* (`divergences`), *per-pair measurements* (`residuals`, `branches`), and
+   *artifact properties* (`coverage`). The middle channel was already correct precedent —
+   `residual_leg1` is non-zero in the healthy case and lives outside `divergences` for exactly the
+   reason coverage must. **Discriminator for future variants: does the row's truth depend on the
+   relation between two sides, or on one artifact alone?** All 15 remaining variants were walked
+   against it and are correctly filed; `EmptyPairing` is the near-miss and stays, because its
+   content is "no comparison happened" — a fact about the comparison, O(1), carrying the one bit
+   §16.20 item 3(b) requires be raised structurally. `NoOracleField` failed all three tests: it was
+   one-sided, O(N), and carried zero bits beyond the first. Its own shape shows it — it keyed an
+   upstream-only fact by **our** rect.
+
+3. **ERRATUM: §16.24 item 9's `NoOracleField` phrase cannot be cited as authority for the per-pair
+   form, and this was verified.** The identifier occurs in the entire spec **exactly once**, at
+   §16.24 item 9, in CamelCase Rust, in a document that otherwise spells the concept `NO-ORACLE` in
+   five places, all partition-bucket usages. §16.24 is the same-day tie-break over the two F1 plans:
+   the phrase is a ruling repeating the draft's own vocabulary while deciding a *different* question
+   (whether the row may close `OPEN`). Citing it would be §16.20 item 3(e)'s prohibition in a
+   different costume — closing a design against a ratification that merely quotes the design.
+   **What survives untouched:** item 9's other half, "the oracle schema keeps
+   `confidence: Option<f64>`", is independently grounded in cookbook rule 7's finding that upstream's
+   `#raw.json` does not persist confidence. `OracleBlock.confidence: Option<f32>` stays exactly as
+   drafted, so the serde round-trip gate and its full-shape literal are unaffected.
+
+4. **The replacement.** `NoOracleField` and `DivergenceClass::NoOracle` are **deleted**. The report
+   gains
+
+   ```rust
+   pub enum OracleCoverage { Present, Absent, Partial { with: usize, without: usize } }
+   pub struct FieldCoverage { pub confidence: OracleCoverage, pub language: OracleCoverage }
+   ```
+
+   Grounds, each on ratified text rather than preference: it is the **computable witness for item 9's
+   actual decision procedure**, which is a per-field, per-document branch ("DIAGNOSTIC if the script
+   captures upstream's scores, else NO-ORACLE") — N per-pair rows answer that question N times and
+   only for paired blocks; a **mandatory struct field cannot be omitted where an optional row can**,
+   which is §16.24 item 20(b)'s own ratified preference *"unrepresentability beats detection"* applied
+   one level over, and the curve-fit's concrete failure was that `divergences` **silently lacked** the
+   rows on any realistic page; and **"row" in §16.20 items 3(d) and 3(e) means a table row in
+   `DETECTOR_ORACLE.md`**, one per serialized field, never a per-block emission.
+
+5. **`Partial` is GATING, derived from item 3(e) rather than as an exception to item 3(d).**
+   The derivation: `Partial` ⟹ "the script captured upstream's scores" is neither true nor false of
+   the document ⟹ item 9's two-way branch does not resolve ⟹ the `confidence` partition row is
+   `OPEN` ⟹ §16.20 item 3(e) makes it blocking. The gating row is therefore **not a verdict about
+   confidence** — it is the report stating that the partition cannot be completed.
+
+   Item 9's clause "may not close as `OPEN` **on this account**" does not reach it: that account is
+   upstream not persisting confidence. Partial capture is a different account — **our** recording
+   script producing an internally inconsistent artifact. Two independent supports: item 3(d)'s
+   prohibition is **epistemic**, grounded in item 5's *measured* 0.079–0.089 noise floor against 0.4
+   gates, and coverage has no noise floor, no tolerance and no epsilon (presence is exactly
+   decidable), so gating it cannot import the defect 3(d) exists to prevent — no green run turns red
+   because two engines rounded differently. And coverage is a **precondition** in the same sense
+   item 8 gates `scale`/`image_size`: those pin the two sides to one coordinate frame, coverage pins
+   them to one *compared set*.
+
+   `InconsistentOracleCoverage { field, with, without, missing }` is routed through `divergences` as a
+   gating variant, **not only** onto the report struct, so the CI contract stays one channel:
+   `report.gating().is_empty()` AND `pairs_compared == <literal>`, with no second thing a caller must
+   remember to check. `missing` carries the indices, not just counts — counts send a reader hunting,
+   indices are a fix (rule 13's corollary).
+
+6. **Three binding refinements — conditions of the concurrence, not preferences.**
+
+   (a) **Compute the gating subject over the PAIRED upstream blocks**, reporting whole-artifact
+   counts as diagnostic numbers. The defect guarded is "the DIAGNOSTIC comparison silently covers a
+   subset", and the compared set *is* the paired set: an unmatched block contributes no
+   `ConfidenceDelta` whether or not it carries a score, and it already has its own row and
+   `Mechanism`. `pre_filter_blocks` stay excluded — item 8 makes them DIAGNOSTIC and pre-`group_output`.
+
+   (b) **Define the empty case: `with == 0 && without == 0` is `Absent`**, never `Partial` and never
+   `Present`. `Present` over an empty set is a vacuous truth of exactly the shape cookbook rule 1
+   hunts. Two live test sites reach it today (`blocks: vec![]`), both already gating on
+   `EmptyPairing`/`AccountingMismatch`, so nothing rests on the choice — but leaving it undefined
+   means the first implementer picks it invisibly.
+
+   (c) **Emission position is contractual:** `InconsistentOracleCoverage` is emitted **immediately
+   after the page-level frame rows and before any block row**. It is a document property like
+   `scale`, and a caveat that the rows below cover a subset must precede the rows it qualifies. The
+   frozen exact vectors depend on this, so it lands in the ratification rather than in the
+   implementation. State also why `base_xyxy_pretruncation` gets no coverage field — it is per-pair
+   visible in `PairResidual` and carries no partition row — or the asymmetry reads as an oversight.
+
+7. **Consequences, enumerated so nobody re-derives them. THREE tests change, not two.**
+
+   | site | after | strength |
+   |---|---|---|
+   | `the_line_less_identity_degenerates_to_plain_equality` | exact vector `Vec::new()`; `coverage.{confidence,language} == Absent` | **equal** — same content, unconditional rather than per-block |
+   | `confidence_and_language_..._absence_is_no_oracle` | exact coverage equality replaces `no_oracle().len() == 2` | **stronger** — a bare `len()` among exact-vector siblings is rule 13's "cardinality is not identity" |
+   | `the_divergence_class_partition_is_total_...` | sample swaps `NoOracleField` for `InconsistentOracleCoverage`; `(7,2,1)` → `(8,2)`, total still 10 | **equal** |
+
+   Plus one new `Partial` test — the `Partial` artifact is structurally sound, so it belongs in the
+   exact-whole-vector family per §16.24 item 21(e), not the containment family. **26 → 27.** No change
+   claims less about the system and one claims more, so concurrence plus this entry is the whole gate.
+
+   Two additive strengthenings to fold in while these sites are open (rule 8 exit 1, no ratification
+   needed): the `Partial` test must **also** assert the *with*-block's `ConfidenceDelta` is still
+   emitted — that is what proves the subset is reported rather than suppressed, the exact confusion
+   that produced the curve-fit; and assert `coverage == Present` in the existing agreeing/disagreeing
+   halves so `Absent` is falsifiable against `Present` within one test rather than only across tests.
+
+8. **§16.24 item 6's three-class list is edited by this entry, and says so.** That item adopts *"the
+   divergence class system (`Gating` / `Diagnostic` / `NoOracle`)"* verbatim. Deleting the class is
+   therefore not a drafting consequence — it amends a ratified enumeration, superseded in place per
+   §16.19's convention with the original wording preserved. The class must **go**, not be kept empty:
+   a `no_oracle()` accessor that provably always returns empty is rule 1's decoration with a name
+   claiming a capability.
+
+9. **Corrections of record.** Two citations in the defect table as first circulated were wrong, and
+   the corrected list is normative here: `:262` (`the_unperturbed_pair_...`) uses `oracle_block()`,
+   which sets both optional fields on all five blocks, so it never exercises absence at all — the
+   five zero-row sites are `:639`, `:797`, `:1071`, `:1209`, `:1315`. And **`:797` is
+   line-INFORMED** with both fields `None`, so the contradiction is not "line-less vs line-informed"
+   but "any pair whose upstream block lacks the field" — that site is the sole reason the curve-fit
+   needed its `LineLess` clause, and it sharpens the diagnosis to span branches rather than states.
+
+10. **One unverified upstream fact, named rather than assumed.** Whether upstream's `group_output`
+    can construct a post-filter `TextBlock` from unassigned line polygons — which would have no yolo
+    box and hence legitimately no confidence — was **not** checkable in this environment (no upstream
+    checkout) and the spec does not record it. §16.24 item 18(b) already presupposes the answer is
+    no: leg 2 is `upstream.xyxy == bbox(upstream.rect_yolo ∪ bbox(upstream.lines))`, undefined for a
+    block with no `rect_yolo`. So under the ratified identity every gated upstream block descends
+    from a yolo box and `Partial` is unreachable except as a recording defect. **If the check comes
+    back the other way, the finding is NOT "Partial should be diagnostic"** — it is that item 18(b)'s
+    leg-2 law needs an erratum, which is larger than this entry. Recorded as a recording-script
+    obligation: the script asserts one score per gated block.
+
+11. **Recorded, not fixed.** `LanguageDelta.upstream_language: Option<Language>` is `Some` at its only
+    emission site, so the `Option` is decoration — rule 1's family. Fixing it would edit two frozen
+    exact vectors for zero gate power; left as known. And
+    `the_divergence_class_partition_is_total_...` covers **10 of 16** variants while its *name* claims
+    totality — rule 1's dominant defect class sitting in the test whose job is to prevent it. Making
+    the sample exhaustive is free and additive (rule 8 exit 1) and should be taken while the file is open.
+
+12. **Process note: `docs/COOKBOOK.md` rule 8's category-error paragraph was committed in `31d483e`,
+    before either architect ruled.** It asserts this entry's conclusion. Now that both concur the
+    record is consistent, but had the redesign been rejected the cookbook would have needed
+    correcting — writing a lesson ahead of the ratification it depends on is its own small defect,
+    and the paragraph carries an anchor to this section so a future reader sees which came first.
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:
