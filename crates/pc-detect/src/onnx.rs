@@ -5,7 +5,7 @@
 //! an ONNX Runtime installation.
 
 use crate::{
-    detector::RawBlock,
+    detector::{RawBlock, RawDetection},
     mask,
     resize::round_half_away,
     yolo::{self, LetterboxGeometry},
@@ -15,7 +15,7 @@ use pc_core::StageError;
 use std::{fmt::Write as _, path::Path};
 
 #[cfg(feature = "onnx")]
-use crate::detector::{RawDetection, TextDetector};
+use crate::detector::TextDetector;
 #[cfg(feature = "onnx")]
 use std::{path::PathBuf, sync::Mutex};
 
@@ -308,7 +308,7 @@ pub fn ensure_model_file(path: &Path) -> Result<(), StageError> {
 
 #[cfg(feature = "onnx")]
 use ort::{
-    session::{builder::GraphOptimizationLevel, Session},
+    session::{builder::GraphOptimizationLevel, Session, SessionOutputs},
     value::{Outlet, Tensor},
 };
 
@@ -418,54 +418,108 @@ impl TextDetector for OnnxDetector {
             StageError::InvalidInput(format!("failed to create input tensor: {error}"))
         })?;
 
-        let mut session = self
-            .session
-            .lock()
-            .map_err(|_| StageError::Inference("ONNX session mutex was poisoned".into()))?;
-        let runtime_outputs = session
-            .run(ort::inputs![input])
-            .map_err(|error| StageError::Inference(format!("ONNX session run failed: {error}")))?;
-
-        let mut metas = Vec::with_capacity(runtime_outputs.len());
-        let mut values = Vec::with_capacity(runtime_outputs.len());
-        for (name, output) in runtime_outputs.iter() {
-            let (shape, tensor_values) = output.try_extract_tensor::<f32>().map_err(|error| {
-                StageError::Inference(format!(
-                    "failed to extract ONNX output `{name}` as f32: {error}"
-                ))
-            })?;
-            let expected_len = shape_len(shape).map_err(StageError::InvalidInput)?;
-            if tensor_values.len() != expected_len {
-                return Err(StageError::InvalidInput(format!(
-                    "ONNX output `{name}` has {} values for shape {shape:?}, expected {expected_len}",
-                    tensor_values.len()
-                )));
-            }
-            metas.push(OutputMeta {
-                name: name.to_string(),
-                shape: shape.to_vec(),
+        let (metas, values) = {
+            // Keep the guard alive through extraction because `SessionOutputs` borrows the
+            // session; end this scope immediately after owned output data is extracted so
+            // all pure validation and decoding runs outside the session's critical section.
+            // The recovered poison guard is sound for ort rc.12: `Session` is only
+            // `{ inner: Arc<SharedSessionInner>, inputs: Vec<Outlet>, outputs: Vec<Outlet> }`
+            // (`session/mod.rs:114-118`), `Session::run` (`mod.rs:212`) immediately calls
+            // `run_inner` (`mod.rs:272-273`), and that function only reads those fields.
+            // A panic can leak un-Released `OrtValue`s (`mod.rs:329` onward), but cannot
+            // leave Rust-side session state half-updated; the only Rust callbacks are the
+            // `extern "system"` logging callbacks (`logging.rs:108/139`), whose unwinds
+            // abort rather than poison this mutex.
+            let mut session = self.session.lock().unwrap_or_else(|poisoned| {
+                tracing::warn!(
+                    model = %self.model_path.display(),
+                    "a previous ONNX inference panicked inside the session lock; reusing the \
+                     session (ort rc.12 `Session::run` mutates no Rust-side session state)"
+                );
+                poisoned.into_inner()
             });
-            values.push(tensor_values.to_vec());
-        }
+            let runtime_outputs = session.run(ort::inputs![input]).map_err(|error| {
+                StageError::Inference(format!("ONNX session run failed: {error}"))
+            })?;
+            extract_outputs(&runtime_outputs)?
+        };
 
-        let binding = bind_outputs(&metas)?;
-        validate_output_shapes(&metas, binding)?;
-        let blocks = decode_blocks(
-            &values[binding.blks],
-            metas[binding.blks]
-                .shape
-                .last()
-                .and_then(|columns| usize::try_from(*columns).ok())
-                .unwrap_or(0),
-            &boxed.geometry,
-        )?;
-        let mask = decode_mask(&values[binding.mask], &boxed.geometry)?;
-        // `lines_map` is bound for the output-order swap guard, but DBNet line polygons
-        // are deliberately deferred in v1 (§8.3).
-        let _lines_map = binding.lines_map;
-
-        Ok(RawDetection { blocks, mask })
+        decode_outputs(&metas, &values, &boxed.geometry)
     }
+}
+
+#[cfg(feature = "onnx")]
+fn extract_outputs(
+    runtime_outputs: &SessionOutputs<'_>,
+) -> Result<(Vec<OutputMeta>, Vec<Vec<f32>>), StageError> {
+    let mut metas = Vec::with_capacity(runtime_outputs.len());
+    let mut values = Vec::with_capacity(runtime_outputs.len());
+    for (name, output) in runtime_outputs.iter() {
+        let (shape, tensor_values) = output.try_extract_tensor::<f32>().map_err(|error| {
+            StageError::Inference(format!(
+                "failed to extract ONNX output `{name}` as f32: {error}"
+            ))
+        })?;
+        let expected_len = shape_len(shape).map_err(StageError::InvalidInput)?;
+        if tensor_values.len() != expected_len {
+            return Err(StageError::InvalidInput(format!(
+                "ONNX output `{name}` has {} values for shape {shape:?}, expected {expected_len}",
+                tensor_values.len()
+            )));
+        }
+        metas.push(OutputMeta {
+            name: name.to_string(),
+            shape: shape.to_vec(),
+        });
+        values.push(tensor_values.to_vec());
+    }
+
+    Ok((metas, values))
+}
+
+/// Decode extracted ONNX outputs after the session mutex has been released.
+pub fn decode_outputs(
+    metas: &[OutputMeta],
+    values: &[Vec<f32>],
+    geometry: &LetterboxGeometry,
+) -> Result<RawDetection, StageError> {
+    if values.len() != metas.len() {
+        return Err(StageError::InvalidInput(format!(
+            "ONNX output metadata/value count mismatch: {} metas, {} values",
+            metas.len(),
+            values.len()
+        )));
+    }
+
+    let binding = bind_outputs(metas)?;
+    for (name, index) in [
+        ("blocks", binding.blks),
+        ("mask", binding.mask),
+        ("lines_map", binding.lines_map),
+    ] {
+        if index >= values.len() {
+            return Err(StageError::InvalidInput(format!(
+                "{name} output binding index {index} is out of range for {} values",
+                values.len()
+            )));
+        }
+    }
+    validate_output_shapes(metas, binding)?;
+    let blocks = decode_blocks(
+        &values[binding.blks],
+        metas[binding.blks]
+            .shape
+            .last()
+            .and_then(|columns| usize::try_from(*columns).ok())
+            .unwrap_or(0),
+        geometry,
+    )?;
+    let mask = decode_mask(&values[binding.mask], geometry)?;
+    // `lines_map` is bound for the output-order swap guard, but DBNet line polygons
+    // are deliberately deferred in v1 (§8.3).
+    let _lines_map = binding.lines_map;
+
+    Ok(RawDetection { blocks, mask })
 }
 
 #[cfg(feature = "onnx")]
@@ -501,7 +555,6 @@ fn shape_len(shape: &[i64]) -> Result<usize, String> {
     })
 }
 
-#[cfg(feature = "onnx")]
 fn validate_output_shapes(
     outputs: &[OutputMeta],
     binding: OutputBinding,
@@ -539,6 +592,57 @@ fn validate_output_shapes(
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::{decode_outputs, LetterboxGeometry, OutputMeta, NET_SIZE};
+    use crate::yolo;
+    use pc_core::StageError;
+
+    #[test]
+    fn decode_outputs_decodes_synthetic_tensors_and_rejects_mismatched_values() {
+        let metas = vec![
+            OutputMeta {
+                name: "blk".into(),
+                shape: vec![1, 1, yolo::ROW_STRIDE as i64],
+            },
+            OutputMeta {
+                name: "seg".into(),
+                shape: vec![1, 1, i64::from(NET_SIZE), i64::from(NET_SIZE)],
+            },
+            OutputMeta {
+                name: "det".into(),
+                shape: vec![1, 2, i64::from(NET_SIZE), i64::from(NET_SIZE)],
+            },
+        ];
+        let mut block_values = vec![0.0; yolo::ROW_STRIDE];
+        block_values[0] = 2.0;
+        block_values[1] = 2.0;
+        block_values[2] = 1.0;
+        block_values[3] = 1.0;
+        block_values[4] = 0.9;
+        block_values[5] = 0.9;
+        let values = vec![
+            block_values,
+            vec![0.0; NET_SIZE as usize * NET_SIZE as usize],
+            vec![],
+        ];
+        let geometry = LetterboxGeometry {
+            net_size: NET_SIZE,
+            dw: 0.0,
+            dh: 0.0,
+            image_size: (4, 4),
+        };
+
+        let decoded = decode_outputs(&metas, &values, &geometry).expect("synthetic outputs decode");
+        assert_eq!(decoded.blocks.len(), 1);
+        assert_eq!(decoded.mask.dimensions(), (4, 4));
+
+        let error = decode_outputs(&metas, &values[..2], &geometry)
+            .expect_err("metadata/value mismatch must be an InvalidInput error");
+        assert!(matches!(error, StageError::InvalidInput(_)));
+    }
 }
 
 #[cfg(all(test, feature = "onnx"))]

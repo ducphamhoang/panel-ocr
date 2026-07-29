@@ -3092,6 +3092,60 @@ Resolved against the upstream PanelCleaner construction shape, the current `pc-c
    `DEVIATION(16)` when the concurrent Rust job adds it; it is deliberately not added
    by this documentation-only change.
 
+10. **The session lock spans only the `&mut Session` window, and a poisoned session is
+    reused.** `pc-detect/src/onnx.rs::<OnnxDetector as TextDetector>::detect` holds
+    `session` for exactly `Session::run` plus the copy of each output into owned
+    `Vec<f32>`. All decoding — `bind_outputs`, `validate_output_shapes`, `decode_blocks`,
+    `decode_mask` — runs **outside** the lock via the ungated `decode_outputs`, so a panic
+    in v1's own arithmetic cannot poison the one session `DEVIATION(15)` shares across the
+    run. Previously the guard spanned the whole function, which turned one page's panic
+    into an image-independent `Inference("ONNX session mutex was poisoned")` for every
+    remaining page: a failure mode v1 manufactured, named after our lock rather than its
+    cause, and not asked for by any spec clause.
+
+    (a) **Poison recovery at this site is sound, on a verified fact.** `ort`
+    2.0.0-rc.12's `Session::run(&mut self)` (`session/mod.rs:212`) delegates to
+    `run_inner(&self, …)` (`:272`); `Session` is `{ inner: Arc<SharedSessionInner>,
+    inputs: Vec<Outlet>, outputs: Vec<Outlet> }` (`:114-118`) and `run_inner` only reads
+    those fields. No Rust-side session state is mutated during a run, so no panic can
+    leave a half-updated invariant; `&mut self` is an aliasing device so
+    `SessionOutputs<'s>` cannot coexist with a second run. The cost of a mid-`run` panic
+    is a leak (un-`ReleaseValue`'d `OrtValue`s from `:329`; `util/stack.rs:57-66`'s
+    `CString`s), not corruption. A panic cannot originate inside ORT's C++: the only Rust
+    callbacks it invokes are `logging.rs:108/139`, both `extern "system"`, where an unwind
+    aborts. Recovery uses `PoisonError::into_inner` plus one `WARN`. **Any `ort` version
+    bump must re-verify `run_inner`'s receiver.** This is a different justification from
+    the poison recovery in `pc-cli/src/detector.rs`, which is sound because that mutex
+    guards `()`; "we recovered poison elsewhere" is not a reason.
+
+    (b) **The residual panic surface is retained, not asserted away.** Inside the
+    narrowed window every remaining panic site is an ort "C API violated its contract"
+    assertion: `session/mod.rs:329`, and `Value::from_ptr`'s chain through
+    `value/mod.rs:353` → `value/type.rs:384-394`/`:152`. None is a function of pixel
+    content; none is provably unreachable, since a mis-built or ABI-mismatched
+    `libonnxruntime` could trip them. The branch is therefore handled, never
+    `unreachable!()`.
+
+    (c) **`decode_outputs` is a public function over two independent slices, so it
+    validates rather than indexes.** It rejects `values.len() != metas.len()` and any
+    out-of-range bound index with `StageError::InvalidInput`. Adding a panic site while
+    fixing a panic-poisoning bug would be self-defeating. Being ungated, its test runs
+    under plain `cargo test --workspace` — coverage the feature-gated path never had.
+
+    (d) **This is NOT the sibling of item 4, and item 5(b) does not promote it.** Item
+    5(b) is the predicate for a `DetectorProvider` declaring `failures_are_run_fatal`, not
+    a free-floating law over all failures. Item 4's own reasoning fixes the boundary:
+    `initialize_detector` takes no image, so an init unwind is image-independent *by
+    construction* and knowable a priori at the provider; `TextDetector::detect(&self,
+    image)` takes the image, so a panic inside it is image-dependent by construction and
+    stays §5.2's business — per-image `Failed { step: Detect, error: Inference("panicked:
+    …") }`, exit `2`, converted by `batch.rs::process_image_isolated`. Item 4's closing
+    sentence already presupposes this by holding `g2_batch.rs`'s panic tests unaffected
+    "because they panic inside `TextDetector::detect`". Reading 5(b) as universal would
+    swallow §5.2 whole: any deterministic per-image failure — a profile that makes every
+    page fail in masking, a replay dir with every fixture missing — would become
+    run-fatal.
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:
