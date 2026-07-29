@@ -31,37 +31,43 @@ mean |Δ| ≤ 1.0, max Δ ≤ 8.
 
 ```json
 {
-  "numpy_version": "2.4.6",
-  "opencv_version": "5.0.0",
-  "params": {
-    "h": 10,
-    "searchWindowSize": 21,
-    "templateWindowSize": 7
+  "schema_version": 1,
+  "group": "nlm",
+  "tool": "cv2.fastNlMeansDenoising",
+  "command_line": "cargo xtask record-fixtures --only nlm",
+  "tool_versions": {
+    "numpy": "2.4.6",
+    "opencv": "5.0.0",
+    "python": "3.11.15"
   },
-  "python": "3.11.15",
   "records": [
     {
       "name": "nightmare",
       "output": "tests/fixtures/recorded/nlm/nightmare_h10_t7_s21.png",
-      "sha256": "c6cc1002c209ffadd182f2ebd3162b53b55bbb92f99ee038ebaf419bfed94b8d",
-      "size": [
-        219,
-        343
-      ],
-      "source": "tests/fixtures/upstream/demo_bubbles/nightmare_bubble_raw.png"
+      "output_sha256": "c6cc1002c209ffadd182f2ebd3162b53b55bbb92f99ee038ebaf419bfed94b8d",
+      "committed": true,
+      "source": "tests/fixtures/upstream/demo_bubbles/nightmare_bubble_raw.png",
+      "params": {
+        "h": 10,
+        "searchWindowSize": 21,
+        "size": [219, 343],
+        "templateWindowSize": 7
+      }
     },
     {
       "name": "ray",
       "output": "tests/fixtures/recorded/nlm/ray_h10_t7_s21.png",
-      "sha256": "9cdd17366dbabf152f67b8d70bee43745c7e45011f8d1cf2fc55b83646fe1658",
-      "size": [
-        256,
-        329
-      ],
-      "source": "tests/fixtures/upstream/demo_bubbles/ray_bubble_raw.png"
+      "output_sha256": "9cdd17366dbabf152f67b8d70bee43745c7e45011f8d1cf2fc55b83646fe1658",
+      "committed": true,
+      "source": "tests/fixtures/upstream/demo_bubbles/ray_bubble_raw.png",
+      "params": {
+        "h": 10,
+        "searchWindowSize": 21,
+        "size": [256, 329],
+        "templateWindowSize": 7
+      }
     }
-  ],
-  "tool": "cv2.fastNlMeansDenoising"
+  ]
 }
 ```
 
@@ -91,44 +97,45 @@ for visibility and is **not** a gate.
 
 ```json
 {
-  "jpeg_decode_diagnostic": {
+  "schema_version": 1,
+  "group": "inter_area",
+  "tool": "cv2.resize/INTER_AREA",
+  "command_line": "cargo xtask record-fixtures --only inter-area",
+  "tool_versions": {
+    "numpy": "2.4.6",
+    "opencv": "5.0.0",
+    "python": "3.11.15"
+  },
+  "records": [
+    {
+      "name": "reference",
+      "output": "tests/fixtures/recorded/inter_area/long_strip_inter_area_500x4000.png",
+      "output_sha256": "812b37cc1168f608d56b99a17fc0dd58d0b105834c1a310a7133e991dc113fd9",
+      "committed": true,
+      "source": "target/xtask-scratch/long_strip_decoded_rgb.png",
+      "params": {
+        "output_size": [500, 4000],
+        "source_size": [1000, 8000]
+      }
+    },
+    {
+      "name": "jpeg_decode_diagnostic",
+      "output": "target/xtask-scratch/long_strip_inter_area_500x4000_cv2jpeg.png",
+      "output_sha256": "cf16b4bdc28f0e58fefc838a8286a4c42f0f3cc687cbe2fe2129a1d9fadfb252",
+      "committed": false,
+      "source": "tests/fixtures/upstream/long_strip.jpg",
+      "params": {
+        "output_size": [500, 4000],
+        "source_size": [1000, 8000]
+      }
+    }
+  ],
+  "diagnostics": {
     "metrics_vs_reference": {
       "max_delta": 1,
       "mean_abs_diff": 0.003438,
       "ssim_as_gray": 0.9999985218837129
-    },
-    "numpy_version": "2.4.6",
-    "opencv_version": "5.0.0",
-    "output": "target/xtask-scratch/long_strip_inter_area_500x4000_cv2jpeg.png",
-    "output_size": [
-      500,
-      4000
-    ],
-    "python": "3.11.15",
-    "sha256": "cf16b4bdc28f0e58fefc838a8286a4c42f0f3cc687cbe2fe2129a1d9fadfb252",
-    "source": "tests/fixtures/upstream/long_strip.jpg",
-    "source_size": [
-      1000,
-      8000
-    ],
-    "tool": "cv2.resize/INTER_AREA"
-  },
-  "reference": {
-    "numpy_version": "2.4.6",
-    "opencv_version": "5.0.0",
-    "output": "tests/fixtures/recorded/inter_area/long_strip_inter_area_500x4000.png",
-    "output_size": [
-      500,
-      4000
-    ],
-    "python": "3.11.15",
-    "sha256": "812b37cc1168f608d56b99a17fc0dd58d0b105834c1a310a7133e991dc113fd9",
-    "source": "target/xtask-scratch/long_strip_decoded_rgb.png",
-    "source_size": [
-      1000,
-      8000
-    ],
-    "tool": "cv2.resize/INTER_AREA"
+    }
   }
 }
 ```
@@ -169,3 +176,4 @@ never patched. See the run log for the current result.
 | NLM parity | §11.7(B)12 | MET |
 | INTER_AREA parity | §8.7(A)2 | MET |
 | Detector-dependent goldens | §8.7(A)6, §8.7(B)9, §9.7(B)11, §10.7(B)15, §11.7(B)13 | BLOCKED on D1+D4 |
+

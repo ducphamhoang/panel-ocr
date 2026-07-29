@@ -4227,12 +4227,39 @@ gating divergence; negative controls constructed in-test and never committed.
     rule 13 applied one level up: we asked exhaustively what the gate enumerates about the *files*
     and never asked what enumerates the *consumers*.
 
-    (c) **The enumeration, recorded (2026-07-29).** Readers of `PROVENANCE.json`:
-    `crates/pc-testkit/tests/provenance_schema.rs` and `xtask/tests/provenance_digests.rs` (typed
-    schema); `crates/pc-testkit/tests/recorded_provenance.rs` (generic key walker);
-    `crates/pc-testkit/tests/model_signature.rs` (**was** hand-indexed, now typed);
-    `xtask/src/model_signature.rs` and `xtask/src/record.rs` (writers, now writing through
-    `pc_testkit::provenance`). Any future reader added to this list carries item 1(a)'s gate with it.
+    (c) **The enumeration, recorded (2026-07-29) — CORRECTED, because the first version of this very
+    clause was itself incomplete.** Readers and writers of `PROVENANCE.json`:
+
+    | file | role |
+    |---|---|
+    | `crates/pc-testkit/tests/provenance_schema.rs` | reader, typed schema |
+    | `xtask/tests/provenance_digests.rs` | reader, typed schema |
+    | `crates/pc-testkit/tests/recorded_provenance.rs` | reader, generic key walker (frozen) |
+    | `crates/pc-testkit/tests/model_signature.rs` | reader — **was** hand-indexed, now typed |
+    | **`xtask/src/calibrate.rs`** | reader — **MISSED by the first enumeration**, see below |
+    | `xtask/src/model_signature.rs` | writer, now through `pc_testkit::provenance` |
+    | `xtask/src/record.rs` | writer, now through `pc_testkit::provenance` |
+
+    Any future reader added to this table carries item 1(a)'s gate with it.
+
+    **How the first enumeration failed, recorded because the method is the lesson.** I ran exactly the
+    grep this item prescribes, piped it through `head -40`, and `xtask/src/calibrate.rs` — five hits —
+    fell past the cut. I then wrote *"I have now enumerated all of them and there is no third"* into a
+    normative clause. **The grep was right; the truncation was mine; and the claim of completeness was
+    made on a truncated result.** Cookbook rule 14 gains this as its own failure mode: an enumeration
+    that is filtered, headed, or eyeballed is not an enumeration, and "a one-line grep is the whole
+    cost" only holds if you read all of its output.
+
+    **What it cost.** `calibrate.rs` read `parsed["jpeg_decode_diagnostic"]["metrics_vs_reference"]`,
+    a shape the migration replaced with the group's `diagnostics` map. `serde_json`'s index returns
+    `Null` for a missing key, and the surrounding code skipped the row when null — so
+    `cargo xtask calibrate-goldens` would have **silently dropped the decoder-diagnostic row from a
+    generated document** rather than failing. Verified by probe: with the old lookup against migrated
+    provenance the row count is 0; with the fix, 1. It was latent only because the committed
+    `docs/GOLDEN_CALIBRATION.md` predates the migration — the next person to regenerate it would have
+    lost the numbers with no error. Fixed to parse through `GroupProvenance`, and a present-but-
+    unreadable provenance now writes an **UNREADABLE** row into the document instead of omitting it,
+    because silent omission is precisely what hid this.
 
     (d) **The adaptation is authorised, in the same category as item 1(f).** The test's assertions
     were never in question — only the JSON path it read them from, which changed by ratified

@@ -194,11 +194,23 @@ fn section_inter_area(body: &mut String) -> Result<bool> {
 
     // The diagnostic image itself is scratch (§16.13 item 6); its metrics were computed
     // at record time and live in PROVENANCE.json.
+    // Read through the shared canonical schema (§16.17 item 2 / §16.24 item 1), NOT by
+    // hand-indexing a `serde_json::Value`. The pre-migration shape nested these metrics under a
+    // `jpeg_decode_diagnostic` key, the canonical shape puts them in the group's `diagnostics`
+    // map, and `Value`'s index returns `Null` for a missing key — so the old lookup combined with
+    // the `is_null()` skip below silently DROPPED this row from a generated document rather than
+    // failing. §16.24 item 19(c)'s reader enumeration missed this consumer entirely.
+    //
+    // A missing file stays a silent skip: `calibrate-goldens` is meant to run in a checkout where
+    // nothing has been recorded. A file that is PRESENT but does not carry the metrics is a
+    // different case and says so in the output, because that is the state the old code hid.
     let provenance_path = paths::recorded_root().join("inter_area/PROVENANCE.json");
     if let Ok(text) = std::fs::read_to_string(&provenance_path) {
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-            let metrics = &parsed["jpeg_decode_diagnostic"]["metrics_vs_reference"];
-            if !metrics.is_null() {
+        match serde_json::from_str::<pc_testkit::provenance::GroupProvenance>(&text)
+            .ok()
+            .and_then(|parsed| parsed.diagnostics.get("metrics_vs_reference").cloned())
+        {
+            Some(metrics) => {
                 let _ = writeln!(
                     body,
                     "| cv2-from-JPEG vs. cv2-from-PNG (decoder diagnostic, non-gating) | {}×{} | {:.6} | {} | {:.6} |",
@@ -207,6 +219,17 @@ fn section_inter_area(body: &mut String) -> Result<bool> {
                     metrics["mean_abs_diff"].as_f64().unwrap_or(f64::NAN),
                     metrics["max_delta"].as_u64().unwrap_or(0),
                     metrics["ssim_as_gray"].as_f64().unwrap_or(f64::NAN),
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    body,
+                    "| cv2-from-JPEG vs. cv2-from-PNG (decoder diagnostic, non-gating) | — | **UNREADABLE** | — | — |\n\n\
+                     > `{}` exists but carries no `diagnostics.metrics_vs_reference`. Re-record with \
+                     `cargo xtask record-fixtures --only inter-area --force`. This row is reported \
+                     rather than omitted deliberately: silently dropping it is how a provenance \
+                     shape change went unnoticed (§16.24 item 19).",
+                    paths::display_relative(&provenance_path)
                 );
             }
         }

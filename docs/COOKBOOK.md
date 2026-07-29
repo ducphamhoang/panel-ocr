@@ -532,8 +532,22 @@ The stop-time review did.
 
 - **Record the enumeration; do not re-derive it.** Re-deriving it is what nobody did. §16.24
   item 19(c) now lists all six readers and writers, and a new one carries the gate with it.
-- **A one-line grep is the whole cost.** `grep -rn "PROVENANCE" --include=*.rs crates/ xtask/`
-  found every reader in seconds, *after* the failure. It would have cost the same before.
+- **A one-line grep is the whole cost — but only if you read all of its output.** This is the
+  trap I then fell into, one item later, and it is worth more than the original lesson.
+  `grep -rn "PROVENANCE" --include=*.rs crates/ xtask/` does find every reader. I ran it, piped
+  it through `head -40`, and `xtask/src/calibrate.rs` — five hits — fell past the cut. I then
+  wrote *"I have now enumerated all of them and there is no third"* into a normative spec clause,
+  on a truncated result. The grep was right; the truncation was mine.
+
+  It cost a silent defect: `calibrate.rs` hand-indexed the old nesting, `serde_json`'s index
+  returns `Null` for a missing key, and the surrounding code skipped the row when null — so
+  `calibrate-goldens` would have dropped a row from a **generated document** with no error. Latent
+  only because the committed doc predated the migration.
+
+  **So: an enumeration that is `head`ed, `grep -v`'d, or eyeballed is not an enumeration.** Count
+  the hits per file (`| awk -F: '{print $1}' | sort | uniq -c`) so a truncated read is visible as a
+  number, and never write "this is all of them" next to a command whose output you did not read to
+  the end.
 - **Producers are not the risk; readers are.** The writers were migrated as an obvious part of
   the task. It is the reader nobody remembered that breaks, because a reader can be in a
   different crate, in a test rather than in `src/`, and reach the format through a
