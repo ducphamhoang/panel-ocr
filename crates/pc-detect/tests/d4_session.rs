@@ -1,5 +1,11 @@
-//! Task D4b -- spec §8.3 step 3's `ort` session (CPU EP, `intra_threads = 1`, one session
-//! per run). FROZEN per CLAUDE.md.
+//! Task D4b -- spec §8.3 step 3's `ort` session (CPU EP by default, configurable
+//! `intra_threads`/`inter_threads` defaulting to `0` = "let ONNX Runtime choose", one
+//! session per run). FROZEN per CLAUDE.md.
+//!
+//! The fixed `intra_threads = 1` this header used to describe was removed by §16.21: its
+//! stated premise ("parallelism is at the image level") was false, because §14.15's
+//! `Mutex<Session>` means image-level parallelism never reaches the detector -- inference
+//! was mutex-serialized *and* single-threaded, costing ~8x. Do not reintroduce the pin.
 //!
 //! `#![cfg(feature = "onnx")]`: without the non-default `onnx` feature this file compiles
 //! to an empty test binary, so a plain `cargo test --workspace` neither builds `ort` nor

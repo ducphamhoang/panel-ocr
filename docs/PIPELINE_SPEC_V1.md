@@ -483,7 +483,9 @@ always_cache_masks           = false
 [text_detector]
 model_path                   = ""        # empty = use managed cache
 concurrent_models            = 1
-mask_refine_mode              = "simple"  # simple | annotation ("annotation" rejected in v1: see §8.3 step 5 / §15.2). Deliberate v1 addition, not present upstream.
+intra_threads                = 0         # 0 = let ONNX Runtime choose (§16.21)
+inter_threads                = 0         # 0 = let ONNX Runtime choose (§16.21)
+mask_refine_mode             = "simple"  # simple | annotation ("annotation" rejected in v1: see §8.3 step 5 / §15.2). Deliberate v1 addition, not present upstream.
 
 [preprocessor]
 box_min_size                 = 400       # 20*20
