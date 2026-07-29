@@ -348,6 +348,89 @@ Keep the §14 register and the code in sync **in both directions** — it has de
 way: entries present in the register with no comment at the implementation site, and
 comments in code with no register entry.
 
+### The test that tells a drafting slip from an amendment
+
+Exit 2 is the one people reach for wrongly, because "the test looks wrong to me" and "the
+test *is* wrong" feel identical from inside a failing run. The question is **not** whether
+the file is committed, or whether the test has ever been green — both are convenience. It is:
+
+> Does the corrected assertion claim **less about the system** than the original did?
+
+If yes, it is an amendment: route it to both architects. If no — same variant, same class,
+same subject, and the changed value is the only one the field's definition admits — it is a
+drafting slip, and correcting it is the CLAUDE.md step-2 test-review landing late.
+
+**The decisive property is forcedness.** In the F1-C case an assertion expected
+`UnverifiableMechanism { index: 0 }` where the entry's block index was 1. Four sibling
+emission sites all carried the block index, and three of the author's *own* assertions in the
+same file required that reading — including `PhantomUnmatched { index: 9 }` against a 5-block
+artifact, where 9 is meaningless as a list slot. So **no implementation that satisfied its
+neighbours could ever have satisfied it**: an unsatisfiable assertion, same shape as §11 item
+22's σ = 0.1 case.
+
+**Where it stops.** If both readings were defensible — no other emission site, no sibling
+depending on it — then choosing the one that makes the code pass is a design decision
+disguised as a typo, and it goes to the architects under exit 2. Forcedness is what makes the
+edit safe; convenience never is.
+
+Corollary worth its own line: **a delegate that stops rather than editing a frozen test has
+done the right thing even when the test is the thing that is wrong.** It cannot see
+forcedness from inside the task — that needs the sibling assertions and the emission sites,
+which is the reviewer's view, not the implementer's.
+
+### Do not accept a predicate that merely makes the tests pass
+
+The mirror of a bad test edit is a bad *implementation* edit: a condition tuned until the
+suite goes green. Real instance from F1-C — five controls expected no `NoOracleField` rows, and
+the fix that arrived was
+
+```rust
+let emit_no_oracle = actual_branch == IdentityBranch::LineLess
+    && expected_rect == upstream_rect
+    && expectations.unmatched_ours.is_empty()
+    && expectations.unmatched_upstream.is_empty();
+```
+
+Whether *this pair's* upstream block carries a confidence value has nothing to do with whether
+some **other** block is unmatched, whether this pair was line-informed, or whether its geometry
+held. Every clause is unrelated to the question the field answers. It passed all five controls
+and would have reported NO-ORACLE coverage as clean on any real page — which have both
+line-informed pairs and unmatched entries — defeating the very requirement (§16.20 item 3(d))
+that an absent upstream value be *recorded* rather than pass silently.
+
+**Test for it:** for each clause of a new condition, ask *"what does this have to do with the
+thing being decided?"* A clause that cannot be justified from the field's own definition is a
+curve-fit, and a green suite over one is worth less than a red suite. When the intended rule is
+not inferable from the tests, that is the finding — say so and hold, rather than shipping the
+predicate that fits.
+
+**And then ask why it wasn't inferable.** In this case the answer was not "the implementer
+missed it": **the draft's own tests contradicted each other.** Two tests expected two
+`NoOracleField` rows on a `bare_block` pair; five expected zero rows on the same input shape.
+No predicate over pair state can separate contradictory expectations, so the curve-fit was the
+only thing available — the unrelated clauses were a *symptom* of the inconsistency, not the
+disease. A delegate producing an unjustifiable condition is therefore evidence to re-read the
+specification it was given, not only the code it wrote.
+
+The root cause is worth naming because it recurs: the two tests expecting rows were **written
+first**, and the five expecting none came later, as controls whose *subject was something
+else*. The earlier expectations were never re-read against the later ones. That is the same
+class as indexing a sample by position (`samples[5]`, silently re-pointed when a variant was
+inserted) and as a loose `.any(matches!(..))` sitting among exact-vector siblings — **a
+draft-wide invariant asserted in one place and silently contradicted in another.** Three
+instances in one task.
+
+Cheap defence, before handing a draft to an implementer: **one pass over every expected-value
+assertion in the file asking only whether they agree with each other.** Not whether each is
+right — whether any two make incompatible claims about the same input shape. Prose review does
+not surface this; the contradiction is invisible until something has to satisfy both.
+
+A deeper instance of the same defect in that draft: a *document property* ("upstream did not
+record confidence") and a *comparison finding* shared one output channel. Nothing diverges when
+one side simply has no data — calling it a divergence is a category error, and it is what made
+a vector length depend on block count. **Check that each output channel carries one kind of
+claim.**
+
 ---
 
 ## 9. Verify your monitor before you trust it
