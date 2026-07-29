@@ -663,6 +663,50 @@ class, caught in the act, by a migration it failed to notice.
 
 ---
 
+## 14a. A pipeline with an adjudicator but no adversary misses whatever nobody disputes
+
+Rule 14 says enumerate the readers. This is the organisational version of the same gap, and
+it explains why the defects in the F1 sequence reached the repo despite four reviewers.
+
+**Fable is convened only when the two Opus architects disagree, and is advisory-only
+otherwise. So it sees disputes and never sees ordinary work.** But none of these was a
+dispute:
+
+| defect | who missed it |
+|---|---|
+| §16.24 item 1(a)'s single-consumer framing | architect, engineer, Fable **and** orchestrator |
+| item 18(h)(ii) "residuals must be zero" | written by the orchestrator, re-read by nobody |
+| item 20(b) "NO count fields" | contradicted a ratified clause; nobody compared them |
+| item 5's derivation applied past its scope | concurred by both architects as written |
+| three supersession markers | asserted in the new entry, old sites left unqualified |
+
+Every one is a place **everyone agreed because nobody checked**. A structure that routes
+disagreement to an adjudicator has no one whose job is to attack a consensus — and
+consensus is exactly where a shared blind spot survives.
+
+What did catch them was the **Codex review gate**, for a reason worth naming: it reads the
+code without knowing the intent, and it does not care who agreed. A reviewer who was in the
+room when the decision was made reads the artifact *plus* what the decision was supposed to
+achieve, and the gap between those two is invisible to them.
+
+Three fixes, in descending value:
+
+1. **Mechanize what can be mechanized.** The supersession cross-check became a test
+   (`CLAUDE.md`, Notes). It is the only one of these that does not depend on anyone
+   remembering, which is precisely why it ranks first — the other two are habits, and habits
+   are what failed five times in one task.
+2. **Review the transcription, not only the ruling.** Rulings got two architects; the §16.x
+   entry transcribing them got none, and *every* transcription had a defect.
+3. **Call a fresh reader for a ratification, not only for a dispute.** One section, cheap,
+   and aimed at consensus rather than conflict.
+
+**Generalisation worth carrying past this project:** when a review structure keeps missing a
+class of defect, check whether it is *triggered* by conflict. If so, it cannot see agreement,
+and the cheapest repair is a reader with no stake in the decision — or better, a check that
+needs no reader at all.
+
+---
+
 ## 15. A supporting example can refute the claim it is cited for — check the sign
 
 §16.20 item 12 wrote that our geometry *"agrees closely and consistently with item 3(b)'s

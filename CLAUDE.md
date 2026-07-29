@@ -36,6 +36,39 @@ unless the user explicitly overrides it for a given task.
      both positions and make the final call (advisory role suspended for this one
      decision; Fable still does not write code).
 
+1a. **Ratification transcription is reviewed before it is committed.** When a ruling
+   (joint-architect or Fable) is transcribed into `docs/PIPELINE_SPEC_V1.md` as a
+   §16.x entry, the *transcription* gets a reader before the commit — not only the
+   ruling it records.
+
+   **Why this step exists, stated so it is not dropped as ceremony.** The pipeline
+   has an adjudicator for *disagreement* and had **no adversary for consensus**.
+   Fable is convened only when the two architects disagree and is otherwise
+   advisory-only, so it sees disputes and never sees ordinary work. Every defect
+   that reached the repo in the F1 sequence was the opposite of a dispute — a place
+   everyone agreed because nobody checked: §16.24 item 1(a)'s single-consumer
+   framing (missed by architect, engineer, Fable *and* Orchestrator), item
+   18(h)(ii)'s "residuals must be zero" (written by the Orchestrator, re-read by
+   nobody before commit), item 20(b)'s "NO count fields" (contradicting a ratified
+   clause), item 5's derivation applied past its scope, and three supersession
+   markers asserted in a new entry while the old sites stayed unqualified.
+   **Rulings got two architects; the transcription of them got none.**
+
+   Two binding consequences:
+
+   - **A fresh reader is called for a ratification, not only for a dispute.** Cost
+     is reading one section. This is closer to Fable's proper role than waiting for
+     disagreement, and it is the only step aimed at consensus rather than conflict.
+   - **When transcribing a narrow conclusion, quote the source's scope verbatim
+     beside it.** All three over-generalisations happened while paraphrasing rather
+     than quoting: a conclusion that was correct about one field, one consumer or
+     one residual form was restated in wider terms than its evidence allowed. If
+     the source says "confidence", the transcription says "confidence" and not
+     "the field"; widening is a separate, argued step.
+
+   The mechanical half of this is a test rather than a habit — see the supersession
+   cross-check gate under Notes.
+
 2. **TDD implementation loop**, per task (or batch of related simple tasks):
    - Before Codex writes any implementation code, the Orchestrator checks the
      planned tests against the spec for relevance/correctness.
@@ -69,10 +102,30 @@ unless the user explicitly overrides it for a given task.
      task status/output directly) instead of waiting another 5 minutes.
    - If an agent is confirmed dead or hung, restart/resume it rather than silently
      waiting further.
+   - **A status field is not progress.** Two Codex jobs in the F1 sequence returned
+     `completed` having written nothing, and one `resume` failed at 0s from a
+     collision with another job. What distinguished real work from a no-op was file
+     mtime plus a build-error or test count — so check an artifact that changes, not
+     a field that claims. A fresh task is also more reliable than a resume: resumes
+     are what collided.
 
 ## Notes
 
 - Specs are the source of truth; the plan and tests must trace back to them.
+- **The supersession cross-check is a TEST, not a habit.** For every supersession claim
+  in `docs/PIPELINE_SPEC_V1.md` — `SUPERSEDED`, `amended`, `ERRATUM`, `QUALIFIED`,
+  `withdrawn`, `NARROWED`, `RE-GROUNDED` — the site it names must carry a pointer back
+  to the claiming section. §16.19's convention already required the marker *at* the
+  superseded text; what it lacked was enforcement, so the marker was repeatedly written
+  only at the claiming end, which is the end a future reader does **not** land on.
+  This is cookbook rule 14 applied to the spec rather than to code, and it is the one
+  safeguard here that does not depend on anyone remembering it. Deleting a marker must
+  turn a test red and name which claim and which target.
+- **A claim's scope travels with it.** When transcribing a ruling, quote the source's
+  scope verbatim beside the conclusion. Every over-generalisation in the F1 sequence
+  happened while paraphrasing: correct about one field, one consumer or one residual
+  form, restated in wider terms than the evidence allowed. Widening is a separate step
+  and needs its own argument.
 - **Read [`docs/COOKBOOK.md`](docs/COOKBOOK.md) before an audit, before ratifying a
   deviation, and before trusting a green test suite.** It records this project's recurring
   process failures and the decisions that resolved them — the dominant defect class (a test
