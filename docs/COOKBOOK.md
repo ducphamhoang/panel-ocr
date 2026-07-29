@@ -430,6 +430,9 @@ assertion to where it was *produced*. If the answer is "another committed file",
 checking a copy, and the risk lives one hop upstream. A gate on derived data can only catch
 derivation bugs — never the input it derived from.
 
+**And ask what the gate *enumerates*, not only what it asserts** — see rule 13, which is the
+same family and cost three more iterations to find.
+
 Two related traps in the same family:
 
 - **A dependency graph that hides the same inversion.** `insta` was declared in the
@@ -447,3 +450,61 @@ Two related traps in the same family:
   pad region *by colour* (`crop_letterbox` uses `dw`/`dh` geometry), so a black-bordered
   page cannot be mistaken for padding. That was the real risk, and it needed a grep, not an
   assumption.
+
+---
+
+## 13. Ask what a gate *enumerates*, not only what it asserts
+
+Rule 1 asks whether an assertion can fail. That is necessary and not sufficient: an
+assertion can be perfectly falsifiable and still be **blind to everything outside the set it
+iterates**. A gate is only as complete as its input set, and the input set is usually
+invisible in the assertion.
+
+The recorded-fixture digest gate (§16.13 item 6) took **five** iterations. Each version was
+green, each looked thorough, and only the last one was both:
+
+| # | what it bound | how it stayed satisfiable while broken |
+|---|---|---|
+| 1 | three hand-named artifacts | never visited `tests/fixtures/recorded/model_signature/` at all — it declares digests as `output_sha256`/`source_sha256`, so even a generic walk keyed on `sha256` found nothing there, leaving a committed file verified by nothing |
+| 2 | counts: 6 declarations, 4 committed | **cardinality is not identity** — duplicate one declared path, drop another, and the totals still read 6/4 while the dropped fixture goes unverified |
+| 3 | the exact sorted *sets* of paths | a declaration could sit in the wrong group's `PROVENANCE.json`: path set identical, every byte verified, but no provenance file described its own group |
+| 4 | + group locality | **coverage ran one direction only** |
+| 5 | + every file is declared | — |
+
+Iterations 1–4 are rule 1's family: the check was satisfiable without doing the work.
+**Iteration 4→5 is a different failure and the reason this rule exists.** The gate verified
+that every *declaration* had a matching file with the right bytes in the right group — and
+never that every *file* had a declaration. It enumerated group **directories**, never the
+files inside them. An orphan fixture could sit in the tree with no digest and no provenance,
+trusted by every consuming golden test. Proven by copying a fixture to
+`nlm/undeclared_orphan.png`: the gate passed.
+
+**The question that finds this class:** for each thing the gate protects, *what does it
+iterate to find them?* If the answer is "a list I wrote", "a set derived from the artifact
+under test", or "the manifest", then anything absent from that source is unguarded — and
+absence is exactly what you are trying to detect. Bidirectional coverage means enumerating
+**both** populations independently and asserting they match.
+
+**Corollary — a broad exemption is the bypass wearing different clothes.** Closing this
+needed exactly two exemptions (a group's own `PROVENANCE.json`; the root `.gitkeep`), each
+named. `ignore dotfiles` or an extension allowlist would have re-opened it silently. So the
+exempt set is itself asserted: a stray file must not pass by merely *looking*
+exemption-shaped.
+
+**Two related traps in the same family:**
+
+- **A hard-coded expected count is a ratchet in the wrong direction.** It fails when
+  something is added — the safe case, since a human then looks — and passes when something
+  is quietly swapped. Prefer asserting the expected *set*; the count comes free from it.
+- **Diagnostics are part of the gate.** A count mismatch says "6 != 7" and sends the reader
+  hunting. A set mismatch can say which paths appeared unexpectedly and which expected ones
+  went missing. The second costs a few lines and turns a failure into a fix.
+
+*Honest note on how these were found:* the review gate caught iterations 1, 2 and 4, not me,
+and iterations 1 and 2 were my own specification errors — I chose the count as the safeguard
+and named only three artifacts. What I did do right was falsify each fix myself rather than
+accept a report (rule 10), which is how the locality and orphan proofs got run at all. Every
+row above was demonstrated by deliberately breaking the tree and watching the gate fail, then
+restoring it — and `git status --porcelain -- tests/fixtures/` being empty is a hard
+precondition before any commit, because a leaked probe is precisely the corruption this gate
+exists to detect.
