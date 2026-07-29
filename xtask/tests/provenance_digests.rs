@@ -41,6 +41,58 @@ fn read_group(name: &str) -> GroupProvenance {
         .unwrap_or_else(|error| panic!("`{}` is not canonical provenance: {error}", path.display()))
 }
 
+/// How many recorded groups carry §16.24 item 2's detector pins. **A literal, never derived from
+/// the filesystem** — the same discipline §16.24 item 1(f) fixes for `EXPECTED_GROUPS`, and for the
+/// same reason: a constant read off the tree cannot fail when the tree changes.
+///
+/// This is the load-bearing line in this file. The three tests below are the compensating legs
+/// §16.24 item 2 traded the walker dodge for, and with nothing recorded they have nothing to
+/// assert. The danger is not today's vacuity — no `model_digest` exists to be wrong — it is that
+/// **recording the detector group without activating these legs would keep the suite green.**
+/// Raising this to 1 is the edit that cannot be skipped: record the group and leave it at 0, and
+/// `detector_pins()` fails with "found 1, expected 0" instead of three tests quietly returning.
+const EXPECTED_DETECTOR_PIN_GROUPS: usize = 0;
+
+/// Every committed detector pin block in the tree, discovered by walking the recorded root, with
+/// the count checked against the literal above **before** anything is returned.
+///
+/// `None` here is therefore a *verified* dormant state rather than an assumption: it means the
+/// tree really does carry zero detector pins, not that this test looked in one hard-coded place
+/// and found nothing. That distinction is what a bare `if !path.is_file() { return }` gave away —
+/// it conflates "not recorded yet" with "recorded somewhere I did not look".
+fn detector_pins() -> Option<(String, provenance::DetectorPins)> {
+    let root = paths::recorded_root();
+    let mut found: Vec<(String, provenance::DetectorPins)> = std::fs::read_dir(&root)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", root.display()))
+        .map(|entry| entry.expect("readable recorded entry"))
+        .filter(|entry| entry.file_type().expect("stat-able entry").is_dir())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let provenance_path = entry.path().join(provenance::PROVENANCE_FILE_NAME);
+            // A group directory without provenance already fails the frozen gate
+            // (`recorded_provenance.rs` panics on it), so skipping it here duplicates nothing.
+            if !provenance_path.is_file() {
+                return None;
+            }
+            read_group(&name).detector.map(|pins| (name, pins))
+        })
+        .collect();
+    found.sort_by(|left, right| left.0.cmp(&right.0));
+
+    assert_eq!(
+        found.len(),
+        EXPECTED_DETECTOR_PIN_GROUPS,
+        "expected {EXPECTED_DETECTOR_PIN_GROUPS} recorded group(s) carrying detector pins, found \
+         {}: {:?}. If the detector group was just recorded, raise EXPECTED_DETECTOR_PIN_GROUPS \
+         and CONFIRM the three digest identities in this file actually run — §16.24 item 2 makes \
+         the walker dodge for `model_digest`/`decoded_rgb_digest` conditional on exactly that.",
+        found.len(),
+        found.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+
+    found.into_iter().next()
+}
+
 /// Measured with `sha256sum` at `8a309a0`, NOT with any panel-ocr code path (§16.24 item 15).
 /// `(repo-relative source path, digest)`.
 const UPSTREAM_SOURCE_DIGESTS: &[(&str, &str)] = &[
@@ -148,26 +200,17 @@ fn every_upstream_source_consumed_by_a_recording_group_hashes_to_its_literal() {
 // conditional-return *gate* here (§16.24 item 6) — the gate is the frozen provenance test; this
 // is an identity between a constant and a committed field.
 fn the_detector_group_model_digest_equals_the_pc_models_constant() {
-    let path = paths::recorded_root()
-        .join(provenance::DETECTOR_GROUP)
-        .join(provenance::PROVENANCE_FILE_NAME);
-    if !path.is_file() {
-        // DORMANT, and said out loud on purpose (§16.24 item 19(f) / cookbook rule 6): this test
-        // is one of the compensating legs §16.24 item 2 traded the walker dodge for, and with no
-        // detector group recorded it executes ZERO assertions while reporting as passed. A silent
-        // early return here is a green test concealing an unenforced condition. Falsifying all
-        // three legs -- corrupt each digest by one nibble and watch them fail -- is a named line
-        // item on the atomic recording commit.
+    // `detector_pins()` asserts the discovered count against EXPECTED_DETECTOR_PIN_GROUPS BEFORE
+    // returning, so this early return is a VERIFIED dormant state rather than a silent skip:
+    // recording the group without raising that literal fails there instead of passing here.
+    let Some((_group_name, pins)) = detector_pins() else {
         println!(
-            "DORMANT: no detector group recorded yet, so this compensating leg asserted nothing \
-             (§16.24 item 2's condition is UNENFORCED until the recording commit)"
+            "DORMANT: zero recorded groups carry detector pins, verified against \
+             EXPECTED_DETECTOR_PIN_GROUPS; §16.24 item 2's condition activates at the recording \
+             commit, and this leg must be falsified then"
         );
         return;
-    }
-    let group = read_group(provenance::DETECTOR_GROUP);
-    let pins = group
-        .detector
-        .expect("the detector group carries group-level pins (R13)");
+    };
     assert_eq!(pins.model, COMIC_TEXT_DETECTOR.file_name);
     assert_eq!(
         pins.model_digest, COMIC_TEXT_DETECTOR.sha256,
@@ -182,25 +225,17 @@ fn the_detector_group_model_digest_equals_the_pc_models_constant() {
 // here — `pc_detect::onnx::PAD_VALUE` is ungated (`crates/pc-detect/src/onnx.rs:30`), so this
 // runs in the default tier with no ONNX Runtime.
 fn the_detector_group_pad_value_equals_the_implementation_constant() {
-    let path = paths::recorded_root()
-        .join(provenance::DETECTOR_GROUP)
-        .join(provenance::PROVENANCE_FILE_NAME);
-    if !path.is_file() {
-        // DORMANT, and said out loud on purpose (§16.24 item 19(f) / cookbook rule 6): this test
-        // is one of the compensating legs §16.24 item 2 traded the walker dodge for, and with no
-        // detector group recorded it executes ZERO assertions while reporting as passed. A silent
-        // early return here is a green test concealing an unenforced condition. Falsifying all
-        // three legs -- corrupt each digest by one nibble and watch them fail -- is a named line
-        // item on the atomic recording commit.
+    // `detector_pins()` asserts the discovered count against EXPECTED_DETECTOR_PIN_GROUPS BEFORE
+    // returning, so this early return is a VERIFIED dormant state rather than a silent skip:
+    // recording the group without raising that literal fails there instead of passing here.
+    let Some((_group_name, pins)) = detector_pins() else {
         println!(
-            "DORMANT: no detector group recorded yet, so this compensating leg asserted nothing \
-             (§16.24 item 2's condition is UNENFORCED until the recording commit)"
+            "DORMANT: zero recorded groups carry detector pins, verified against \
+             EXPECTED_DETECTOR_PIN_GROUPS; §16.24 item 2's condition activates at the recording \
+             commit, and this leg must be falsified then"
         );
         return;
-    }
-    let pins = read_group(provenance::DETECTOR_GROUP)
-        .detector
-        .expect("the detector group carries group-level pins (R13)");
+    };
     assert_eq!(pins.ours.pad_value, pc_detect::onnx::PAD_VALUE);
 }
 
@@ -218,26 +253,17 @@ fn the_detector_group_pad_value_equals_the_implementation_constant() {
 //
 // Falsifiable: re-encode the page, or drop the BGR->RGB conversion on either side, and this fails.
 fn our_recorded_decoded_rgb_digest_equals_the_decoded_committed_page() {
-    let path = paths::recorded_root()
-        .join(provenance::DETECTOR_GROUP)
-        .join(provenance::PROVENANCE_FILE_NAME);
-    if !path.is_file() {
-        // DORMANT, and said out loud on purpose (§16.24 item 19(f) / cookbook rule 6): this test
-        // is one of the compensating legs §16.24 item 2 traded the walker dodge for, and with no
-        // detector group recorded it executes ZERO assertions while reporting as passed. A silent
-        // early return here is a green test concealing an unenforced condition. Falsifying all
-        // three legs -- corrupt each digest by one nibble and watch them fail -- is a named line
-        // item on the atomic recording commit.
+    // `detector_pins()` asserts the discovered count against EXPECTED_DETECTOR_PIN_GROUPS BEFORE
+    // returning, so this early return is a VERIFIED dormant state rather than a silent skip:
+    // recording the group without raising that literal fails there instead of passing here.
+    let Some((_group_name, pins)) = detector_pins() else {
         println!(
-            "DORMANT: no detector group recorded yet, so this compensating leg asserted nothing \
-             (§16.24 item 2's condition is UNENFORCED until the recording commit)"
+            "DORMANT: zero recorded groups carry detector pins, verified against \
+             EXPECTED_DETECTOR_PIN_GROUPS; §16.24 item 2's condition activates at the recording \
+             commit, and this leg must be falsified then"
         );
         return;
-    }
-    let group = read_group(provenance::DETECTOR_GROUP);
-    let pins = group
-        .detector
-        .expect("the detector group carries group-level pins (R13)");
+    };
 
     // Ours decodes `input_page` itself (§16.24 item 17); assert that rather than assume it, since
     // the whole point of `decoded_from` is that the two sides read different artifacts.
