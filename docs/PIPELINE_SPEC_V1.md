@@ -4623,10 +4623,63 @@ required a ratification before implementation.
    `DETECTOR_ORACLE.md`**, one per serialized field, never a per-block emission.
 
 5. **`Partial` is GATING, derived from item 3(e) rather than as an exception to item 3(d).**
-   The derivation: `Partial` ⟹ "the script captured upstream's scores" is neither true nor false of
-   the document ⟹ item 9's two-way branch does not resolve ⟹ the `confidence` partition row is
-   `OPEN` ⟹ §16.20 item 3(e) makes it blocking. The gating row is therefore **not a verdict about
-   confidence** — it is the report stating that the partition cannot be completed.
+
+   **RE-GROUNDED (joint architects, 2026-07-29). The original derivation below named §16.24 item 9
+   as the premise when item 9 is only an *instance* of it, and that was the defect** — not, as first
+   suspected, a confidence rule wrongly applied to two fields. The load-bearing ground is **§16.20
+   item 3(e) alone**: a partition row must close in exactly one bucket; `DIAGNOSTIC` asserts an
+   oracle exists for the field across the compared set and `NO-ORACLE` asserts none exists;
+   `Partial` satisfies **neither description of the artifact**, so the row cannot close; `OPEN` is a
+   blocking state; the fixture commit blocks. Every step is **field-agnostic** — it never mentions
+   capture, scores, or item 9 — and it follows from the partition being over *fields* while a bucket
+   is a property of the *whole field*: a field present on some gated blocks and absent on others has
+   no bucket, **whatever made it absent**.
+
+   That disposes of the objection that "there is no capture step for `language`". True, and
+   irrelevant: it is a claim about the *mechanism* of absence, and item 3(e) does not ask. This is
+   §16.25's own move applied one notch further — coverage is a different subject from the field's
+   value, and the *reason* for absence is a different subject again from whether the row closes.
+   Recorded because the objection is the natural one and it reads as decisive until the premise is
+   located. Its true observation survives as a note pointing the other way: if every detected
+   upstream block necessarily carries a class index, partial `language` is a **stronger** indictment
+   of the recording than partial `confidence`, because no legitimate per-block mechanism explains it.
+
+   **Scope, as a two-condition test a future reader runs on a new field.** The rule applies iff
+   **both**: (i) the comparator reads the field **per gated upstream block as an `Option` from the
+   oracle artifact**, so coverage is defined at all; **and** (ii) the field carries a §16.20 item
+   3(e) **partition row**, so an unresolvable bucket is a blocking state. Today that is exactly
+   `confidence` and `language`, which is why `ComparisonReport` carries an `OracleCoverage` for those
+   two and no others. Both conditions are load-bearing and each excludes a real candidate:
+
+   - **`raw_mask` fails (i).** It is not in `OracleBlock`, the comparator never reads it, and there
+     is no per-block optionality to be partial about. Its bucket is settled unconditionally by item
+     3(d) as reaffirmed by §16.24 item 7. Rest the exclusion on **(i)**, not on 3(d) settling the
+     bucket — otherwise a future field that 3(d) happens to mention becomes ambiguous.
+   - **`base_xyxy_pretruncation` fails (ii).** It *is* a per-block `Option` read from the artifact,
+     so (i) alone would sweep it in. It carries no partition row — an upstream-only probe, not a
+     serialized field of `PageDataRaw`/`DetectedBlock`/`RawBlock` — and its absence is already
+     per-pair visible in `PairResidual`. This is the asymmetry refinement (c) required be stated
+     deliberately; the **conjunction** is what makes it derivable rather than remembered.
+
+   §16.24 item 9's clause that the row "may not close as `OPEN` **on this account**" is unaffected
+   either way: it forecloses `OPEN` for whole-document *absence*, never for *inconsistency*.
+
+   **The implementation was already correct** (`crates/pc-detect/src/oracle.rs`, the loop gating both
+   fields) and does not change; the conclusion did not move, only its grounds. **One control is
+   still owed before the recording run**, additive under rule 8 exit 1, because the
+   `language`-`Partial` path is currently unexercised — the existing test asserts
+   `coverage.language == Present`: a language-partial/confidence-`Present` case asserting exactly one
+   gating row with `field: "language"` **and** that the covered block's `LanguageDelta` is still
+   emitted (mirroring the confidence half's subset-reporting proof, without which the control proves
+   blocking but not reporting); plus a both-partial case asserting **two** rows with the order pinned
+   (`confidence` before `language`), since emission order is contractual and an unasserted order is
+   an unpinned contract.
+
+   The original derivation, preserved per §16.19's convention: *`Partial` ⟹ "the script captured
+   upstream's scores" is neither true nor false of the document ⟹ item 9's two-way branch does not
+   resolve ⟹ the `confidence` partition row is `OPEN` ⟹ §16.20 item 3(e) makes it blocking.* The
+   gating row is therefore **not a verdict about the field** — it is the report stating that the
+   partition cannot be completed.
 
    Item 9's clause "may not close as `OPEN` **on this account**" does not reach it: that account is
    upstream not persisting confidence. Partial capture is a different account — **our** recording
