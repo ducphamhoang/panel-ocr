@@ -4282,16 +4282,33 @@ gating divergence; negative controls constructed in-test and never committed.
     the tests below are stated as **obligations on F1-C**, and the invariant is stated as a
     requirement on the type rather than on the implementer's diligence.
 
-    **Binding: `Expectations` carries NO count fields.** The signed entry list (item 4's "unmatched
-    entries with their mechanisms") is the single source of truth, and `class_duplicates` /
-    `documented_*` / any `open_*` term are **functions of it**. With independent literal counts a
-    caller could set `documented_upstream_only = 4` while listing three entries, closing the
-    arithmetic with no fourth row — cookbook rule 13's iteration-2 defect ("cardinality is not
-    identity") re-imported into the comparator, in a test nobody re-audits once the signatures are
-    collected. With the counts derived, closing the arithmetic requires **adding an entry**, and an
-    entry either cites a register anchor (whose existence item 11's anchor test already verifies) or
-    is `Open` and raises its gating row. Inflation becomes a documented lie under a human signature
-    rather than an arithmetic bypass.
+    **Binding: the MECHANISM-PARTITION counts are derived; the ANTI-VACUITY literals are not.** The
+    distinction is load-bearing and an earlier draft of this clause got it wrong by saying
+    "`Expectations` carries NO count fields", which **contradicts §16.20 item 3(b)** — that clause
+    *requires* the comparator to "assert the number of pairs it compared against a hard-coded expected
+    count", because "a renamed field silently yields an empty pairing rather than an error". Deleting
+    the literal would have removed the only guard against "compared 0 boxes, 0 divergences → PASS".
+    Corrected here; the two guards defend **different** bypasses and both are required:
+
+    - **Derived, from the signed entry list:** `class_duplicates`, `documented_*`, and any `open_*`
+      term. These guard against **inflation** — with independent literal counts a caller could set
+      `documented_upstream_only = 4` while listing three entries, closing the arithmetic with no
+      fourth row (cookbook rule 13's iteration-2 defect, "cardinality is not identity", re-imported
+      into the comparator, in a test nobody re-audits once signatures are collected). Derived, closing
+      the arithmetic requires **adding an entry**, and an entry either cites a register anchor (whose
+      existence item 11's anchor test verifies) or is `Open` and raises its gating row. Inflation
+      becomes a documented lie under a human signature rather than an arithmetic bypass.
+    - **Hard-coded literals, authored and signed:** `pairs`, `upstream_total`, `ours_total`. These
+      guard against **vacuity** — the empty-pairing failure item 3(b) names. They may **not** be
+      derived from the artifacts, and this is not a stylistic preference: `upstream_total` derived from
+      the upstream document would make a deleted box invisible to accounting, because the expectation
+      would move with the thing it is meant to check. That is cookbook rule 13's collapse and rule 7's
+      circle in one step.
+
+    The deleted-box control resolves cleanly under this split, which is the check that the split is
+    right: authored `pairs = 4`, `upstream_total = 5`, `ours_total = 4`; derived
+    `documented_upstream_only = 1` from the single `Open` entry. Both equations close — `4 + 0 + 1 = 5`
+    and `4 + 0 = 4` — and the fault yields exactly one gating row (`OpenMechanism`).
 
     **Binding: declared-unmatched == computed-unmatched, both directions**, where computed is
     `artifact − paired` over the *declared* pairs. This is a set difference over a supplied pairing,
@@ -4300,10 +4317,10 @@ gating divergence; negative controls constructed in-test and never committed.
     actually unmatched.
 
     **The derivation is load-bearing for (a)'s own conclusion, not an addition to it.** Trace the
-    deleted-box control under the partition reading with *caller-authored* counts: `pairs` falls to
-    11, declared `documented_ours_only` is 0, `ours_total` is 12 — so the equation fails anyway and
-    the fault produces two gating rows, which is exactly what (a) claims the partition reading
-    avoids. **The partition reading closes only if the counts are computed from the actually-unmatched
+    deleted-box control with the *mechanism* counts also caller-authored: `pairs` falls to 11, declared
+    `documented_ours_only` is 0, `ours_total` is 12 — so the equation fails anyway and the fault
+    produces two gating rows, which is exactly what (a) claims the partition reading avoids. **The
+    partition reading closes only if the mechanism counts are computed from the actually-unmatched
     set.** Recorded this way because (a) read as sufficient on its own and was not.
 
     **Required of F1-C** (obligations, not citations): a test asserting that the three injected faults
