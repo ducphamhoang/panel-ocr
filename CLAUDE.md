@@ -73,6 +73,17 @@ unless the user explicitly overrides it for a given task.
 ## Notes
 
 - Specs are the source of truth; the plan and tests must trace back to them.
+- **Read [`docs/COOKBOOK.md`](docs/COOKBOOK.md) before an audit, before ratifying a
+  deviation, and before trusting a green test suite.** It records this project's recurring
+  process failures and the decisions that resolved them — the dominant defect class (a test
+  whose name claims more than its assertion verifies), how to classify per-image vs
+  run-fatal failures from a function signature, why upstream PanelCleaner is the tiebreak
+  oracle, the three legitimate exits from a frozen test, and a running list of over-claims
+  to check yourself against. Add to it whenever a pattern recurs or a costly mistake is
+  resolved; it is process memory, not a changelog.
+- When the spec is ambiguous or two readings conflict, consult the upstream implementation
+  this project ports — https://github.com/VoxelCubes/PanelCleaner — by running it, not only
+  by reading it. See cookbook rule 3 for the no-sudo install recipe.
 - **Committing is pre-authorized once work is ready** — no need to ask first. "Ready"
   means all of the following have been verified by actually running them, not assumed:
   `cargo test --workspace` green, the `onnx` feature tier green
