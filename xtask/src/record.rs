@@ -127,6 +127,33 @@ pub fn run(
     Ok(results)
 }
 
+/// Is this group's recorded state **complete** — its outputs *and* a `PROVENANCE.json` that parses
+/// at the current schema version?
+///
+/// The skip-if-present checks below used to look only at the output artifacts, which reports
+/// `Outcome::Recorded` for a group whose provenance is missing or on a pre-migration shape. That is
+/// a **false success**: the maintainer ran the recorder precisely to regenerate that file, and was
+/// told there was nothing to do. It matters more since §16.24 item 1 changed the schema — a
+/// checkout carrying pre-migration provenance would be told "already present" and left stale,
+/// surfacing later in `provenance_schema.rs` pointing at the file rather than at the recorder that
+/// declined to write it.
+///
+/// Returning `false` on any read or parse failure is deliberate and is NOT the silent-path defect
+/// fixed elsewhere in this crate: false means "not current", which causes the caller to do *more*
+/// work (re-record and rewrite the provenance), never less. The conservative answer is the safe one
+/// here, which is exactly why the polarity is worth stating.
+fn provenance_is_current(group: &str) -> bool {
+    let path = paths::recorded_root()
+        .join(group)
+        .join(pc_testkit::provenance::PROVENANCE_FILE_NAME);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    serde_json::from_str::<GroupProvenance>(&text).is_ok_and(|parsed| {
+        parsed.schema_version == pc_testkit::provenance::PROVENANCE_SCHEMA_VERSION
+    })
+}
+
 // ------------------------------------------------------------------ group: nlm
 
 fn record_nlm(tooling: &PythonTooling, force: bool) -> Result<Outcome> {
@@ -137,10 +164,13 @@ fn record_nlm(tooling: &PythonTooling, force: bool) -> Result<Outcome> {
             .map(|name| out_dir.join(nlm_reference_name(name)))
             .filter(|path| path.is_file())
             .collect();
-        if existing.len() == NLM_BUBBLES.len() {
+        // Outputs AND current-schema provenance: a group is "already recorded" only when its
+        // recorded state is complete, and the recorded state includes its provenance.
+        if existing.len() == NLM_BUBBLES.len() && provenance_is_current("nlm") {
             return Ok(Outcome::Recorded {
                 detail: format!(
-                    "{} reference(s) already present (use --force to re-record)",
+                    "{} reference(s) and a current-schema PROVENANCE.json already present \
+                     (use --force to re-record)",
                     existing.len()
                 ),
             });
@@ -181,10 +211,11 @@ pub fn nlm_reference_name(bubble: &str) -> String {
 
 fn record_inter_area(tooling: &PythonTooling, force: bool) -> Result<Outcome> {
     let reference = paths::recorded_root().join(INTER_AREA_REFERENCE);
-    if reference.is_file() && !force {
+    // Same completeness rule as `record_nlm`: the output alone is not the recorded state.
+    if reference.is_file() && provenance_is_current("inter_area") && !force {
         return Ok(Outcome::Recorded {
             detail: format!(
-                "{} already present (use --force to re-record)",
+                "{} and a current-schema PROVENANCE.json already present (use --force to re-record)",
                 paths::display_relative(&reference)
             ),
         });
