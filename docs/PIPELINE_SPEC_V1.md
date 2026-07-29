@@ -64,7 +64,7 @@ pc-detect, pc-ocr, pc-preprocess, pc-mask, pc-denoise, pc-export ← pc-pipeline
 pc-testkit ← (dev-dependencies of every crate above)
 ```
 
-Third-party crates (pinned in `[workspace.dependencies]`): `serde`/`serde_json`, `toml_edit`, `image`, `imageproc`, `ndarray`, `rayon`, `clap` (derive), `thiserror`, `anyhow` (binary only), `tracing` + `tracing-subscriber`, `ort` (`=2.0.0-rc.12`, feature-gated), `reqwest` (rustls), `sha2`, `hf-hub`, `indicatif`, `regex`, `csv`, `uuid` (§4.2's `CachePaths` needs it). Dev: `insta` (**restricted use, §15.10** — only for the two named regression locks in §8.7(B)9 and §9.7(B)11; every numeric/algorithmic gate elsewhere uses hand-written assertions), `approx`, `tempfile` (disk-backed tests, e.g. `ImageHandle` materialization).
+Third-party crates (pinned in `[workspace.dependencies]`): `serde`/`serde_json`, `toml_edit`, `image`, `imageproc`, `ndarray`, `rayon`, `clap` (derive), `thiserror`, `anyhow` (binary only), `tracing` + `tracing-subscriber`, `ort` (`=2.0.0-rc.12`, feature-gated), `reqwest` (rustls), `sha2`, `hf-hub`, `indicatif`, `regex`, `csv`, `uuid` (§4.2's `CachePaths` needs it). Dev: `approx`, `tempfile` (disk-backed tests, e.g. `ImageHandle` materialization).
 
 ---
 
@@ -655,7 +655,7 @@ Write the scaled RGB image to `base_image_dest` as PNG (compression default) whe
 - Model: upstream's `comictextdetector.pt.onnx`
   (`https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3/comictextdetector.pt.onnx`,
   sha256 `1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f`) — resolved/downloaded/verified by `pc-models`.
-- Preprocess (port of `inference.preprocess_img` + `letterbox`): letterbox to `1024×1024` with `stride=64, auto=false`, i.e. scale by `r = min(1024/h, 1024/w)` (no upscaling beyond `r=1`... upstream `letterbox` default `scaleup=True`; keep upstream behaviour: allow upscale), resize with bilinear, pad **right/bottom** with `(114,114,114)` to reach the padded size; record `(dw, dh)` = total padding in x/y. Channel order: RGB, NCHW, `f32 / 255.0`.
+- Preprocess (port of `inference.preprocess_img` + `letterbox`): letterbox to `1024×1024` with `stride=64, auto=false`, i.e. scale by `r = min(1024/h, 1024/w)` (no upscaling beyond `r=1`... upstream `letterbox` default `scaleup=True`; keep upstream behaviour: allow upscale), resize with bilinear, pad **right/bottom** with `(0,0,0)` (upstream default: `imgproc_utils.py:95`; call without `color`: `inference.py:86`) to reach the padded size; record `(dw, dh)` = total padding in x/y. Channel order: RGB, NCHW, `f32 / 255.0`.
 - Outputs (3): `blks` `[1, N, 5 + n_classes]` (n_classes = 2), with verified real shapes `blk` `[1, 64512, 7]`, `mask`/`seg` `[1, 1, 1024, 1024]`, and `lines_map`/`det` `[1, 2, 1024, 1024]`; `64512 = 3 × (128² + 64² + 32²)` for a 1024 input at strides 8/16/32. If the second output has 2 channels and the third has 1, swap them (upstream guards for this: `inference.py:181-185`). Bind by index, but log the actual output names/shapes once at `DEBUG` so a model swap is diagnosable.
 - Execution provider: CPU only, `intra_threads = 1` (parallelism is at the image level), session created once and shared.
 
@@ -736,7 +736,7 @@ Batching: `{D1, D3}` one call; `{D7, D9}` one call; `D2`, `D4`, `D5`, `D6`, `D8`
 3. NMS on a hand-built candidate set (three overlapping boxes with known IoUs straddling 0.35, one below objectness `0.4`, one with objectness `> 0.4` but best class-score `<= 0.4` — must also be dropped) yields exactly the expected surviving boxes and classes.
 4. Refinement on a synthetic 64×64 probability mask with one box: pixels at value 61 survive, at 60 do not (strict `>`); no output pixel lies outside `rect.pad(16)`; a lone pixel at value 200 **outside** every expanded box is zeroed.
 5. Coverage filter: a block whose refined-mask mean is 25/255 (≈0.098) is dropped; 26/255 (≈0.102) is kept.
-6. `run()` with `ReplayDetector` over a recorded fixture produces a `PageDataRaw` whose JSON is byte-identical across 10 runs and across 1 vs 8 rayon threads. **`insta` snapshot, decided (§15.10) — allowed here under mandatory safeguards:** (a) the first accepted snapshot must be reviewed against a hand-traced expected value, with reviewer/date/method recorded in `docs/GOLDEN_CALIBRATION.md`, before commit; (b) the snapshot is subject to the frozen-tests rule exactly like a hand-written test — `cargo insta accept` is forbidden in CI, and any change requires joint-architect sign-off (state this as a comment at the `assert_json_snapshot!` call site); (c) no other snapshot tests may be added without the same sign-off.
+6. `run()` with `ReplayDetector` over a recorded fixture produces a `PageDataRaw` whose JSON is byte-identical across 10 runs and across 1 vs 8 rayon threads, **and equals the committed `#raw.json`**. **Hand-written assertions — no `insta` snapshot (§15.10, superseded by §16.20 item 1).** The determinism half never needed a snapshot: it compares runs against each other. The regression half is one hand-written equality against the committed fixture, which locks strictly more than a snapshot would (every field: `confidence`, `language`, `mask_coverage`, `scale`, `image_size`, schema shape) and more than §8.7(B)9's boxes-only lock. Note what this test does and does not verify: `ReplayDetector` ignores the image it is passed (§7.2.1), and per `crates/pc-detect/src/lib.rs` it copies `rect`/`class_index`/`confidence` out of the fixture untouched — so the values this test *computes* are `mask_coverage`, the survivor set, `scale` and `image_size`. The fixture's own correctness is gated separately, by §16.20 item 3's committed-oracle review.
 7. `split_image` then `stitch_images` on `long_strip.jpg` reproduces the source **bit-exactly** (as raw pixels, before re-encode).
 
 **(B) Parity**
@@ -859,7 +859,7 @@ Batching: `{P1, P2, P3, P4, P5}` one sequential call (all pure geometry/boilerpl
 
 **(B) Parity**
 
-11. On the recorded page fixture with `MockOcrEngine` returning `""` for every crop, the resulting `PageData` box tiers are locked as an `insta` JSON snapshot. **Decided (§15.10) — same three safeguards as §8.7(B)9 apply**: hand-traced review documented in `docs/GOLDEN_CALIBRATION.md` before commit; `cargo insta accept` forbidden in CI, changes need joint-architect sign-off; no further snapshot tests without the same process.
+11. On the recorded page fixture with `MockOcrEngine` returning `""` for every crop, the resulting `PageData` box tiers are locked by **hand-written integer assertions — no `insta` snapshot** (§15.10, superseded by §16.20 item 1(a)). The tiers are pure integer arithmetic over the fixture rects and the committed profile constants, so each expected value is written at the assertion site with its derivation in a comment; worked example from §16.20, for block rect `(567,74,663,123)`: tight = `pad(2)` then `right_pad(3)` → `(565,72,668,125)`; extended = `pad(5)` then `right_pad(5)` → `(560,67,678,130)`; reference = `pad(20)` → `(540,47,698,150)`. Upstream is **not** the oracle at this site and must not be used as one: §14.2 (`resolve_overlaps` set-ordering), §14.3 (box/language desync) and §14.13 (differing box sets) all sit between upstream and this stage's input, so upstream disagreement here is noise rather than signal.
 
 ---
 
@@ -1368,6 +1368,7 @@ Fresh, idiomatic design per decision #6 — no docopt compatibility. Verbosity m
 14. **Letterbox minimum dimension clamp** — upstream can pass a zero-sized resize dimension to `cv2.resize` for sufficiently small inputs; v1 clamps each rounded dimension to at least `1`, keeping the resize valid and preventing `dw` or `dh` from reaching `1024` and making `mask::crop_letterbox` reject the geometry. The implementation comment is at `crates/pc-detect/src/onnx.rs::letterbox` as `DEVIATION(14)`.
 15. **One shared ONNX session** — upstream would honour `text_detector.concurrent_models` at provider construction; v1 shares one `Mutex`-guarded session, and a configured value greater than `1` is warned-and-ignored. The implementation comment is at `crates/pc-detect/src/onnx.rs::OnnxDetector` as `DEVIATION(15)`.
 16. **Lazy construct-and-latch** — upstream constructs the detector before its per-image loop; v1 defers construction until the first image that needs detection and latches that attempt's success or rendered refusal for the run, so §4.4 resume can bypass a model it will never read. The implementation site will carry `DEVIATION(16)`; the concurrent implementation pass has not added that comment yet.
+17. **Coverage-filter scope and operand** — ratified by §16.20 item 9, which corrects §8.3 step 6's former claim of unconditional parity. Upstream applies its `mask_score < mask_score_thresh` false-positive filter **only to line-less blocks** (`textblock.py:485-490`, inside `if len(blk.lines) == 0:`) and computes it over the **unrefined** mask (`inference.py:203` passes `mask` to `group_output`; `refine_mask` runs at `:204`). v1 applies the filter to **every** block over the **refined** mask. Both differences are deliberate: v1 synthesizes no DBNet line polygons (§14.12 and §8.3's out-of-scope list), so every block is line-less by construction and the scope difference is vacuous *for v1* — it would become live the moment line synthesis lands, which is why it is registered rather than left as prose. The operand difference makes our coverage values roughly 2× upstream's on the same boxes; measured across two real manga pages the filter has never fired (minimum coverage 0.3025 against a 0.1 threshold). The implementation site carries `DEVIATION(17)`.
 
 Each of these must appear as a `// DEVIATION(n): ...` comment at the implementation site referencing this section, so a future parity investigation finds them immediately.
 
@@ -1388,7 +1389,13 @@ All 10 items below were reviewed and decided by Fable (Senior Rust Engineer advi
 7. **Joint-channel RGB NLM for `colored_images = true`** (§14.7) — **DECIDED: deferral confirmed**, plus one addition. Verified `config.py:700`: `colored_images: bool = False` default, so v1's default path is unaffected. Addition: `pc-config` must emit a one-time `WARN` when a loaded profile sets `colored_images = true`, stating that v1 uses a joint-channel approximation and `color_filter_strength` is ignored until v1.5 — an opt-in setting silently behaving differently is not acceptable without a logged notice.
 8. **Nearest-neighbour mask upscale on export** (§14.8) — **DECIDED: confirmed, nearest uniformly.** Verified all five relevant upstream call sites: `image_export.py:205` (final_mask) NEAREST, `:221` (denoise_mask) **BILINEAR**, `:244` (inpainted_mask) NEAREST, plus `masker.py:107` and `denoiser.py:86` both NEAREST. Line 221 is the sole outlier across five sites operating on the same hard-edged fill-mask artifact; bilinear there manufactures interpolated colors that exist nowhere in the actual mask. Normalizing to nearest matches upstream's dominant, evident intent.
 9. **`f64` vs `f32` for border statistics** — **DECIDED: `f64` confirmed, no exceptions.** Verified `color_std` explicitly casts to `np.float64` (`image_ops.py:456`), and the candidate-selection comparison `mask_deviation <= lowest_border_deviation * (1 - threshold)` (`image_ops.py:681-683`) is pure f64 upstream. This comparison picks which mask candidate paints the page; a borderline `f32` rounding flip changes the visible output, not just an internal number. Rule for implementation: no `f32` appears anywhere in `border.rs`/`fit.rs` — enforce via clippy lint or explicit code review at PR time.
-10. **`insta` snapshot usage** — **DECIDED: allowed, narrowly, with three mandatory safeguards.** Scope: only the two specified regression locks (§8.7(B)9, §9.7(B)11); every numeric/algorithmic gate in §10.7(A) and all of M2–M4/border/fit/kernels must use hand-written assertions, no exceptions. Safeguards, binding on implementation: **(a)** the first accepted snapshot for each of the two sites must be reviewed against a hand-traced expected value, with reviewer/date/method recorded in `docs/GOLDEN_CALIBRATION.md`, before commit; **(b)** snapshot files are subject to the frozen-tests rule exactly like any other test — `cargo insta accept` is forbidden in CI, and any snapshot change requires the same joint-architect sign-off as a hand-written test edit (state this both in CI config and as a comment at each `assert_json_snapshot!` call site); **(c)** no snapshot tests may be added anywhere else without going through this same §15-style sign-off process first.
+10. **`insta` snapshot usage** — **DECIDED: no snapshot tests anywhere. Superseded by §16.20 (Fable tie-break, 2026-07-29).**
+
+    The former verdict is preserved here because a superseded rule must be visible, not silently deleted, or the next reader will reintroduce it: *"DECIDED: allowed, narrowly, with three mandatory safeguards. Scope: only the two specified regression locks (§8.7(B)9, §9.7(B)11) … **(a)** the first accepted snapshot for each of the two sites must be reviewed against a hand-traced expected value, with reviewer/date/method recorded in `docs/GOLDEN_CALIBRATION.md`, before commit; **(b)** … `cargo insta accept` is forbidden in CI … **(c)** no snapshot tests may be added anywhere else without going through this same §15-style sign-off process first."*
+
+    Two defects in that text, both recorded in §16.20: the scope named **§8.7(B)9**, which is a hand-written regression lock with no snapshot — the snapshot site was §8.7(A)6 (§16.20 item 4); and safeguard (a) reviewed a file that is largely a transcription of `_detector_blocks.json`, while that fixture — the artifact which actually accepts output as truth — carried no safeguard at all (§16.20 item 2).
+
+    **Current rule:** `insta` is not a dependency of any crate and must not become one. §8.7(A)6 and §9.7(B)11 use hand-written assertions (§16.20 item 1); every numeric/algorithmic gate in the project does, without exception. Safeguard (a)'s obligation survives re-aimed at the F1 recording, as the committed-oracle gate in §16.20 item 3, recorded in `docs/DETECTOR_ORACLE.md`.
 
 ---
 
@@ -3145,6 +3152,230 @@ Resolved against the upstream PanelCleaner construction shape, the current `pc-c
     swallow §5.2 whole: any deterministic per-image failure — a profile that makes every
     page fail in masking, a replay dir with every fixture missing — would become
     run-fatal.
+
+## 16.20 Snapshot tests dropped; the oracle moves to the F1 recording (Fable tie-break, 2026-07-29)
+
+Both Opus subagents reviewed the same question — whether §15.10(a)'s hand-traced snapshot
+review should be replaced by a recorded run of upstream PanelCleaner — and reached
+**opposite** conclusions. Per `CLAUDE.md` the Orchestrator did not pick between them; a
+Fable Senior Rust Engineer subagent reviewed both positions and made the final call. This
+section records that call. Fable's advisory-only restriction was suspended for this one
+decision; it wrote no code.
+
+1. **DECIDED: `insta` snapshot tests are dropped, at both sanctioned sites and everywhere
+   else.** §15 item 10's "allowed, narrowly" verdict is **SUPERSEDED**. The replacements:
+
+   (a) **§9.7(B)11** becomes hand-written integer assertions. The entire snapshot content is
+   ~15 integers derivable by pure integer arithmetic from the fixture rects and the
+   committed profile constants, plus `page_language` and a reading-order permutation. The
+   Rust Engineer derived all three tiers from block rect `(567,74,663,123)` — tight
+   `(565,72,668,125)`, extended `(560,67,678,130)`, reference `(540,47,698,150)` — and
+   matched them against live `#clean.json` output. A hand-written assertion of those
+   integers with the derivation in a comment is strictly superior: the expected values are
+   visible at the assertion site, and writing them *is* the review.
+
+   (b) **§8.7(A)6** keeps its substance and loses the mechanism: the byte-determinism
+   self-comparisons (10 runs, 1 vs 8 rayon threads — these never needed `insta`) plus one
+   hand-written equality asserting the produced `PageDataRaw` equals the committed
+   `#raw.json`. That equality is a **superset** of what the snapshot would have locked and
+   of §8.7(B)9's boxes-only lock.
+
+   Consequences, all ratified here: `insta` leaves §1's dependency list and must not enter
+   any crate's manifest; §1's parenthetical becomes unconditionally true — every
+   numeric/algorithmic gate uses hand-written assertions; and CI's `frozen-snapshot-guard`
+   reduces to rejecting any `*.snap` / `*.snap.new` / `*.pending-snap` anywhere in the tree,
+   which makes it trivially precise and retires the **UNVERIFIED CAVEAT** its path allowlist
+   carried (the allowlist was derived from insta's naming convention, never from a real
+   macro call — there was none to read).
+
+2. **The decisive argument was an inversion, not a preference.** §8.7(A)6's snapshot runs
+   `run()` with `ReplayDetector`, which per §7.2.1 is bound to a recorded
+   `_detector_mask.png` + `_detector_blocks.json` pair and **ignores the image it is passed**.
+   Tracing `crates/pc-detect/src/lib.rs:92-136`: `rect`, `class_index` and `confidence` are
+   copied straight out of the fixture into `DetectedBlock` untouched. The only values the
+   snapshot *computes* are `mask_coverage`, the survivor set, `scale` and `image_size`.
+
+   So safeguard (a) was aimed at a file that is largely transcription, while
+   `_detector_blocks.json` — the artifact that genuinely accepts output as truth — carried
+   no safeguard at all. Fable's ruling on Position A's amendment: it *"does not cure that
+   inversion — it decorates it."*
+
+3. **DECIDED: safeguard (a) survives, re-aimed at the F1 recording, with a concrete gate.**
+   Binding on F1's detector group, in `docs/DETECTOR_ORACLE.md` (a new hand-authored file —
+   `docs/GOLDEN_CALIBRATION.md` is generator-owned per §16.13 item 9 and cannot carry a
+   human signature):
+
+   (a) **Commit the oracle.** Upstream's pinned-run block output for the committed page goes
+   into `tests/fixtures/recorded/` beside our own recording, with a `PROVENANCE.json`
+   pinning: upstream version and commit; the invoking command line; the profile with every
+   non-default key listed; the detector artifact, its sha256, **and which backend consumed
+   it**; the input page's sha256; and each output's sha256. The backend is load-bearing, not
+   bookkeeping — see item 6.
+
+   (b) **Assert the comparison in CI**, so it is re-checked on every run rather than once at
+   review time. This is Position A's construction and it is adopted whole: for the committed
+   page, pair every upstream block with one of ours or with a documented mechanism; assert
+   the exact reconstruction identity `upstream.xyxy == bbox(ours.rect ∪ bbox(upstream.lines))`
+   on every matched pair; and close the box accounting exactly — matched + §14.13 per-class
+   duplicates + documented splits/merges equals both totals.
+
+   (c) **No tolerances and no IoU thresholds in any gating row.** Where a divergence has a
+   known mechanism the evidence is an exact identity, not an epsilon. See item 5 for the
+   measurement that forces this.
+
+   (d) **`confidence`, `language` and `raw_mask` are DIAGNOSTIC or NO-ORACLE rows only,
+   never gated.** `raw_mask` has no exact oracle in v1 at all: upstream's preprocessor calls
+   the detector with `refine_mode=REFINEMASK_ANNOTATION` and `keep_undetected_mask=True`,
+   i.e. the full `refine_mask` algorithm that §14.12 puts out of scope — measured **IoU
+   0.258**, upstream 2,950 non-zero px against our 11,103. The refine arithmetic is gated by
+   the synthetic primaries §8.7(A)4/5 instead, and the doc must say so plainly rather than
+   implying the mask was checked.
+
+   (e) **Completeness partition.** Every serialized field of `PageDataRaw` lands in exactly
+   one bucket — `ORACLE-EXACT` / `EXPLAINED-§14.x` / `DIAGNOSTIC` / `NO-ORACLE` — checked
+   against §2.4/§2.5's field list. A field absent from the table is a defect in the review,
+   not an omission. `OPEN` is a blocking state, not a verdict: any open row blocks the
+   fixture commit. **A row may not close as `EXPLAINED` against a §14 or §16.x entry that
+   does not yet exist** — the ratification lands first, with its `DEVIATION(n)` comment at
+   the implementation site, and only then may a row cite it.
+
+   (f) **Signatures.** The producing agent may perform the upstream run and author the table
+   — that is a mechanical, fully specified act a third party can reproduce and falsify from
+   committed provenance, so it does not create the self-reference a hand-trace did.
+   Authoring the **verdicts** does. Three signatures are required before the fixture commits,
+   none of them the producing agent's: both Opus reviewers, each re-deriving the identities
+   from the committed artifact, and the human maintainer, signing the completeness of the
+   partition and every row resting on judgment rather than an identity. Reviewer, date and
+   method are recorded per signature.
+
+   Machine-dependent absolute paths must be normalised out of both sides before commit.
+   Upstream's `#raw.json` embeds `image_path` / `mask_path` / `original_path` as absolute
+   `str(Path)` values — across six identical upstream runs those three strings were the
+   *only* thing that differed — and our own `PageDataRaw` embeds them too. §7.2 already
+   requires rebasing our recorded handles; the oracle artifact needs the same treatment.
+
+4. **ERRATUM: the snapshot site was misidentified in two places.** §15 item 10 and §1's
+   `insta` note both name **§8.7(B)9** as a snapshot site. It is not: `:739` item **6 of (A)
+   Primary** is the snapshot, and §8.7(B)9 at `:745` is a different test — "box count and
+   each box's coordinates match the recorded `#raw.json` exactly (this is a regression lock,
+   not a Python-parity claim)" — with no `insta` and no snapshot. Left uncorrected, the
+   clause authorised a snapshot at `b9_pending_recorded_page_regression_lock`
+   (`crates/pc-detect/tests/d7_run.rs`), a path CI's allowlist did not permit. Both
+   references are corrected. Moot for the snapshot decision above, but recorded because the
+   same cross-reference is what a future reader would follow.
+
+5. **The measurement that forecloses tolerance-based comparison.** The Rust Engineer
+   decomposed a 0.775 → 0.704 confidence gap by substituting one stage at a time into
+   upstream's own cv2.dnn engine: engine (cv2.dnn vs ORT) ≈ 0.008, image decode ≈ 0.001, pad
+   colour ≈ 0.001, and **our bilinear resize vs `cv2.INTER_LINEAR` ≈ 0.079** — from a resize
+   difference of **max Δ = 1 LSB**, 77% of pixels exact. Our implementation is not wrong;
+   `onnx.rs` uses the correct half-pixel convention and the difference is f32-exact versus
+   OpenCV's fixed-point weights.
+
+   Fable reproduced this independently with its own perturbation (±1 LSB on 25% of
+   letterboxed pixels of the candidate page, through upstream's engine): confidences moved up
+   to **±0.089** while every box coordinate stayed within L1 = 1, four of five exact.
+
+   Two conclusions follow, and they are why item 3(c) and 3(d) read as they do. **`confidence`
+   is not adjudicable against upstream at any useful tolerance** — the noise floor from
+   unavoidable rounding is ~0.08 while §8.3 step 4's objectness and class gates both sit at
+   0.4, so a tolerance absorbing the noise spans "kept" and "dropped". And **geometry is
+   exact-gateable**: two independent probes found coordinates stable under the same
+   perturbation that moves confidence by 0.09.
+
+   A further reason to refuse a rect tolerance: with `dw = 284, dh = 0` on the candidate page,
+   a one-pixel error in `dw` shifts a box edge near x = 740 by ≈1.5 px. A ±3 px per-edge
+   tolerance would therefore absorb an off-by-one in the letterbox padding — precisely the
+   defect class §14.14 exists for — while spanning ±12–19% of area on boxes of 66×41 to
+   117×72 px.
+
+6. **With a `.onnx` model, upstream does not use PyTorch for inference at all.**
+   `inference.py:148-151` selects `cv2.dnn.readNetFromONNX` and `TextDetBaseDNN`
+   (`basemodel.py:251-261`); torch enters only in `non_max_suppression`, which converts the
+   numpy output back to a tensor and calls `torchvision.ops.nms`. So the oracle is
+   *"upstream + cv2.dnn"*, not *"upstream"* — and the two branches differ in **channel
+   order**: the torch branch of `preprocess_img` applies `[::-1]` after
+   `cvtColor(BGR2RGB)` (`inference.py:85-88`), feeding BGR, while the cv2 branch feeds RGB. A
+   maintainer who records the oracle from the `.pt` weights therefore gets a different code
+   path and a different answer. This is why item 3(a) pins the backend.
+
+7. **Upstream determinism, measured.** Six runs of `process_image` on the candidate page
+   with a fixed uuid — three at the default 20 OpenCV threads, one at 1, one at 4, one with
+   `cv2.setNumThreads(1)` plus `OMP_NUM_THREADS=1` and `MKL_NUM_THREADS=1` — produced
+   byte-identical `_raw_mask.png` and `_base.png` (sha256 `b48bc0c6…ca23` and `b6e29da1…6d974`)
+   and byte-identical `#raw.json` after path normalisation: every box, every line polygon,
+   every float. Upstream seeds nothing and needs to: the graph is inference-only under
+   `@torch.no_grad()`, and `torchvision.ops.nms` is sequential greedy.
+
+   **This licenses less than it appears to.** It says nothing about a different CPU ISA or a
+   different OpenCV version, and item 5 shows this model's confidence output is chaotically
+   sensitive to 1-LSB input perturbations. So a re-recorded oracle on another machine may
+   legitimately differ, which is the real argument for freezing the committed artifact rather
+   than trusting the recipe.
+
+8. **ERRATUM: `PAD_VALUE` is 0, not 114.** §8.3 step 3 said letterbox pads right/bottom with
+   `(114,114,114)`. Upstream's `letterbox` signature defaults to `color=(0, 0, 0)`
+   (`imgproc_utils.py:95`) and `preprocess_img` passes no `color` argument
+   (`inference.py:86`), so upstream pads **black**. 114 is *yolov5's* letterbox default,
+   which comic-text-detector does not use. Both Opus reviewers independently held 114 to be
+   wrong; the Orchestrator verified the two upstream call sites directly.
+
+   Recorded as an **erratum, not a §14 deviation.** §8.3 step 3's own framing is a port of
+   `preprocess_img` + `letterbox` keeping upstream behaviour, so upstream is normative for
+   this line and 114 contradicts the very thing the line claims to port. A §14 entry would
+   enshrine yolov5's default purely because a test already pinned it, and would leave every
+   future recorded fixture permanently off-oracle — weakening item 3(b)'s exact-identity gate
+   for no benefit.
+
+   This required editing a **frozen test** (`crates/pc-detect/tests/d4_onnx.rs`'s
+   `assert_eq!(PAD_VALUE, 114)`, and the comment on
+   `letterbox_pads_the_right_edge_and_leaves_the_top_left_as_content`, which got the *side*
+   right — right/bottom, not yolov5's centred padding — and the *value* wrong). `CLAUDE.md`
+   routes a frozen test contradicting the spec to the joint architects; **this ruling is the
+   recorded sign-off**, and it must land before F1 records anything, since the pad colour
+   perturbs every recorded box. Measured cost of the change: identical rects, one confidence
+   0.714 → 0.715 — an order of magnitude inside item 5's noise floor.
+
+9. **ERRATUM: §8.3 step 6's provenance sentence was wrong twice.** Spec line 686 justified
+   our coverage filter as *"exactly the code path upstream takes when the line map yields
+   nothing."* Both halves are wrong:
+
+   (a) **Wrong scope.** Upstream's `group_output` (`textblock.py:485-490`) wraps the
+   `mask_score < mask_score_thresh` filter inside `if len(blk.lines) == 0:`, so upstream
+   applies it **only to line-less blocks**. We apply it to every block.
+
+   (b) **Wrong operand.** `inference.py:203` calls `group_output(blks, lines, im_w, im_h,
+   mask)` with the **unrefined** mask; `refine_mask` runs afterwards at `:204`. Our filter
+   uses the **refined** mask. Measured on the same boxes, the two quantities are roughly 2×
+   apart — upstream 0.366 / 0.466 / 0.260 against our 0.773 / 0.781 / 0.564.
+
+   The sentence is corrected, and the deviation it was pretending not to be is ratified as
+   §14 register entry **17**. Risk evidence recorded with it: across two real manga pages the
+   filter has **never fired**. On a 12-box page the minimum `mask_coverage` was **0.3025**
+   against the 0.1 threshold — a 3× margin. On the candidate page upstream's line-less branch
+   *did* fire once, on `[438,1407,498,1446]` (`mask_score` 0.0359), and both implementations
+   dropped that box: **outcome agreement, mechanism divergence.** That is worth stating
+   explicitly, because a divergence table over final artifacts would have shown a clean result
+   and hidden the structural difference — cookbook rule 3's own lesson applied to the oracle
+   being proposed.
+
+10. **What this ruling does NOT settle.** The committed page fixture and §7.2's 400 KB cap
+    remain open and are deliberately deferred: they gate only the final fixture commit, not
+    any of items 1–9, and treating them as a blocker had already stalled work that does not
+    depend on them. Local validation continues on pages that cannot be committed. Recorded so
+    the deferral is a visible decision rather than a gap.
+
+    Two further items are triggered but unbudgeted, and neither is created by this ruling —
+    both pre-date it: §16.17 item 2's shared `PROVENANCE.json` schema and checker, whose
+    activation condition ("the first recording group whose consuming tests read values rather
+    than compare pixels") is met by the detector group and therefore falls due **before** it
+    records; and `cargo xtask record-fixtures --only detector`, which is a stub —
+    `xtask/src/record.rs` returns `Outcome::Skipped` unconditionally. `xtask` also has zero
+    `#[test]`s, so the comparison harness of item 3(b) must ship with its own negative
+    controls: a synthetic artifact pair with one box perturbed by 1 px, one confidence by
+    0.001, and one box deleted, asserting the comparator reports exactly those three
+    divergences and no others. A comparator that prints "compared 0 boxes, 0 divergences →
+    PASS" is cookbook rule 1's defect wearing a suit.
 
 ## 16. Summary of what v1 is NOT
 

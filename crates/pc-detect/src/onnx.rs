@@ -23,8 +23,11 @@ use std::{path::PathBuf, sync::Mutex};
 pub const NET_SIZE: u32 = 1024;
 /// Letterbox stride named by the upstream call. It is inert because `auto = false`.
 pub const STRIDE: u32 = 64;
-/// Right/bottom letterbox fill value (spec §8.3 step 3).
-pub const PAD_VALUE: u8 = 114;
+/// Right/bottom letterbox fill value from upstream comic-text-detector:
+/// `imgproc_utils.py:93-95` defines the `letterbox` default as `(0, 0, 0)`, and
+/// `inference.py:86` calls it without a `color` argument. `114` is the yolov5s
+/// letterbox default, which comic-text-detector does not use.
+pub const PAD_VALUE: u8 = 0;
 /// CPU ONNX Runtime intra-op thread count (spec §8.3 step 3).
 pub const INTRA_THREADS: usize = 1;
 

@@ -70,12 +70,15 @@ fn assert_normalised(actual: f32, byte: u8) {
 #[test]
 fn constants_match_the_spec() {
     // spec §8.3 step 3: letterbox to 1024x1024 with `stride = 64`, pad with
-    // (114, 114, 114), CPU EP with `intra_threads = 1` (the parallelism is at the image
-    // level, §4.5). `INTRA_THREADS` is pinned as a constant because the session option it
-    // feeds is not otherwise observable from a test.
+    // (0, 0, 0), matching upstream comic-text-detector's `letterbox` default
+    // (`imgproc_utils.py:93-95`) and its call without a `color` argument (`inference.py:86`).
+    // `114` is the yolov5s default, which comic-text-detector does not use. CPU EP with
+    // `intra_threads = 1` (the parallelism is at the image level, §4.5). `INTRA_THREADS` is
+    // pinned as a constant because the session option it feeds is not otherwise observable
+    // from a test.
     assert_eq!(NET_SIZE, 1024);
     assert_eq!(STRIDE, 64);
-    assert_eq!(PAD_VALUE, 114);
+    assert_eq!(PAD_VALUE, 0);
     assert_eq!(INTRA_THREADS, 1);
     // `auto = false`, so the stride never reduces the padding and the network input is
     // always exactly NET_SIZE square; the stride is nonetheless a divisor of it.
@@ -126,7 +129,7 @@ fn a_letterbox_geometry_matches_the_spec_formula() {
 
 #[test]
 fn letterbox_pads_the_right_edge_and_leaves_the_top_left_as_content() {
-    // spec §8.3 step 3: pad **right/bottom** with (114, 114, 114) -- NOT yolov5's centred
+    // spec §8.3 step 3: pad **right/bottom** with (0, 0, 0) -- NOT yolov5's centred
     // padding, which halves dw/dh and pads all four sides. The source is split left/right
     // into two flat colours, so every assertion below is exact after a bilinear resize and
     // would fail if any padding were placed on the left or the top.
@@ -414,11 +417,11 @@ fn to_nchw_maps_the_endpoints_exactly() {
 fn to_nchw_divides_by_255_and_not_by_256() {
     // The classic off-by-one that shifts every activation slightly and is invisible in any
     // dimension check. 114/255 = 0.447059 vs 114/256 = 0.445313.
-    let tensor = to_nchw(&solid_rgb(1, 1, [PAD_VALUE, PAD_VALUE, PAD_VALUE]));
+    let tensor = to_nchw(&solid_rgb(1, 1, [114, 114, 114]));
 
-    assert_normalised(tensor[0], PAD_VALUE);
+    assert_normalised(tensor[0], 114);
     assert!(
-        (tensor[0] - f32::from(PAD_VALUE) / 256.0).abs() > 1e-3,
+        (tensor[0] - 114.0 / 256.0).abs() > 1e-3,
         "must divide by 255, not 256: got {}",
         tensor[0]
     );
