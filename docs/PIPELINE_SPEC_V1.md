@@ -3219,6 +3219,23 @@ decision; it wrote no code.
    on every matched pair; and close the box accounting exactly — matched + §14.13 per-class
    duplicates + documented splits/merges equals both totals.
 
+   **This is a CI test and it does not violate §7.2, because it runs no model.** Both sides
+   are frozen committed files — our recorded `_detector_blocks.json` and the upstream oracle
+   artifact of (a) — so the check is pure arithmetic over two JSON documents. Separate the two
+   acts and the apparent conflict dissolves: **producing** the artifacts requires running both
+   detectors and is therefore maintainer-local and one-off; **comparing** them requires
+   nothing but the files and therefore belongs in CI, on every run, forever. Getting this
+   backwards is what makes the gate look unbuildable (see item 11).
+
+   Two implementation requirements follow, both non-optional. The identity must handle a
+   line-less upstream block, where `bbox(upstream.lines)` is undefined and the identity
+   degenerates to `upstream.xyxy == ours.rect` — v1 synthesizes no lines, and upstream's
+   line-less branch is exactly where §14.17's filter divergence lives, so this case is not
+   hypothetical. And the comparator must **assert the number of pairs it compared** against a
+   hard-coded expected count: a comparator reporting "compared 0 boxes, 0 divergences → PASS"
+   is cookbook rule 1's defect, and it is the failure mode a frozen-file comparison is most
+   prone to, since a renamed field silently yields an empty pairing rather than an error.
+
    (c) **No tolerances and no IoU thresholds in any gating row.** Where a divergence has a
    known mechanism the evidence is an exact identity, not an epsilon. See item 5 for the
    measurement that forces this.
@@ -3388,11 +3405,22 @@ decision; it wrote no code.
     self-reference; and the `onnx` tier now actually runs (§16.17). The unguarded surface is
     specifically *agreement with upstream on real image content*.
 
-    **§7.2 forecloses making that gate a CI check at all.** CI must not run models, so any
-    comparison of our live detector against upstream is necessarily **maintainer-local**.
-    What CI can gate is the replay path against the committed fixture — which is exactly why
-    the fixture's own review (item 3) is where the safeguard has to live, and why an
-    unreviewed recorded fixture is the project's highest-value remaining risk.
+    **§7.2 constrains *how* the gate is built, not *whether* it can be a CI check — and an
+    earlier draft of this item got that wrong.** The correction matters, because the wrong
+    version makes item 3 read as unbuildable and would justify never building it:
+
+    - **Producing** the two artifacts runs both detectors, so it is maintainer-local and
+      one-off. §7.2's prohibition binds here.
+    - **Comparing** them runs no model — both are frozen committed JSON files — so it is an
+      ordinary CI test that executes on every run. §7.2 does not reach it.
+
+    So the gate of item 3(b) *is* shippable as a CI test; what cannot be automated in CI is
+    the recording step, which is true of every fixture in `tests/fixtures/recorded/` and is
+    precisely the design §7.2 already chose ("record once, replay forever"). The residual
+    risk is therefore narrow and nameable: an **unreviewed recorded fixture**, whose values
+    the replay path and the identity test both trust. That is what item 3's signatures exist
+    to cover, and it remains the project's highest-value outstanding risk — not because the
+    gate is impossible, but because the fixture does not exist yet.
 
 12. **Fixture-selection criterion, measured: the page must sit near letterbox scale 1, and
     `demo_bubbles` cannot serve as the oracle fixture.** Recorded because the shortcut is
