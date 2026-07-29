@@ -6,9 +6,9 @@
 //! the same failure mode §16.13 item 3 gives as the reason `xtask` may consume this crate.
 //!
 //! These tests deliberately assert *schema* properties -- that the committed file parses,
-//! that lookups behave, that the element-type spelling is pinned in one place -- and NOT
-//! the model's tensor values. Those are `d4_signature.rs`'s job, next to the constants
-//! they certify.
+//! that lookups behave, and that the recorded tensors satisfy the semantic facts consumers
+//! rely on. The vocabulary constant remains the single spelling authority; these tests also
+//! make sure the fixture really uses that spelling.
 
 use pc_testkit::model_signature::{
     self, comic_text_detector_signature, load_model_signature, COMIC_TEXT_DETECTOR_SIGNATURE,
@@ -169,12 +169,16 @@ fn the_committed_signature_parses_into_the_typed_schema() {
 
 #[test]
 // The named accessor is the whole reason consumers do not index by position when they mean
-// to look something up by name; the convenience helper must agree with the general one.
+// to look something up by name. This convenience helper must point at the comic-text-
+// detector signature, not merely return the same file as the general loader.
 fn the_named_convenience_loader_matches_the_general_one() {
-    assert_eq!(
-        comic_text_detector_signature(),
-        load_model_signature(COMIC_TEXT_DETECTOR_SIGNATURE)
-    );
+    let signature = comic_text_detector_signature();
+
+    assert_eq!(signature.model_file_name, "comictextdetector.pt.onnx");
+    assert_eq!(signature.input("images").shape, vec![1, 3, 1024, 1024]);
+    assert_eq!(signature.output("blk").shape, vec![1, 64512, 7]);
+    assert_eq!(signature.output("seg").shape, vec![1, 1, 1024, 1024]);
+    assert_eq!(signature.output("det").shape, vec![1, 2, 1024, 1024]);
 }
 
 #[test]
@@ -216,22 +220,34 @@ fn a_missing_signature_panics_with_the_xtask_hint_rather_than_skipping() {
 }
 
 #[test]
-// The element-type spelling is pinned in exactly ONE place -- here -- so that
-// `d4_signature.rs` can assert the *semantic* fact ("this tensor is f32") through
-// `is_f32()` without freezing the probe's choice of vocabulary into a second file.
+// The element-type spelling is pinned in exactly ONE place -- `ELEMENT_TYPE_F32` -- so that
+// `d4_signature.rs` can assert the semantic fact ("this tensor is f32") through `is_f32()`.
+// This test must nevertheless prove both sides of that contract: the recorded tensors really
+// carry the spelling, and `is_f32()` is not a constant that happens to pass for this fixture.
 fn the_element_type_spelling_is_pinned_once_and_is_f32_agrees_with_it() {
     assert_eq!(ELEMENT_TYPE_F32, "f32");
 
     let signature = comic_text_detector_signature();
     for tensor in signature.inputs.iter().chain(signature.outputs.iter()) {
-        assert_eq!(
+        assert!(
             tensor.is_f32(),
-            tensor.element_type == ELEMENT_TYPE_F32,
             "`{}` recorded element type `{}`",
             tensor.name,
             tensor.element_type
         );
+        assert_eq!(
+            tensor.element_type, ELEMENT_TYPE_F32,
+            "`{}` must be recorded as f32",
+            tensor.name
+        );
     }
+
+    let non_f32 = model_signature::TensorSignature {
+        name: "not-f32".to_owned(),
+        element_type: "i64".to_owned(),
+        shape: vec![1],
+    };
+    assert!(!non_f32.is_f32(), "is_f32() must inspect element_type");
 }
 
 #[test]
