@@ -79,6 +79,14 @@ The scratchpad (`/tmp/claude-1000/...`) is session-scoped and is **gone**. It he
   re-download; it is the model the measurements were taken against.
 - Probe scripts and backups. All disposable; the numbers they produced are in `RULINGS.md` and the
   §16.x entries.
+- **The ratified oracle page itself (P01/P02/P03, §16.24 item 17) is not vendored in this repo despite
+  item 17 saying it would be committed — a ratified step that was never executed, found this
+  session.** Recovered by source this session: `peppercarrot.com`'s
+  `0_sources/ep01_Potion-of-Flight/low-res/ja_Pepper-and-Carrot_by-David-Revoy_E01P0{1,2,3,4}.jpg`.
+  P01 verified byte-for-byte against item 17's recorded sha256; P02/P03 sizes match item 17(a)
+  exactly. See `RULINGS.md`'s R3 update. **Committing this into `tests/fixtures/upstream/` with an
+  `ATTRIBUTION.md` entry is part of #12/#13, not #23 — do not do it as a side effect of the
+  transcription.**
 
 `.onnx` weights mean upstream uses `cv2.dnn.readNetFromONNX`, **not** PyTorch — and the two branches
 differ in **channel order** (torch feeds BGR, cv2 feeds RGB). That mattered once; assume it matters
@@ -94,12 +102,15 @@ again.
   English-expansion loop mutates `blk.lines` after `adjust_bbox` and never updates `xyxy`. Fable ruled
   it blocks on 18(h)(ii)+(iv) and 3(e), not 18(f), and that the page is **not** re-selected. This must
   be resolved as part of #23, not worked around.
-  *Locate the loop by behaviour, not by line number:* it is in
-  `comic_text_detector/utils/textblock.py`, after the `adjust_bbox` call in `group_output`, guarded on
-  the block being eng-classified and horizontal. This session recorded it at roughly lines 519-535,
-  but that range is **unverified as of this handover** — the pinned checkout lived in the scratchpad
-  and is gone, and the spec does not cite those line numbers. Re-derive them against the pin before
-  quoting them anywhere normative.
+  **Resolved this session — see `RULINGS.md` R7.** Re-verified directly against the pin: the file is
+  `pcleaner/comic_text_detector/utils/textblock.py` (nested under `pcleaner/`, the placeholder above
+  had the wrong root), `group_output` is `:447-534`, and the English-expansion loop is **lines
+  518-532**, not the ~519-535 this handover previously guessed. R7 also confirms, by reading the
+  function directly, that no branch can output a line-less block — the control-flow claim backing
+  F-4 holds. The oracle used to verify this (PanelCleaner + `pcvenv` + the ONNX weights, digest
+  re-checked) was rebuilt in this session's own scratchpad per `COOKBOOK.md` rule 3 and will be
+  **gone again** at this session's end — rebuild once more before #12/#14 if this handover is still
+  being read then.
 - **The stop-time review channel is reliable on file content and unreliable on Rust semantics.** See
   task #25: 14 true / 6 false. Every false positive was a claim about what the compiler does — one was
   raised **five times** verbatim after being disproved by a successful build. Every true finding was a
