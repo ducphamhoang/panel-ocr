@@ -5778,6 +5778,148 @@ the eng-expansion trio (flat three fields vs. a grouped `Option<EngExpansion { .
 "REQUIRED together" conditional unrepresentable-if-violated) is left to F1-C; both encodings satisfy
 this entry's authorization identically.
 
+## 16.29 F1 Phase 2 plan: identity operand, oracle-page location, DETECTOR_ORACLE.md sequencing (Fable tie-break, 2026-07-30)
+
+The joint architect + rust-engineer planning pass for #12/#13 Phase 2 (the Python detector-oracle
+recording script, the real-page comparison run, the atomic recording commit) was spawned per
+`CLAUDE.md`'s Plan step, each blind to the other. They converged on the one question that actually
+blocks writing code and disagreed on two smaller design points; per `CLAUDE.md`'s tie-break rule
+`fable-adjudicator` reviewed both positions on those two and decided between them. The source
+record — a condensed account of both agents' positions plus Fable's ruling captured near-verbatim —
+is in `docs/RULINGS.md` under "F1 Phase 2 plan: identity operand, oracle-page location,
+DETECTOR_ORACLE.md sequencing — Fable tie-break, 2026-07-30"; this entry transcribes the ratified
+conclusions. This entry introduces **no supersession** — no prior `§16.x` ruling is overturned; it
+settles two open design questions and records an agreed fix.
+
+1. **Agreed premise, not adjudicated: the geometry identity's operand is `lines_pre_expand` when
+   recorded, else the served `lines`.** Both agents independently found that
+   `crates/pc-detect/src/oracle.rs`'s `lines_bbox`/`identity_branch`/`reconstruct` union the
+   upstream-SERVED `lines` field for §16.20 item 3(b)'s identity, but §16.27 item 4 requires the
+   ratified oracle page to pass "over `lines_pre_expand`" — on a real English-expanded block the
+   served lines overhang `xyxy` (measured: two blocks by 2 px on one `y` edge, one block by 4 px on
+   both `y` edges), so the identity as shipped would spuriously gate on the real page. Both propose
+   the same fix: read `lines_pre_expand` when the artifact recorded it (`Some`), else fall back to
+   `lines`. Both verified this moves **zero** existing frozen `ExpectedPair`/`OracleBlock` literal —
+   every one today has `lines_pre_expand: None` or a value identical to `lines`. Both agree **no new
+   `Divergence` variant is required**: a block that should have carried `lines_pre_expand` but
+   didn't already self-gates via the existing `GeometryIdentity` variant, since the served bbox is a
+   superset of the pre-expansion bbox at every block where the two differ (expansion only grows the
+   polygon), so a block whose `lines_pre_expand` is absent falls back to unioning the larger served
+   bbox — which cannot make the identity's residual smaller, and is measured non-zero on the actual
+   P01 blocks where the two lists differ. The architect additionally
+   rebuilt the pinned upstream checkout (`0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`) and ran the real
+   instrumentation, empirically reproducing this exact failure mode and confirming the fix against
+   the real P01 page — this is measured, not merely argued. `OracleBlock`'s doc comment must state
+   this operand rule explicitly (§16.28 item 4's precedent: a `None`-disabling behavior must be
+   stated, not merely implemented), and `PairResidual::upstream_line_count`/`IdentityBranch` remain
+   keyed on the served `lines`, unaffected by which list the identity itself unions.
+
+2. **RATIFIED (Fable) — the committed oracle page moves; it is not duplicated.** The rust-engineer
+   read the shipped validator's comment (`crates/pc-testkit/src/provenance.rs:334-347`, citing
+   "§16.24 item 2 requires the page to live inside the declaring group") as over-claiming ratified
+   text, and proposed committing a second, byte-identical copy inside
+   `tests/fixtures/recorded/detector/` alongside the existing
+   `tests/fixtures/upstream/oracle_pages/` original. Fable built a scratch probe crate calling
+   `pc_testkit::provenance::validate` directly on two otherwise-identical detector groups differing
+   only in `input_page`, and measured: the `oracle_pages/`-prefixed path fails with
+   `CommittedPathOutsideGroup`; the `recorded/detector/`-prefixed path passes with zero violations.
+   The two frozen gates behind that measurement are
+   `crates/pc-testkit/src/provenance.rs:334-347` (`validate_detector`, pinned by
+   `crates/pc-testkit/tests/provenance_schema.rs::r8_reaches_the_source_and_input_page_path_slots_too`'s
+   last case) and `crates/pc-testkit/tests/recorded_provenance.rs:315-321`
+   (`assert_known_non_committed_form`, which panics on a declared path that is neither scratch-
+   prefixed nor a bare `*.pt.onnx` filename). Fable, quoted:
+
+   > The engineer's factual premise — "the prefix is only a wrong comment on an unenforced
+   > constraint" — is therefore wrong. Given a copy inside the group is mandatory, the
+   > `oracle_pages/` original would be a second 441,914-byte file that nothing consumes … and that
+   > no test pins — pure drift surface and repo weight. §16.24 item 17 ratifies the page's identity
+   > (441,914 B, sha256 `3bef9922…`, "unmodified") and an ATTRIBUTION entry; it ratifies no
+   > filesystem path, so the move violates nothing.
+
+   **Decision: P01 moves** (`git mv`, byte-preserving) from `tests/fixtures/upstream/oracle_pages/`
+   to `tests/fixtures/recorded/detector/`, inside the atomic recording commit — measured: an early,
+   `PROVENANCE.json`-less move trips `recorded_provenance.rs::discover_groups`'s `EXPECTED_GROUPS`
+   assertion (a 4th group directory) before `read_provenance` is ever reached, so the move cannot
+   precede the atomic commit — with `tests/fixtures/upstream/ATTRIBUTION.md`'s row updated to the new
+   path and `docs/HANDOVER.md:51`'s now-stale reference corrected. **No second copy is committed
+   anywhere.** P02/P03 stay in `oracle_pages/` (used only for the `DbnetScattered` census, never
+   declared as `input_page`). Grafted from the losing position: the `provenance.rs:336-341` comment
+   does over-cite — item 2's text is single-declaration only; the lives-inside-the-group requirement
+   actually flows from item 1's preserved frozen walker plus item 2's walker-visibility mandate — so
+   the comment's citation should be corrected (comment text only; this authorizes no change to the
+   validator's behavior); and at the atomic commit, assert the recorded `input_page_sha256` equals
+   item 17's ratified literal
+   `3bef9922e09cea66ab12271da0070025768ae9bc5d286f41ced617468131267e`, so an accidental re-encode
+   during the move fails loudly. **Scope:** this covers P01 only; it does not decide the destination
+   filename (bytes and digest are pinned; the name is the planners' choice), does not move P02/P03,
+   does not touch any other fixture group, does not amend §16.24 item 2's text, and authorizes no
+   behavior change to any validator — the comment fix is prose only.
+
+3. **RATIFIED (Fable) — `docs/DETECTOR_ORACLE.md` may land early as a dormant-but-verified
+   skeleton; its verdicts, signatures, and the real-page gate test remain atomic.** The
+   rust-engineer read §16.24 item 6's atomic list literally and proposed bundling the doc and its
+   verdicts into the single atomic commit. The architect proposed landing the doc early as a
+   skeleton (`OPEN` rows, no verdicts, no signatures) with item 11's four doc-shape gates in
+   "dormant but verified" form, by analogy with `xtask/tests/provenance_digests.rs`'s
+   `EXPECTED_DETECTOR_PIN_GROUPS = 0` pattern. Fable's ruling, quoted:
+
+   > The ratified sentence, verbatim (spec lines 3970-3972): "The recording commit is atomic:
+   > fixtures + provenance + item 1(f)'s constant edits + the real-page gate test with its literal
+   > `Expectations` + the doc verdicts + the three signatures land in one commit. Until then no
+   > real-page gate test exists." It names "the doc verdicts", not the doc file. The engineer's
+   > literal-reading position is literal about a paraphrase: the brief's quotation of item 6 inserted
+   > "`docs/DETECTOR_ORACLE.md`" and "in one commit or none" — neither string appears in the spec
+   > (`grep -n "one commit or none"` hits nothing). This is the project's own widening-by-paraphrase
+   > defect, operating on the adjudication input itself.
+   >
+   > Item 11's ratified gate reads "no `OPEN` row once the fixture is present" (spec line 4059). That
+   > conditional is vacuous unless a doc with `OPEN` rows may exist while the fixture is absent — the
+   > ratifiers contemplated exactly the pre-fixture state the architect proposes.
+   >
+   > The "dormant but verified" precedent is real and already accepted practice:
+   > `EXPECTED_DETECTOR_PIN_GROUPS: usize = 0` at `xtask/tests/provenance_digests.rs:64`, with
+   > `detector_pins()` asserting the discovered count against that literal before any early return,
+   > and a comment (`:208-211`) explicitly distinguishing this from the conditional-return gate item 6
+   > rejects — citing item 6 by name. I ran it: 6 tests green, the dormant legs printing their
+   > `DORMANT:` disclosure.
+
+   **Decision:** `docs/DETECTOR_ORACLE.md` may land early as a skeleton (rows `OPEN`, no verdicts,
+   no signatures) together with item 11's four doc-shape gates in dormant-but-verified form. The
+   verdicts, the three signatures, the fixtures, the provenance, the item 1(f) constant edits, and
+   the real-page gate test with its literal `Expectations` land in the atomic commit, exactly per
+   item 6. **Two binding conditions:** (a) every dormant doc gate must follow the `detector_pins()`
+   pattern — the dormancy premise asserted against a pinned literal (e.g. `EXPECTED_SIGNATURES = 0`,
+   raised to 3 at the atomic commit) **before** any early return; a bare
+   `if !fixture_present { return }` is forbidden, since item 6 rejects "a conditional-return gate" by
+   name. (b) "Until then no real-page gate test exists" stands unqualified — the early task may not
+   contain the real-page comparison test in any form, not `#[ignore]`d, not dormant, not skeletal;
+   only item 11's four doc-shape gates (field-column↔key-set equality both directions;
+   `EXPLAINED-§x.y` anchors resolve; no-`OPEN`-once-fixture-present; three role-distinct non-self
+   signatures) may land early. **Scope:** licenses landing early exactly two things — the doc file's
+   skeleton and item 11's four gates in dormant-but-verified form; does not license landing any
+   other item-6 member early; does not touch the maintainer's still-open signature-scheduling
+   decision (§16.24, "Maintainer decisions (ii)"); does not reinterpret "the doc verdicts" at any
+   other site the phrase appears.
+
+4. **Ruling 1 rests on executed measurement; Ruling 2 rests primarily on reading ratified text,
+   corroborated by a measured precedent — the two are not settled the same way, and neither
+   transcription nor any future citation should flatten that difference.** Ruling 1's decisive
+   grounds are Fable's probe crate and the two frozen gates it exercises (item 2 above). Ruling 2's
+   decisive ground is textual: the ratified sentence at spec lines 3970-3972 names "the doc
+   verdicts", not the doc file, and neither "`docs/DETECTOR_ORACLE.md`" nor "in one commit or none"
+   appears there — `grep -n "one commit or none"` **over `docs/PIPELINE_SPEC_V1.md` specifically**
+   returns zero hits, confirming the rust-engineer's brief had paraphrased item 6 rather than quoted
+   it. That grep result is scoped to the spec, not the repo: the same string appears, pre-existing
+   and unrelated to this ruling, in a doc-comment at `crates/pc-detect/src/oracle.rs:16` and in
+   `docs/HANDOVER.md:69` (both themselves paraphrases of item 6, not the ratified text). Ruling 2's
+   textual reading is corroborated by the measured, already-accepted `EXPECTED_DETECTOR_PIN_GROUPS`
+   precedent (`cargo test -p xtask --test provenance_digests`, 6 passed at HEAD) and by
+   `cargo test -p pc-testkit --test recorded_provenance` (1 passed at HEAD) for Ruling 1's timing
+   consequence — but the precedent is corroboration, not the primary ground. Item 3's reading of
+   "once the fixture is present" as contemplating a pre-fixture doc state is interpretation of
+   ratified prose, flagged as such by Fable itself and recorded verbatim in `docs/RULINGS.md`.
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:
