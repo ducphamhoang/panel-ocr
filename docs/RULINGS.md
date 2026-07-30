@@ -267,3 +267,119 @@ transcription going through step 1a's fresh-reader review:
 May accompany but does NOT gate: `UpstreamBoxOutsideFrame` (0/38); the additive reachable-shape
 controls (owed before the atomic recording commit regardless); the cookbook rule 15 correction; the
 ours-side pre-truncation probe (owed at recording time for diagnostics).
+
+---
+
+## §16.27 item 1(g) frozen-literal adaptation — Fable tie-break, 2026-07-30 (record quality: this entry captures the ruling closer to verbatim than any prior one; long paraphrase passages are marked as such)
+
+§16.27 item 1(g) deferred authorization for adapting the frozen struct literals in
+`crates/pc-detect/tests/f1_oracle_comparator.rs` to the new §16.27 item 1(a) recording fields,
+pending "a joint architect-plus-engineer or Fable ruling". The joint architect + rust-engineer
+planning pass (spawned together, each blind to the other) **agreed** on the bulk of the scope but
+**disagreed** on one mechanism, so per `CLAUDE.md`'s tie-break rule Fable was convened to decide
+between the two positions, not to design from scratch.
+
+**What both agents independently found and agreed on** (paraphrase): the closed 4-value
+`derivation` enum admits no value for a line-less block, so 24 of the 28 block instances the file
+constructs cannot honestly carry any derivation value — null-completion (`None`/`false`, never a
+fabricated value) is the only assignment that asserts nothing false at all 9 `OracleBlock`
+construction sites. `derivation` must be `Option<Derivation>` with `#[serde(default)]` on
+`OracleBlock`, forced by two existing frozen assertions (`f1_oracle_comparator.rs:1739-1747`'s
+`minimal` literal and the `"eng"`-rejection probe at `:1783-1786`) that a required field would
+either break outright or silently pass for the wrong reason. Both refused enriching the two
+sites where the union arithmetic technically forces a `rect_yolo` value (`upstream_truth()` blocks
+A and C) — one on grounds of a fixture collision with the in-place `xyxy` mutation the
+fault-injection tests already perform (`:171`, `:352`), the other on grounds of subject drift —
+and both agree `Totals` and its ~13 literals need no edit at all (§16.27 item 3(b) already rules
+those authored anti-vacuity literals "gain nothing here"). Both agree the comparator does not
+re-check the four derivation laws (they are recorder-side, item 1(b)/(c)) and that item 1(a)'s
+"REQUIRED" binds the recorder, not the Rust type.
+
+**Where they disagreed, and what Fable decided.** Both identified the same residual hole: with
+`derivation: Option<_>`, a real recorded artifact that silently dropped the field would pass
+`compare()` unnoticed. The Rust Engineer proposed closing it by signing `derivation` on
+`ExpectedPair` itself (mirroring the existing `IdentityBranch` signed-field mechanism) and gating a
+mismatch, including a signed-vs-absent mismatch, as a new `Divergence` variant. The Architect
+proposed routing it through the existing per-field `OracleCoverage`/`FieldCoverage` channel instead
+(the mechanism §16.25 already uses for `confidence`/`language`), reusing the existing
+`InconsistentOracleCoverage` variant and deferring the "uniform absence" gate to the real-page
+atomic-recording-commit's own assertion — which the Architect itself flagged, unprompted, as
+needing its own ratification it was not granting.
+
+Fable's decisive finding, quoted because it is the ruling's own reasoning and not a paraphrase of
+it:
+
+> The decisive ground is that a ratified clause already answers the Architect's proposal, and the
+> Architect did not cite it. §16.25 item 5 carries a two-condition scope test for exactly this
+> question ... `derivation` is none of those — it is an upstream-only recording probe, exactly the
+> shape of `base_xyxy_pretruncation`, which §16.25 item 5 names as the worked exclusion.
+
+and on why the Architect's design does not actually close the hole it was built for:
+
+> The Architect's design leaves the named hole open. Its uniform-absence case does not gate inside
+> `compare()` at all; the gate is deferred to a real-page authored assertion the Architect itself
+> flags as "extending §16.24 item 6's ratified two-part CI contract", "needing its own
+> ratification", and "not granted here". So as submitted, the design closes the silent-pass hole
+> only after a future ratification that does not exist.
+
+**Ruling: the Rust Engineer's signed-per-pair mechanism wins**, with two amendments Fable added
+after re-deriving the arithmetic and re-reading the ratified precedent itself (not merely picking a
+side):
+
+1. **Amendment 1 — bidirectional exact equality.** The Engineer's original text covered only
+   "signed `Some(d)`, artifact doesn't match". Fable requires the comparison to fire in the third
+   direction too — signed `None`, artifact `Some(b)` — closing a hole where a future control could
+   carry a real derivation while signing `None` and silently skip the gate.
+2. **Amendment 2 — the anti-vacuity literal's exact VALUE is not ratified, only its form.** The
+   Engineer's proposed `report.leg1_rows_checked == 14` conflates §16.27 item 1(f)'s three-page
+   14-block *census total* with the ratified oracle page P01's own paired-block count, which is
+   **3** (§16.27 item 4 / this file's R3: "3 paired at `[0,0,0,0]` ... 1 `ClassDuplicateOf`, 1
+   `CoverageFilteredUpstream`"). Fable authorizes the counter *mechanism* and requires it be
+   exercised non-vacuously in the same commit and asserted against an authored (hand-derived, never
+   artifact-derived) literal at the real-page gate — but does not itself ratify "14" or any other
+   number as that literal's value, since neither agent's ruling actually derived one for P01.
+
+**Final scope, as Fable stated it:**
+
+- `ExpectedPair` gains `derivation: Option<Derivation>`; all 21 frozen literals get `derivation:
+  None`.
+- Final ratified `Divergence` variant count is **19**: the existing 16, plus §16.27 item 2's leg-1
+  row, plus item 2(c)'s structural guard, plus a new signed-derivation-mismatch gating variant.
+  Partition test moves to `samples.len() == 19`, `(gating, diagnostic) == (17, 2)`.
+  `UpstreamBoxOutsideFrame` is not among the 19 (stays untranscribed per item 11).
+- A `derivation == None` artifact block disables the derivation-conditional machinery for its pair
+  (item 2's row, item 2(c)'s guard, item 6's derivation-conditional message) — must be stated in
+  `oracle.rs`'s doc comment, not merely implemented. This is safe only because Amendment 1's
+  bidirectional signature check is unconditional.
+- Everything the two agents agreed on stands, plus two things grafted from the Architect's losing
+  position because Fable found no defect in them: §16.24 item 1(f)'s two conditions carried
+  verbatim (every existing value retained verbatim; new values are literals, never derived from a
+  run), and the `bare_block` comment recording the asymmetry against the populated full-shape JSON
+  exemplar.
+- The full-shape JSON literal (`f1_oracle_comparator.rs:1749-1772`) is populated with real values,
+  not left `None` — the Rust Engineer's own proposal (`derivation: Some(Derivation::YoloUnioned)`,
+  `rect_yolo: Some([29,105,86,261])`, `eng_expanded: false`, the last two figures being the
+  `ours`/expected geometry of the block that literal already models), which Fable independently
+  re-solved the union arithmetic for and confirmed satisfies the `YoloUnioned` law. Both agents'
+  rulings required this literal be kept in sync with its own "a dropped optional field is the quiet
+  direction of drift" comment; this is that requirement applied to the three new fields, plus the
+  three assertions needed to make the population checked rather than merely present.
+- New fire-case tests required in the same commit: the leg-1 row firing, the leg-1 row passing
+  non-trivially, item 2(c)'s guard firing, and — the case this whole dispute exists to catch — the
+  signed-derivation mismatch firing in its silent-drop direction (signed `Some`, artifact `None`).
+  R7's four additive controls may supply pass-side coverage but may not substitute for these — and
+  to supply that pass-side coverage at all, at least one of R7's controls must sign a real
+  `derivation` value, since a signed `None` (per the `derivation == None` disabling rule above)
+  cannot exercise any of the new machinery.
+
+**Explicitly left open, not decided here:** whether an *unmatched* upstream entry's signed
+`DbnetScattered` mechanism gets verified against that block's recorded `derivation` inside
+`compare()` — a residual gap in *both* designs, named but not closed; F1-C may propose a fix, but
+it needs its own ruling. The serde spelling of `Derivation`'s enum values is left to F1-C, with the
+condition that it is pinned in the full-shape JSON literal in the same commit (that literal is the
+only Rust-side gate on the not-yet-written Python recording script). The Architect's ruling also
+left the Rust encoding of the `eng_expanded`/`lines_pre_expand`/`expand_size` trio free — a flat
+three fields, or a grouped `Option<EngExpansion { .. }>` that makes the "REQUIRED together"
+conditional unrepresentable-if-violated — noting a preference for the grouped form without ruling
+it, since "the authorization's scope is identical either way; only the token count differs." Fable
+did not revisit this; it stands as the Architect left it.

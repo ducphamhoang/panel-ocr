@@ -5254,6 +5254,13 @@ not, the count is marked unreconciled and may not be cited as reproducible.
    it explicitly and states its conditions. Until that lands the file is not edited, and nothing in
    this entry may be read as licensing it. Recorded rather than dropped, per §16.23 item 1's rule.
 
+   **(SUPERSEDED by §16.28 — read it before treating this deferral as still open. The joint
+   architect-plus-engineer pass this item calls for happened, the two disagreed on one mechanism,
+   Fable tie-broke it, and §16.28 states the resulting authorization and its exact scope. This
+   entry's history — that the sequencing note asserted authorization with no source, and that a
+   named ruling was required before editing — stands as written; only its "pending" status is
+   resolved.)**
+
 2. **A second, new geometry gate: `ours.rect == rect_yolo` on every paired block, exact and
    epsilon-free.** §16.20 item 3(b) alone is no longer fit as the sole geometry gate — the ruling's
    recorded grounds, carried as paraphrase, are that 65 of 100 edges are unconstrained by it, 8 of 25
@@ -5582,7 +5589,9 @@ not, the count is marked unreconciled and may not be cited as reproducible.
       fact, and this transcription's scope was the citation and the register entry. It needs its own
       entry before F1-C asserts it.
     - **The frozen-literal adaptation in `f1_oracle_comparator.rs`** — deferred, see item 1(g). It is
-      unauthorised, not merely unscheduled.
+      unauthorised, not merely unscheduled. **(NOW AUTHORIZED — see §16.28, which resolves item
+      1(g)'s deferral. This bullet's history stands as written; it no longer describes the present
+      state.)**
     - **A worked discriminator example** in the source record naming a fixture that could not be
       located in this repo, in upstream's asset tree, or on any recovered page. It is recorded there
       as unverifiable and is not transcribed at all; the ruling it supported — that the discriminator
@@ -5597,6 +5606,177 @@ not, the count is marked unreconciled and may not be cited as reproducible.
     authorised-but-not-yet-landed follow-up commit, **not** an open ratification question. An earlier
     draft listed them as a fourth bullet above, which read them as unratified — the exact opposite of
     item 9's disposition, and the reason the split is spelled out here rather than left to the reader.
+
+## 16.28 The frozen literals in `f1_oracle_comparator.rs` — authorized scope (Fable tie-break, 2026-07-30)
+
+**SUPERSEDES: §16.27 item 1(g)**
+
+§16.27 item 1(g) deferred authorization for adapting the frozen struct literals in
+`crates/pc-detect/tests/f1_oracle_comparator.rs` pending *"a joint architect-plus-engineer or Fable
+ruling that authorises it explicitly and states its conditions."* That pass ran: the Technical
+Architecture and Senior Rust Engineer agents were convened jointly, each blind to the other's
+output, and produced full independent rulings. They agreed on most of the scope and disagreed on
+one mechanism, so per `CLAUDE.md`'s tie-break rule `fable-adjudicator` reviewed both positions and
+decided between them rather than designing from scratch. The full source record, including both
+agents' verbatim reasoning and Fable's decisive quotes, is in `docs/RULINGS.md` under "§16.27 item
+1(g) frozen-literal adaptation — Fable tie-break, 2026-07-30"; this entry transcribes the ratified
+conclusions.
+
+1. **The sequencing note's "mechanical adaptation" is refused as a category.** Both agents
+   independently found that §16.27 item 1(a)'s closed 4-value `derivation` enum admits **no** value
+   for a line-less block, and 24 of the 28 `OracleBlock` instances the file constructs have no line
+   data at all. Writing any real `derivation`/`rect_yolo` value at those 24 sites is fabrication,
+   not adaptation — there is no forced or defensible value to choose. What is authorized instead is
+   narrower: a null completion.
+
+   (a) **Nine `OracleBlock` construction sites** (the two `oracle_block()`/`bare_block()` helper
+   bodies, plus seven inline literals) each gain the five new fields, all at their "unrecorded"
+   value: `derivation: None`, `rect_yolo: None`, `eng_expanded: false`, `lines_pre_expand: None`,
+   `expand_size: None`. Forced, not chosen: no enum member is admissible at 24 of the 28 instances,
+   and the remaining 4 are refused per (b) below, so `None`/`false` is the only assignment that
+   asserts nothing false. The 16 `bare_block(...)` and 5 `oracle_block(...)` *call sites* need no
+   edit — both helpers absorb the new fields in their bodies, which is itself evidence the edit is
+   genuinely mechanical at these nine sites.
+
+   (b) **Two sites where the union arithmetic technically forces a `rect_yolo` value are refused
+   anyway.** `upstream_truth()` blocks A and C solve uniquely under `Rect::merge`'s min/min/max/max
+   semantics (verified: `crates/pc-core/src/geometry.rs:60-67`). Filling in block C is refused
+   because it collides with the in-place `xyxy` mutation the fault-injection tests already perform
+   on it at `f1_oracle_comparator.rs:171` and `:352` — a real fixture defect the enrichment would
+   introduce. Filling in either block is refused on the second, independent ground that it would
+   make these controls model a second subject (derivation classification) they were not written to
+   model, for only the pass-side of the new gate's coverage. New controls, not enrichment of frozen
+   ones, carry that coverage (item 5 below).
+
+   (c) **Schema placement is a binding precondition, not a detail.** `derivation` is
+   `Option<Derivation>` with `#[serde(default)]` on `OracleBlock` — **not** a required serde field.
+   Forced by two existing frozen assertions: the `minimal` literal
+   (`f1_oracle_comparator.rs:1739-1747`, a bare `{"xyxy":[1,2,3,4]}` block that must still parse)
+   would panic under a required field, and the `"eng"`-language-rejection probe (`:1783-1786`) would
+   pass for the wrong reason (missing-field, not the intended language-value rejection) — a silent
+   weakening invisible to the compiler and to a green run. Both sites are protected by this schema
+   placement and are **not edited**.
+
+   (d) **`Totals` and its construction sites need no edit.** §16.27 item 3(b) already rules the
+   authored anti-vacuity literals (`pairs`, `upstream_total`, `ours_total`) "gain nothing here"; this
+   entry confirms that as a no-change row so a future reader does not infer one.
+
+   (e) **Two ambiguities in item 1(a)'s text, resolved because getting them wrong breaks frozen
+   vectors.** Item 1(a)'s "REQUIRED" binds the **recorder**, not the Rust type — (c) above is the
+   consequence. And the comparator does **not** re-check the four derivation laws itself: item
+   1(b)/(c) place them on the recorder, item 2 adds exactly one comparator row. Checking the laws
+   inside `compare()` would make the fault-injection tests' in-place `xyxy` mutation at `:171` emit
+   an extra divergence row into that test's already-frozen 3-row exact vector (a fourth row) and at
+   `:352` into that test's already-frozen 1-row exact vector (a second row) — an amendment nobody has
+   authorized.
+
+2. **The one point of disagreement: how to close the "silent absence" hole, and Fable's decisive
+   ruling on it.** With `derivation: Option<_>`, a real recorded artifact that dropped the field
+   would parse and compare silently — nothing would catch that a real block should have carried a
+   derivation but doesn't. The Rust Engineer proposed signing `derivation` on `ExpectedPair` itself
+   (mirroring the existing `IdentityBranch` signed-and-verified field, `oracle.rs:213-216`) and
+   gating a mismatch as a new `Divergence` variant. The Architect proposed routing it through the
+   existing per-field `OracleCoverage`/`FieldCoverage` channel (§16.25's mechanism for
+   `confidence`/`language`) with the "uniform absence" case gated only later, at the atomic
+   recording commit.
+
+   **Fable ruled for the Rust Engineer's mechanism**, quoted because this is the ruling's own
+   reasoning:
+
+   > The decisive ground is that a ratified clause already answers the Architect's proposal, and the
+   > Architect did not cite it. §16.25 item 5 carries a two-condition scope test for exactly this
+   > question ... `derivation` is none of those — it is an upstream-only recording probe, exactly
+   > the shape of `base_xyxy_pretruncation`, which §16.25 item 5 names as the worked exclusion.
+
+   and:
+
+   > The Architect's design leaves the named hole open. Its uniform-absence case does not gate
+   > inside `compare()` at all; the gate is deferred to a real-page authored assertion the Architect
+   > itself flags as "extending §16.24 item 6's ratified two-part CI contract", "needing its own
+   > ratification", and "not granted here". So as submitted, the design closes the silent-pass hole
+   > only after a future ratification that does not exist.
+
+   **Ratified: `ExpectedPair` gains `derivation: Option<Derivation>`.** All 21 frozen `ExpectedPair`
+   literals in `f1_oracle_comparator.rs` gain `derivation: None` — a true statement that none of
+   this file's existing controls exercises the derivation axis, compiler-forced, asserting nothing
+   false.
+
+   **Amendment 1, added by Fable — verification is exact BIDIRECTIONAL equality.** The mismatch
+   fires on signed `Some(a)` vs. recorded `Some(b)` where `a ≠ b`, on signed `Some(a)` vs. recorded
+   `None`, **and on signed `None` vs. recorded `Some(b)`.** The Rust Engineer's original proposal
+   named only the first two directions; the third is what stops a future control from carrying a
+   real recorded derivation while signing `None` and silently skipping the gate. This costs the
+   frozen file nothing: every one of its 21 signatures and all 28 artifact blocks are `None`, which
+   is equal, so no row fires and every existing exact-vector `assert_eq!(report.divergences, ...)`
+   is untouched.
+
+3. **The ratified `Divergence` variant count is 19**, composed of: the 16 variants that exist today
+   (`crates/pc-detect/src/oracle.rs:317-423`), plus §16.27 item 2's `ours.rect == rect_yolo` leg-1
+   gating row, plus item 2(c)'s structural guard (a pair whose upstream derivation is `YoloSplit` or
+   `DbnetScattered` is itself a gating row), plus the signed-derivation-mismatch gating variant this
+   entry ratifies in item 2 above. `the_divergence_class_partition_is_total_and_gating_excludes_diagnostics`
+   moves from `samples.len() == 16` / `(gating, diagnostic) == (14, 2)` to `samples.len() == 19` /
+   `(17, 2)`. This count is derived from this enumeration, never from counting the enum itself
+   (cookbook rules 7 and 13). `UpstreamBoxOutsideFrame` is **not** among the 19 — §16.27 item 11
+   leaves it untranscribed, and it needs its own entry before it can be asserted; landing it later
+   makes it a 20th variant by its own ratification, not a consequence of this one. Rust names of all
+   three new variants are left to F1-C; the mismatch variant's message must name both the signed and
+   the recorded derivation, and item 2(c)'s guard's message must name the derivation (already
+   required by item 2(c) itself).
+
+4. **A `derivation == None` artifact block disables the derivation-conditional machinery for its
+   pair.** Item 2's `ours.rect == rect_yolo` row, item 2(c)'s structural guard, and item 6's
+   derivation-conditional 18(i) message do not apply when the recorded artifact carries no
+   derivation. This must be stated in `oracle.rs`'s doc comment, not merely implemented, and it is
+   what keeps every existing exact-vector assertion in `f1_oracle_comparator.rs` untouched (with
+   `derivation: None` throughout, none of items 2/2(c)/6's machinery can fire on any input in that
+   file today). It is safe specifically because Amendment 1's signature check is unconditional and
+   independent of it.
+
+5. **Anti-vacuity is authorized as a mechanism, not as a specific number.** The Rust Engineer
+   proposed a literal `report.leg1_rows_checked == 14`, but 14 is §16.27 item 1(f)'s three-page
+   *census total*, not the ratified oracle page P01's own paired-block count, which is **3**
+   (§16.27 item 4 / `docs/RULINGS.md` R3: "3 paired at `[0,0,0,0]` ... 1 `ClassDuplicateOf`, 1
+   `CoverageFilteredUpstream`"). Fable's finding: neither agent's ruling actually derived a number
+   for P01, so no number is ratified here. What is ratified: `ComparisonReport` gains a counter of
+   pairs on which item 2's leg-1 row was actually evaluated; a new test exercises it non-vacuously
+   against its own authored count in the same commit that adds it; and the real-page gate asserts it
+   against a literal **authored (hand-derived, never artifact-derived)** at the atomic recording
+   commit (cookbook rule 7).
+
+6. **New tests required in the same commit** — the frozen file's null completion gives the new
+   machinery zero coverage on its own, so these are not optional follow-ups: the leg-1 row firing
+   (`ours.rect != rect_yolo`, exact), the leg-1 row present and passing non-trivially, item 2(c)'s
+   structural guard firing, and — the case this whole ruling exists to protect — the signed-
+   derivation mismatch firing in its silent-drop direction (signed `Some`, recorded `None`). §16.27
+   item 7's four already-authorized additive reachable-shape controls (synthesized-corners,
+   dominating-lines, multi-line, split-shaped-unmatched) may supply pass-side coverage but may not
+   substitute for these fire cases, and per Amendment 1 their `ExpectedPair` literals must sign a
+   real `derivation` value to exercise the axis at all.
+
+7. **Grafted from the Architect's losing position, ratified because Fable found no defect in
+   either:** §16.24 item 1(f)'s two conditions carried verbatim into this authorization — every
+   existing value in the nine sites is retained verbatim, and every new value is a literal, never
+   derived from a run — and a comment obligation at `bare_block` recording the deliberate asymmetry
+   against the populated full-shape JSON exemplar
+   (item 8 below).
+
+8. **The full-shape JSON literal at `f1_oracle_comparator.rs:1749-1772`** (the exemplar whose own
+   comment states *"a dropped optional field is the quiet direction of drift"*) gains the five new
+   fields **populated**, with new assertions on `derivation`, `rect_yolo`, and `eng_expanded` —
+   additive strengthening, not mechanical, since nothing forces it but leaving it stale would
+   falsify the comment's own claim. This is the only Rust-side gate on the not-yet-written Python
+   recording script, so the serde spelling of `Derivation`'s enum values — left to F1-C — must be
+   pinned here in the same commit that chooses it.
+
+**Deferrals, recorded rather than dropped (§16.23 item 1's rule).** (i) Whether an *unmatched*
+upstream entry's signed `DbnetScattered` mechanism is verified against that block's recorded
+`derivation` inside `compare()` is a residual gap in **both** agents' designs, named by Fable but
+not closed; F1-C may propose a fix, but it needs its own ruling. (ii) `UpstreamBoxOutsideFrame`
+stays untranscribed per §16.27 item 11 and is not licensed by this entry. (iii) The Rust encoding of
+the eng-expansion trio (flat three fields vs. a grouped `Option<EngExpansion { .. }>` that makes the
+"REQUIRED together" conditional unrepresentable-if-violated) is left to F1-C; both encodings satisfy
+this entry's authorization identically.
 
 ## 16. Summary of what v1 is NOT
 
