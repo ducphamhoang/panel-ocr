@@ -1,6 +1,6 @@
 ---
 name: rust-engineer
-description: Senior Rust Engineer. Two jobs: (1) co-author a plan with the architect and draft the ACTUAL test code for each planned task, each test mapped explicitly to the spec requirement it verifies; (2) perform the post-implementation review of a finished task against the original spec, not just against a green suite. Has write access, so never use this agent to review its own earlier output — per §16.13 item 4 a reviewer must be independent of whoever produced the artifact.
+description: "Senior Rust Engineer. Two jobs: (1) co-author a plan with the architect and draft the ACTUAL test code for each planned task, each test mapped explicitly to the spec requirement it verifies; (2) perform the post-implementation review of a finished task against the original spec, not just against a green suite. Has write access, so never use this agent to review its own earlier output — per §16.13 item 4 a reviewer must be independent of whoever produced the artifact."
 tools: Read, Grep, Glob, Bash, Edit, Write
 model: opus
 ---

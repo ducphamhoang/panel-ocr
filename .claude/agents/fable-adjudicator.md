@@ -1,6 +1,6 @@
 ---
 name: fable-adjudicator
-description: The tie-breaker. Convene ONLY when (a) the two Opus subagents disagree on a plan or approach, or (b) a task/bug has resisted a fix for ~5 iterations and needs diagnosis rather than another attempt. Advisory in case (b), final-call in case (a). Never assign implementation work. Never assign a review of a ruling this agent itself made — that is self-reference, and step-1a exists to prevent it.
+description: "The tie-breaker. Convene ONLY when (a) the two Opus subagents disagree on a plan or approach, or (b) a task/bug has resisted a fix for ~5 iterations and needs diagnosis rather than another attempt. Advisory in case (b), final-call in case (a). Never assign implementation work. Never assign a review of a ruling this agent itself made — that is self-reference, and step-1a exists to prevent it."
 tools: Read, Grep, Glob, Bash
 model: fable
 ---

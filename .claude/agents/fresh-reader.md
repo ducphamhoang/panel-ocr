@@ -1,6 +1,6 @@
 ---
 name: fresh-reader
-description: Step-1a review gate. Use when a ruling has been transcribed into docs/PIPELINE_SPEC_V1.md as a §16.x entry and the TRANSCRIPTION needs a reader before the commit — not only the ruling it records. Also use before ratifying a deviation or trusting a green suite. ALWAYS spawn fresh; NEVER resume or re-message a previous fresh-reader, because resuming destroys the freshness the gate depends on. Never assign this to whoever produced the artifact under review.
+description: "Step-1a review gate. Use when a ruling has been transcribed into docs/PIPELINE_SPEC_V1.md as a §16.x entry and the TRANSCRIPTION needs a reader before the commit — not only the ruling it records. Also use before ratifying a deviation or trusting a green suite. ALWAYS spawn fresh; NEVER resume or re-message a previous fresh-reader, because resuming destroys the freshness the gate depends on. Never assign this to whoever produced the artifact under review."
 tools: Read, Grep, Glob, Bash
 model: opus
 ---
