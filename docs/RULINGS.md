@@ -126,11 +126,12 @@ Re-fetched from `peppercarrot.com`'s `0_sources/ep01_Potion-of-Flight/low-res/` 
 match** to item 17's recorded hash, so P01 alone is byte-for-byte verified. Item 17(a) records no
 hash for P02/P03, only sizes; those sizes (448,475 B / 302,541 B) match exactly, which is weaker
 evidence of identity than a hash match but is what the spec actually lets us check. Running
-upstream's real `group_output` on all three:
-P01 → 4 blocks, P02 → 6, P03 → 4. This confirms the pages' identity but does **not** by itself
-reconcile the 44/49 counts (see the gap noted on R1) — 14 total blocks across these three pages is
-far short of either figure, so the broader corpus R1/R7 measured against includes more than just
-these three.
+upstream's real `group_output` on all three: P01 → 4 blocks, P02 → 6, P03 → 4. **This is a
+downstream measurement, not additional identity evidence** — it does not itself confirm P02/P03 are
+the right files (their identity rests only on the size match above, weaker than P01's hash match),
+and it does **not** reconcile the 44/49 counts either way (see the gap noted on R1): 14 total blocks
+across these three pages is far short of either figure, so the broader corpus R1/R7 measured against
+includes more than just these three.
 
 Coverage: `Partial` does not fire on scattered blocks, because §16.25 item 6(a) computes over the
 PAIRED set. Item 10's obligation is re-scoped to one score per gated yolo-derived block.
