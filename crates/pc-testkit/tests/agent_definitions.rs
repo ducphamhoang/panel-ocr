@@ -96,6 +96,43 @@ fn unquote(value: &str) -> &str {
         .unwrap_or(value)
 }
 
+fn quotable_or_quoted(value: &str) -> Result<(), String> {
+    if value.starts_with('"') {
+        if !value.ends_with('"') || value.len() < 2 {
+            return Err("quoted value never closed".to_owned());
+        }
+
+        let interior = &value[1..value.len() - 1];
+        // This is intentionally stricter than YAML: descriptions need no interior quotes, so a
+        // rephrase is cheap, while accepting malformed quoting can silently disable a role
+        // prohibition. That makes over-rejecting the sound direction for this file class.
+        if interior.contains('"') {
+            return Err("quoted value has an interior quote".to_owned());
+        }
+        if interior.contains('\\') {
+            return Err("quoted value has an interior backslash".to_owned());
+        }
+        return Ok(());
+    }
+
+    if let Some(offending) = value.find(": ").map(|index| &value[index..index + 2]) {
+        return Err(format!(
+            "frontmatter value contains offending substring `{offending}`"
+        ));
+    }
+    if let Some(offending) = value.chars().next().filter(|character| {
+        matches!(
+            character,
+            '#' | '&' | '*' | '!' | '|' | '>' | '%' | '@' | '`' | '[' | '{' | ','
+        )
+    }) {
+        return Err(format!(
+            "frontmatter value starts with offending character `{offending}`"
+        ));
+    }
+    Ok(())
+}
+
 fn field<'a>(fields: &'a BTreeMap<String, String>, path: &Path, key: &str) -> &'a str {
     fields
         .get(key)
@@ -146,30 +183,35 @@ fn frontmatter_values_are_safely_quotable_or_quoted() {
                 continue;
             };
             let value = raw_value.trim();
-            let wrapped_in_double_quotes =
-                value.starts_with('"') && value.ends_with('"') && value.len() >= 2;
-            if wrapped_in_double_quotes {
-                continue;
-            }
-
-            if let Some(offending) = value.find(": ").map(|index| &value[index..index + 2]) {
-                panic!(
-                    "{} line {line_number}: frontmatter value contains offending substring `{offending}`",
-                    path.display()
-                );
-            }
-            if let Some(offending) = value.chars().next().filter(|character| {
-                matches!(
-                    character,
-                    '#' | '&' | '*' | '!' | '|' | '>' | '%' | '@' | '`' | '[' | '{' | ','
-                )
-            }) {
-                panic!(
-                    "{} line {line_number}: frontmatter value starts with offending character `{offending}`",
-                    path.display()
-                );
+            if let Err(rule) = quotable_or_quoted(value) {
+                panic!("{} line {line_number}: {rule}", path.display());
             }
         }
+    }
+}
+
+#[test]
+fn quotable_or_quoted_accepts_safe_values_and_rejects_unsafe_values() {
+    // The file-driven test can only fail by corrupting a real definition, so the rule needs direct coverage.
+    let cases = [
+        ("\"a normal quoted description.\"", true),
+        ("plain-no-colon-value", true),
+        ("'Read, Grep, Glob, Bash'", true),
+        ("opus", true),
+        ("\"he said \"hi\" and left\"", false),
+        ("\"abc\" trailing junk", false),
+        ("\"unterminated", false),
+        ("'Read-only: produces a design'", false),
+        ("# comment-looking", false),
+        ("\"has \\ backslash\"", false),
+    ];
+
+    for (value, expected_acceptance) in cases {
+        assert_eq!(
+            quotable_or_quoted(value).is_ok(),
+            expected_acceptance,
+            "unexpected validation result for {value:?}"
+        );
     }
 }
 

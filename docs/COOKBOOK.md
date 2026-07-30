@@ -789,6 +789,46 @@ no check because it is trusted.
 Generalised: **a validator is a claim about a consumer, and the claim has a direction.** Write it so
 that its failures are false alarms rather than false assurances.
 
+### 14c-bis. The replacement gate broke the same rule, on its other branch
+
+The test written to enforce all of the above shipped with the same defect, one commit later. Its
+rule has two branches — *quoted*, or *unquoted and free of `": "`* — and only the second was
+strict:
+
+```rust
+let wrapped_in_double_quotes = value.starts_with('"') && value.ends_with('"') && value.len() >= 2;
+if wrapped_in_double_quotes {
+    continue;                 // accepts the entire quoted branch, checking nothing inside it
+}
+```
+
+Three measured false greens, each passing the gate while `yaml.safe_load` rejects the file:
+`"he said "hi" and left"` (unescaped interior quote), `"abc" trailing junk` (content after the
+closing quote), and `"unterminated` — the last being the worst, because a value that starts with
+`"` and does not end with one **fell through to the unquoted rules**, and was then judged by
+criteria that do not apply to it.
+
+Two things generalise, and they are worth more than the original rule:
+
+- **"Stricter than the consumer" is a claim about every path through the check, not about the
+  check.** One branch that over-rejects plus one branch that accepts unexamined is not a strict
+  validator; it is a strict validator *and* an unbounded hole, and the hole sets the real accept
+  set. Enumerate the branches and state the accept-set of each.
+- **Never let a malformed input fall through to the rules for a different shape.** If a value
+  announces itself as quoted by its first character, an unclosed quote must be an error on the
+  quoted path — never a silent demotion to the unquoted path. Misclassification is how the third
+  false green survived a review that had already found the first two.
+
+The gate could only be falsified by corrupting a real definition file, which is why the holes lived:
+that is expensive enough that nobody probes ten variants. The fix extracts the per-value rule into a
+pure function and drives a table of accepted/rejected literals through it directly — cheap to
+extend, so the next hole costs one row instead of one file edit. **A rule that can only be tested
+through its real inputs will be tested rarely; extract it and test it directly.**
+
+This is also rule 14b recurring: the gate that records this rule failed this rule. That happened
+twice in one session, so treat it as the default expectation rather than an irony — **when you write
+a gate that encodes a principle, run the principle over the gate before committing it.**
+
 ---
 
 ## 15. A supporting example can refute the claim it is cited for — check the sign
