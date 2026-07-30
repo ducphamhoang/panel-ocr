@@ -4747,6 +4747,8 @@ required a ratification before implementation.
    remember to check. `missing` carries the indices, not just counts — counts send a reader hunting,
    indices are a fix (rule 13's corollary).
 
+   **SUPERSEDES: §16.20 item 3(d)**
+
 6. **Three binding refinements — conditions of the concurrence, not preferences.**
 
    (a) **Compute the gating subject over the PAIRED upstream blocks**, reporting whole-artifact
@@ -4786,12 +4788,16 @@ required a ratification before implementation.
    that produced the curve-fit; and assert `coverage == Present` in the existing agreeing/disagreeing
    halves so `Absent` is falsifiable against `Present` within one test rather than only across tests.
 
+   **SUPERSEDES: §16.24 item 6**
+
 8. **§16.24 item 6's three-class list is edited by this entry, and says so.** That item adopts *"the
    divergence class system (`Gating` / `Diagnostic` / `NoOracle`)"* verbatim. Deleting the class is
    therefore not a drafting consequence — it amends a ratified enumeration, superseded in place per
    §16.19's convention with the original wording preserved. The class must **go**, not be kept empty:
    a `no_oracle()` accessor that provably always returns empty is rule 1's decoration with a name
    claiming a capability.
+
+   **SUPERSEDES: §16.24 item 9**
 
 9. **Corrections of record.** Two citations in the defect table as first circulated were wrong, and
    the corrected list is normative here: `:262` (`the_unperturbed_pair_...`) uses `oracle_block()`,
@@ -4841,7 +4847,7 @@ This entry makes the convention checkable.
    51 occurrences across 91 sections and 343 items, yielding 26 candidate claims after a direction
    rule (a *claim* names an older target; a *back-pointer* names a newer claimer) plus `by`- and
    parenthesised-marker filters. Of the 26, **18** name a target carrying no back-pointer;
-   hand-auditing those 18: **~10 real, ~8 false positives.** Three structural causes, each a real
+   hand-auditing those 18: **~10 real, ~8 false positives.** **Four** structural causes, each a real
    line of this spec:
 
    - **Quoted anchors.** §16.24 item 10 says *"§16.20 item 3(e)'s citation `"§2.4/§2.5's field
@@ -4850,6 +4856,13 @@ This entry makes the convention checkable.
      attaches to the list, so §13 survives as a phantom claim.
    - **Citing someone else's amendment.** *"per §16.20 item 3(a) as amended by §16.22 item 6"*,
      sitting in §16.21, which claims nothing.
+   - **A verb and an unrelated anchor sharing one physical line.** Line 741 carries a real
+     supersession clause naming §15.10 *and*, later on that same line — a single unwrapped line of
+     ~1100 characters, so no wrapping is needed for the hazard — an unrelated citation of the
+     `ReplayDetector` subsection, so the scan pairs the verb with the second anchor and invents a
+     claim on a target the clause never mentions. **Added 2026-07-30, recording a cause found on
+     2026-07-29 by the enforcing test rather than by the audit that produced the three above**,
+     which is the entry's own subject turned on itself and the reason item 8 exists.
 
    Every additional heuristic moved flags between the two error columns rather than reducing them.
    **A gate wrong half the time gets allowlisted into uselessness** — cookbook rule 13's bypass by
@@ -4879,14 +4892,36 @@ This entry makes the convention checkable.
    absorbs today's ambiguity without anyone adjudicating the eight false positives now.
 
 3. **Span delimitation, with its leniencies named rather than pattern-matched.** An item's span
-   runs from its `N. ` marker to the next `^N. ` in the same section. Two deliberate leniencies:
-   sub-items are **not** separate spans (a claim on `item 3(d)` resolves to item 3, because
+   runs from its `N. ` marker to the next `^N. ` in the same section. **Four** deliberate
+   leniencies, enumerated because an unenumerated leniency is how a gate becomes vacuous:
+
+   (a) sub-items are **not** separate spans (a claim on `item 3(d)` resolves to item 3, because
    sub-items have no reliable terminator and the real back-pointers sit inside the parent item);
-   and `step N` anchors fall back to the **whole section**, because §8.3 has no parseable items.
-   A bare `§N` target with no item scopes to the whole section — the only available reading — and
-   must still resolve (item 4). This third case is not decoration: six or more of the pinned rows
+   (b) `step N` anchors fall back to the **whole section**, because §8.3 has no parseable items;
+   (c) a bare `§N` target with no item scopes to the whole section — the only available reading —
+   and must still resolve (item 4). This case is not decoration: six or more of the pinned rows
    are bare-section targets, so an implementer hits it immediately.
-   Both are bounded and enumerated. Getting this lenient makes the gate vacuous — a pointer
+
+   (d) **A three-component sub-section anchor resolves to its two-component parent's span, but
+   ONLY IF the literal sub-section token appears as a bold heading inside that span** (Fable
+   tie-break, 2026-07-29). This mirrors (a)'s sub-item leniency with one deliberate asymmetry —
+   **the existence check** — and the asymmetry is the whole point: silently truncating a dotted
+   *section* number converts a nonexistent anchor into an existing one, which is exactly the
+   bypass item 4 ratifies against. So `§7.2.1` resolves, because
+   ``**7.2.1 `ReplayDetector` binding and artifact format…**`` is a real bold heading inside §7.2
+   (elided tail: `(resolved during D3 test-drafting).`); and **`§7.2.999` still fails**, because no
+   such token exists in §7.2's span.
+
+   Ruled after the enforcing test failed on the pinned row `("8.7", "7.2.1")` and an agent tried
+   to pass it by truncating every dotted anchor to two components — which turned green all seven
+   assertions then present and would have resolved `§7.2.999` too. That truncation was reverted.
+   **Teaching the outline parser a bold-heading section class is REFUSED**: there is exactly one
+   such subsection in this file, it has no reliable terminator, and this file carries **32**
+   `**N — Title.**` item markers — 7 of them in §8.3, the rest in §9.3, §11.3 and §12.3 — every one
+   a near-miss waiting to be misparsed into a span. (The file-wide 32, not §8.3's 7, is the figure
+   that bears on a parser-class decision, since the parser would see all of them.)
+
+   All four are bounded and enumerated. Getting this lenient makes the gate vacuous — a pointer
    anywhere in the file would count — and getting it strict produces false failures on
    multi-paragraph items, which is why it is ratified rather than left to the implementation.
 
@@ -4894,7 +4929,13 @@ This entry makes the convention checkable.
    count (the check is span-scoped, proven on synthetic text in both directions); **an unresolvable
    anchor is a FAILURE, not a skip** — the drafting measurement script itself had
    `if target not in spans: continue`, which is exactly the bypass this gate exists to prevent; and
-   the marker count is **pinned**, so the gate cannot pass by finding zero markers.
+   the count of **parsed claims** is **pinned**, so the gate cannot pass by finding zero markers.
+   That count is deliberately *not* a count of marker-literal occurrences: item 2's placeholder
+   example is a fourth occurrence that yields no claim, so the two numbers differ by one, and a
+   dedicated control asserts the placeholder is what the parser rejects rather than leaving the
+   difference to be inferred from the count. (This clause names the literal in words rather than
+   writing it, because writing it here would make this line a fourth Layer A site — item 8's hazard
+   applied to the very item that pins the count.)
 
 5. **Allowlist is a RATCHET, not a retroactive pass.** The pinned prose pairs are asserted as an
    exact set — additions and removals both fail —
@@ -4913,7 +4954,7 @@ This entry makes the convention checkable.
    Layer B scanner — quoted-anchor false positives of exactly the class item 1 names — and are
    pinned in Layer B's constant as `(16.26, 13)` and `(16.26, 16.20 item 3)`, commented as
    quotations. Rewording a real quote to dodge the scanner would be worse than pinning it: item 1's
-   whole virtue is that each example is a real line of this spec. The gate **will** live at
+   whole virtue is that each example is a real line of this spec. The gate lives at
    `crates/pc-testkit/tests/spec_supersession.rs`; a fourth claim raises the pinned count and
    extends the ratified-set constant in the same commit as its marker and back-pointer.
    Consequence: the test and the first markers land in one commit, and this entry is the
@@ -4921,30 +4962,30 @@ This entry makes the convention checkable.
    `CLAUDE.md` step 1a, which was added in the same session and whose first effect was to stop this
    from being self-approved.
 
-   **STATUS, 2026-07-29: THIS CONVENTION IS NOT YET ENFORCED. No such test file exists.** The
-   entry above ratifies the convention and its enforcement design; the enforcing test is written
-   and six of its seven assertions pass, but it is **parked**, so nothing in the tree currently
-   checks any of it. Read every "the gate enforces" sentence above as *"the gate will enforce, once
-   the blocker below clears."*
+   **STATUS, 2026-07-30: THIS CONVENTION IS NOW ENFORCED.** The gate lives at
+   `crates/pc-testkit/tests/spec_supersession.rs` and landed in the same commit as the first three
+   markers, as the paragraph above requires. Every "the gate enforces" sentence above may now be
+   read in the present tense.
 
-   The blocker is a **fourth span rule**, which item 3 reserves for ratification rather than
-   leaving to the implementation. `every_pinned_pre_convention_target_still_resolves` fails on the
-   pinned row `("8.7", "7.2.1")` because `§7.2.1` **is a real subsection** — it is the bold-text
-   heading `**7.2.1 ReplayDetector binding and artifact format…**`, not a `###` heading — so the
-   outline parser cannot see it. Measured: it is the **only** bold-text subsection of that form in
-   this file, and its block contains **zero** verb-bearing lines, so teaching the parser to
-   recognise it shifts no pinned row. Two readings are open — recognise the bold form, or let a
-   sub-*section* resolve to its parent the way item 3 already lets a sub-*item* resolve to its
-   parent — and §8.3's 32 analogous `**N — Title.**` markers are the precedent. Either way `§7.2.999`
-   must still fail.
+   What had parked it was the **fourth span rule**, which item 3 reserved for ratification rather
+   than leaving to the implementation: the test failed on the pinned row `("8.7", "7.2.1")` because
+   `§7.2.1` is a real subsection carried by a **bold-text** heading rather than a `###` heading, and
+   so is invisible to the outline parser. Two readings were open; item 3(d) records the tie-break
+   that closed them. Its scope, quoted rather than paraphrased: a three-component anchor resolves to
+   its two-component parent's span "ONLY IF the literal sub-section token appears as a bold heading
+   inside that span". Teaching the outline parser a bold-heading section class was **REFUSED**, and
+   `nonexistent_three_component_anchor_does_not_resolve` is the control that keeps `§7.2.999`
+   failing.
 
-   **Recorded here, at the claiming end, because the alternative is the exact defect this section
-   exists to correct.** An entry asserting an enforcement that does not exist is an unenforced
-   convention — the thing item 1 measured 51 occurrences of — and it would have been invisible to a
-   reader who trusted the prose. It was caught by a stop-time review, not by the author, which is
-   item 7's lesson recurring one commit later: **the transcription of a ratification needs a reader
-   even when the ratification was itself reviewed.** Delete this STATUS block only in the commit
-   that lands the test.
+   **The parked interval is recorded rather than erased, because the alternative is the exact defect
+   this section exists to correct.** For one commit this entry asserted an enforcement that did not
+   exist — an unenforced convention, the class item 1 hand-audited to **~10 real** instances (18
+   flagged, drawn from 26 candidates, drawn in turn from 51 raw verb occurrences; the 51 counts
+   verbs, not unenforced conventions, and attaching the largest number in that chain to the
+   narrowest noun overstates it roughly fivefold) — and it would have been invisible to a reader who
+   trusted the prose. It was caught by a stop-time review, not by the author, which is item 7's
+   lesson recurring one commit later: **the transcription of a ratification needs a reader even when
+   the ratification was itself reviewed.**
 
 7. **The step-1a review that this entry is the first subject of, recorded because its findings
    changed the entry.** Reviewer: Fable, as fresh reader, 2026-07-29; method: §16.26 compared line
@@ -4976,6 +5017,31 @@ This entry makes the convention checkable.
    do intend one, write the marker from item 2 instead. Recorded because a reader who reformats this
    file — an editor re-wrapping a paragraph, a tool normalising line length — can turn the gate red
    or green without touching a word, and would otherwise have no warning.
+
+9. **The two layers are disjoint by construction, and the disjointness is scoped to the declaration
+   rather than to the line.** Both layers read the same physical line (item 8), and Layer A's marker
+   literal differs from one of Layer B's verbs only in letter case. That coincidence is not
+   load-bearing: before scanning, Layer B **masks each marker's declaration span** — the literal
+   through its closing `**` — so a marker's own verb and its own declared anchors are invisible to
+   Layer B by construction. Adding an upper-case variant to the verb list therefore cannot turn
+   every marker into a phantom prose claim, and a control pins that.
+
+   **The mask is scoped to the declaration, not to the line, and the scoping is the whole point.**
+   An earlier form of this rule discarded the entire line. It did make the layers disjoint, but it
+   also dropped — **silently** — any genuine prose claim authored beside a marker on one physical
+   line, and Layer B exists to be the tripwire for exactly that claim, so a silent drop is its one
+   forbidden failure mode. Measured before the change: the whole-line form was **inert** on this
+   file (the pinned set is 28 rows either way, because no marker line carries a verb today) and yet
+   **reachable** by ordinary editing, since nothing here requires a marker to occupy its line alone.
+   A leniency that buys nothing today and hides a claim tomorrow is the vacuity item 3 warns about,
+   so the rule is enumerated here rather than left to a comment in the test.
+
+   Its control asserts **both** halves at once — the neighbouring claim is found, *and* the marker's
+   own declared target is not emitted as prose — so a later edit cannot delete one guarantee and
+   still satisfy a test whose name mentions both. Recorded because the whole-line form reached the
+   tree first, was reviewed twice, and was corrected only when a reader probed it with a constructed
+   line instead of reasoning about it: **the fix for a gate's blind spot needs a control aimed at
+   the blind spot, not an argument that the spot is unreachable.**
 
 ## 16. Summary of what v1 is NOT
 
