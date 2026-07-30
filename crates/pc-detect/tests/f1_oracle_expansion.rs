@@ -1,3 +1,5 @@
+//! F1 oracle expansion tests. FROZEN per CLAUDE.md.
+//!
 //! spec §16.27 item 1(d) + §16.20 item 3(b) + §16.29 item 1 — which line list the identity is
 //! evaluated over.
 //!
@@ -8,8 +10,10 @@
 //! makes `residual_full` non-zero on exactly the blocks §16.27 item 4 says close at `[0,0,0,0]`.
 //! These controls pin the operand rule (§16.29 item 1) in both directions.
 //!
-//! Kept out of `f1_oracle_comparator.rs` and `f1_oracle_derivation.rs` so a reviewer diffing
-//! either sees no change from this task.
+//! Kept out of `f1_oracle_comparator.rs` (frozen, receives only §16.28's authorized null-completion
+//! edits) so a reviewer diffing that file sees only those. `f1_oracle_derivation.rs` DOES change in
+//! the same commit as this file (§16.27 item 7's four reachable-shape controls) — the two files
+//! are separate for topic, not to keep either one's diff empty.
 
 use pc_core::Rect;
 use pc_detect::oracle::{

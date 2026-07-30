@@ -366,9 +366,12 @@ fn validate_detector(
         // directory is misplaced, not non-relative, and saying otherwise is a false message
         // (cookbook rule 1's corollary). It also used to collapse under `dedup()` with
         // `validate_path`'s genuine violation above when the path was absolute, making
-        // "absolute" and "wrong directory" indistinguishable in the output. §16.24 item 2
-        // requires the page to live inside the declaring group, and `:251` already reports
-        // exactly this failure class for record outputs.
+        // "absolute" and "wrong directory" indistinguishable in the output. §16.24 item 2 itself
+        // only requires the page be declared exactly once and not double-listed as a record
+        // output (§16.29 item 2 corrects an earlier over-citation here); the lives-inside-the-
+        // group requirement actually flows from item 1's preserved frozen walker plus item 2's
+        // walker-visibility mandate, and `:251` already reports exactly this failure class for
+        // record outputs.
         violations.push(Violation::CommittedPathOutsideGroup {
             at: "detector.input_page".into(),
             path: detector.input_page.clone(),

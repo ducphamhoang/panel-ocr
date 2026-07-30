@@ -76,10 +76,15 @@ pub struct OracleBlock {
     /// upstream `TextBlock.xyxy`, `[x1, y1, x2, y2]`, `x2`/`y2` **exclusive** — see
     /// [`rect_to_xyxy`] for why that needs no adjustment against our `Rect`.
     pub xyxy: [i32; 4],
-    /// upstream `TextBlock.lines`: zero or more polygons of `[x, y]` points. Empty for a
-    /// line-less block, which §16.20 item 3 requires the identity to handle — v1 synthesizes no
-    /// lines, and upstream's line-less branch is where §14.17's divergence lives, "so this case
-    /// is not hypothetical".
+    /// upstream `TextBlock.lines`: zero or more polygons of `[x, y]` points. The identity must
+    /// still handle an empty list (§16.20 item 3(b)'s `LineLess` branch) as an artifact-grammar
+    /// property, not because a real *output* block is ever line-less — §16.27 item 8 measured no
+    /// gated upstream block carries zero lines (0 of 14 on the three candidate pages; every path
+    /// through `group_output` guarantees at least one line, §16.27 erratum 4). What §14.17's
+    /// filter divergence actually exercises is upstream's line-less **pre-filter** branch
+    /// (`mask_score` 0.0359 on `[438,1407,498,1446]`, §16.20 item 9) — a different thing from a
+    /// line-less *output* block, a conflation §16.27 erratum 4 supersedes this comment's earlier
+    /// wording for.
     #[serde(default)]
     pub lines: Vec<Vec<[i32; 2]>>,
     /// §16.20 item 3(d) DIAGNOSTIC, never gated. `None` when the recording could not capture it
@@ -153,10 +158,11 @@ pub struct OursSide<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityBranch {
-    /// `upstream.xyxy == bbox(ours.rect ∪ bbox(upstream.lines))`.
+    /// `upstream.xyxy == bbox(ours.rect ∪ OracleBlock::identity_lines())` (§16.29 item 1:
+    /// `lines_pre_expand` when recorded, else the served `lines` — see `OracleBlock`'s doc).
     LineInformed,
-    /// §16.20 item 3's degenerate case: `bbox(upstream.lines)` is undefined, so the identity is
-    /// `upstream.xyxy == ours.rect`.
+    /// §16.20 item 3's degenerate case: `OracleBlock::identity_lines()` is undefined (no points at
+    /// all), so the identity is `upstream.xyxy == ours.rect`.
     LineLess,
 }
 
@@ -578,17 +584,20 @@ pub struct PairResidual {
     pub upstream_index: usize,
     /// The branch actually taken, so a residual can be read against the right leg.
     pub branch: IdentityBranch,
-    /// `upstream.xyxy − bbox(ours.rect ∪ bbox(upstream.lines))`, per coordinate. **All-zero for
-    /// green.** Non-zero here IS `GeometryIdentity` — the same condition, reported once as a
-    /// verdict and once as a number (plan §1.6(ii)).
+    /// `upstream.xyxy − bbox(ours.rect ∪ OracleBlock::identity_lines())`, per coordinate (§16.29
+    /// item 1's operand). **All-zero for green.** Non-zero here IS `GeometryIdentity` — the same
+    /// condition, reported once as a verdict and once as a number (plan §1.6(ii)).
     pub residual_full: [i32; 4],
     /// `upstream.xyxy − ours.rect`, per coordinate. Leg 1's residual. **Non-zero in the normal
     /// case** — item 12's well-behaved pair gives `[0,0,+4,0]` because the union widened `x2` — so
     /// this NEVER gates. Its sign pattern is the attribution: all-zero `residual_full` beside a
     /// non-zero `residual_leg1` is leg 2 working; a negative `x2` entry is leg 1 failing.
     pub residual_leg1: [i32; 4],
-    /// §16.24 item 18(k): the line-less branch is rare-but-real and the least-evidenced part of
-    /// the identity, so the per-block census is the first real evidence on it.
+    /// §16.27 item 8 (superseding §16.24 item 18(k)'s "rare-but-real", which conflated upstream's
+    /// line-less *filter* branch — real, fired once — with a line-less *output* block, which is
+    /// structurally impossible): no gated upstream block carries zero lines, 0 of 14 measured on
+    /// the three candidate pages. The per-block census is the evidence for that claim, not for a
+    /// branch expected to fire.
     pub upstream_line_count: usize,
     /// Passed through from [`OracleBlock::base_xyxy_pretruncation`]; `None` when unrecorded.
     pub upstream_base_xyxy_pretruncation: Option<[f64; 4]>,

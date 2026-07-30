@@ -1386,7 +1386,7 @@ reported as a named GATING divergence"), which was false — this list is for *i
 deviations, each with a real `DEVIATION(n)` site comment, and §14's own text says so. Reverted.
 `docs/COOKBOOK.md`'s "still owed" bullet asking for this registration was itself the source of the
 confusion (its parenthetical read as "already adopted" without stating "not yet implemented");
-that entry needs the same correction before anyone acts on it again.
+that entry has since been corrected to say so (commit `5b909d1`).
 
 ---
 

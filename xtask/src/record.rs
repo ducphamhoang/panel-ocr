@@ -623,25 +623,31 @@ fn record_detector(
     if !page.is_file() {
         bail!("detector input page is missing: {}", page.display());
     }
-    std::fs::create_dir_all(&out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
 
-    // §16.29 item 2: `detector.input_page` must resolve to a file inside this recorded group
-    // (the shipped provenance validator forces this, and the frozen whole-tree walker later
-    // hashes whatever `input_page` names), so the page is copied here, byte-preserving, rather
-    // than only referenced by path. This is a plain file copy, not a git operation — nothing is
-    // staged or committed by this recorder; the eventual `git add` of this directory, including
-    // this copy, is the separate atomic-commit step §16.24 item 6 gates.
-    let recorded_page = out_dir.join(
-        Path::new(DETECTOR_PAGE_RECORDED)
-            .file_name()
-            .expect("DETECTOR_PAGE_RECORDED names a file"),
-    );
-    std::fs::copy(&page, &recorded_page)
-        .with_context(|| format!("copying {} to {}", page.display(), recorded_page.display()))?;
-
-    // §16.24 item 14: this is the first operation that can lead to either detector running.
-    // The upstream script repeats the same check before importing/invoking cv2.dnn.
+    // §16.24 item 14: the model digest is verified BEFORE any operation that can lead to either
+    // detector running — and, per an independent review's finding, before any filesystem write
+    // too. Creating `out_dir` and copying the page used to happen ahead of this check, so a
+    // digest mismatch left a half-populated group directory (copied page, no PROVENANCE.json) on
+    // disk with nothing to clean it up — precisely the state that broke `cargo test --workspace`
+    // in the incident bdf631e/c3d1b19 fixed. Both writes now happen inside the verified closure.
     with_verified_model(model, || {
+        std::fs::create_dir_all(&out_dir)
+            .with_context(|| format!("creating {}", out_dir.display()))?;
+        // §16.29 item 2: `detector.input_page` must resolve to a file inside this recorded group
+        // (the shipped provenance validator forces this, and the frozen whole-tree walker later
+        // hashes whatever `input_page` names), so the page is copied here, byte-preserving,
+        // rather than only referenced by path. This is a plain file copy, not a git operation —
+        // nothing is staged or committed by this recorder; the eventual `git add` of this
+        // directory, including this copy, is the separate atomic-commit step §16.24 item 6 gates.
+        let recorded_page = out_dir.join(
+            Path::new(DETECTOR_PAGE_RECORDED)
+                .file_name()
+                .expect("DETECTOR_PAGE_RECORDED names a file"),
+        );
+        std::fs::copy(&page, &recorded_page).with_context(|| {
+            format!("copying {} to {}", page.display(), recorded_page.display())
+        })?;
+
         ensure_cpu_execution_provider(DETECTOR_EXECUTION_PROVIDER)?;
 
         let config = pc_config::TextDetectorConfig::default();

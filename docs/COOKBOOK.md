@@ -258,11 +258,13 @@ cargo test --workspace 2>&1 | grep -E "^test result" \
   | awk '{p+=$4; f+=$6; i+=$8} END {print "passed="p" failed="f" ignored="i}'
 ```
 
-Current bar, both tiers: **738** default / **749** onnx, 6 ignored, clippy
-`--all-features` 0, fmt 0. (Measured 2026-07-29 with the one-liner above, not carried forward
-from a previous claim — PERF-1 added three config tests and the bar sat stale at 735/746 for a
-commit. §16.24 item 15 records that two independently-written plans cited *different* baselines,
-735/746 and 738/749, which is what a hand-maintained count does. Re-measure; never quote.)
+Current bar, both tiers: **860** default / **871** onnx, 6 ignored, clippy
+`--all-features` 0, fmt 0. (Measured 2026-07-30 with the one-liner above, not carried forward
+from a previous claim — this file's own text sat at 738/749 through the whole F1 Phase 2 session
+while the real count moved to 855/866 then 859/870 then 860/871, three drifts an independent
+reviewer caught by re-running the one-liner rather than trusting this file. §16.24 item 15 records
+that two independently-written plans cited *different* baselines, 735/746 and 738/749, which is
+what a hand-maintained count does. Re-measure; never quote.)
 
 **Also:** a gate that is `#[ignore]` + `unimplemented!()` enforces *nothing*. Four of them
 (§8.7(A)6, §8.7(B)9, §9.7(B)11, §11.7(B)13) are placeholders blocked on F1. That is a
@@ -549,7 +551,12 @@ a claim, not a verification.** Re-run the suite yourself; read the diff.
   job and written nothing.** Six times in one session. Treat its completion as "dispatched",
   not "done": check the artifact, and re-dispatch a **fresh** task rather than resuming.
 - **Closed, 2026-07-30 (F1 Phase 2 T6):** `provenance_is_current`'s redundant condition 2 and the
-  R1–R23 doc comment in `provenance.rs`, both done.
+  R1–R23 doc comment in `provenance.rs`; the exemplar's one-line cross-reference to
+  `f1_oracle_derivation.rs`; the exhaustive `Divergence::variant_name()` (additive — `class()`'s
+  `_ =>` wildcard is untouched, see the note below); FROZEN headers on `f1_oracle_comparator.rs`
+  and `f1_oracle_derivation.rs`; and doc comments on `OracleBlock`'s `eng_expanded`/
+  `lines_pre_expand`/`expand_size`. Five of the six items in the Phase-1-review list below this
+  one, done — only the genuine spec ambiguity (§16.28 item 4 / §16.27 item 6) remains open.
 - **`UpstreamBoxOutsideFrame` has NO register entry, and this is correct — do not add one without
   a fresh ruling.** §16.27 item 11 ratifies it as a *decision* ("adopted as a GATING row, 0/38
   today") but explicitly leaves it **untranscribed**: landing it "needs its own ruling" and would
@@ -562,7 +569,7 @@ a claim, not a verification.** Re-run the suite yourself; read the diff.
   as a decision ≠ implemented** — say so plainly next time this comes up, rather than repeating
   the parenthetical that caused the defect.
 - **Still owed, as of 2026-07-30, from Phase 1's post-implementation review (§16.28's
-  derivation-schema landing) — none blocking, all cheap now and expensive after freeze:**
+  derivation-schema landing) — one item left, the rest closed by T6 above:**
   - A genuine spec ambiguity, escalated rather than resolved unilaterally: does §16.28 item 4's
     "does not apply" (for a `derivation == None` pair) mean §16.27 item 6's derivation-conditional
     18(i) message reverts to its pre-erratum unconditional form, or is simply unavailable/silent for
@@ -572,15 +579,48 @@ a claim, not a verification.** Re-run the suite yourself; read the diff.
     (`UnionMonotonicity` carries no runtime message), but the test's own licence is unclear. Needs
     the two Opus architects jointly, per cookbook rule 8's routing for a frozen-test question — not
     a unilateral call.
-  - §16.28 item 8's full-shape JSON exemplar pins only one of `Derivation`'s four serde spellings
-    (`yolo_unioned`); the other three are pinned only in `f1_oracle_derivation.rs`. A one-line
-    cross-reference in the exemplar's comment pointing at that file would close the gap without
-    exceeding the exemplar's authorized scope (adding all four to one block literal would).
-  - `Divergence::class()` ends in a `_ =>` wildcard and no exhaustive `match` over `Divergence`
-    exists anywhere in the workspace — so the partition test's own claim that its literal count is
-    "the ratchet that makes adding a variant without classifying it a failure" is true of *deleting*
-    a sample and false of *adding* an unclassified variant. Predates this session's work (was
-    equally true at 16 variants) but now anchors §16.28 item 3's ratified count of 19.
+- **Still owed, as of 2026-07-30, from the independent post-Phase-2 review — one HIGH, tracked
+  before the atomic recording commit, not before this note:**
+  - **HIGH, needs a joint-architect ruling, not a unilateral fix:** §16.27 item 1(c)'s third
+    `YoloSplit` conjunct — "the unmatched ours-side parent's `rect == rect_yolo`" — is verified
+    nowhere. The recorder's own check (`record_detector_oracle.py`) compares the parent block
+    against itself (`rect_yolo` is read off the same upstream block `parent_xyxy` names), which is
+    `X == X` by construction, confirmed by running a probe and watching the comparison stay `True`
+    even after mutating the yolo table upstream of the tag step. The comparator does not check
+    derivation laws at all (`oracle.rs`'s `validate_mechanism`'s `DocumentedSplitMerge` arm is a
+    no-op, `=> {}`), so nothing anywhere verifies the actual cross-side conjunct. Latent today
+    (`YoloSplit` is 0/14 on the three candidate pages). Closing it needs a design decision —
+    `Mechanism::DocumentedSplitMerge` carries no upstream index today, so the comparator has no way
+    to know *which* split sub-block an ours-side parent corresponds to — which is why this is a
+    ratification question and not a patch.
+  - **MEDIUM, ratified but unscheduled:** §16.29 item 2 grafts a correction from the losing
+    position — "the `provenance.rs:336-341` comment does over-cite … the comment's citation should
+    be corrected (comment text only)." Still unlanded at `crates/pc-testkit/src/provenance.rs`
+    around `validate_detector`'s `CommittedPathOutsideGroup` comment (find it by its citation of
+    "§16.24 item 2 requires the page to live inside the declaring group" — that's the over-claim to
+    fix; the actual ground is item 1's frozen walker plus item 2's walker-visibility mandate).
+    Comment-only, zero behavior change, safe to land whenever someone is next in that file.
+  - **MEDIUM, becomes a real bug the moment the atomic commit executes §16.29's page move:**
+    `xtask/src/env.rs`'s `Ready` probe and `xtask/src/record.rs`'s `DETECTOR_PAGE_SOURCE` constant
+    both still point at `tests/fixtures/upstream/oracle_pages/...`. After the atomic commit moves
+    P01 to `tests/fixtures/recorded/detector/...` (per §16.29 item 2), both need to read from the
+    new location, or the detector group starts reporting `MangaPagesMissing`/skipped with a
+    misleading message on every future recording attempt. In scope for whoever executes the atomic
+    commit; not done as part of landing the recorder.
+  - **MEDIUM, cheap, not yet done:** `ensure_cpu_execution_provider`'s only call site passes it the
+    same constant it compares against (`record.rs`), so the refusal path can never fire and is
+    untested; nothing anywhere asks the constructed `OnnxDetector` which execution provider it
+    actually selected. And the recorded `ours` provenance pins (`execution_provider`,
+    `intra_threads`, `inter_threads`, `profile_non_default`) are literals matching today's
+    `TextDetectorConfig::default()`, not read from the resolved config that was already available —
+    change the default and the recorded provenance would silently misreport (cookbook rule 12's
+    shape).
+  - **LOW, test-quality, not correctness:** `provenance_negative_controls_name_the_specific_violation`
+    asserts violations with `contains`/`.any(matches!(..))` rather than exact-vector equality, unlike
+    every other f1 test's convention — an unexpected extra violation would pass silently. The hand-
+    built test manifest in the same module doesn't match the real script's emitted shape (an extra
+    `profile_non_default` key, a shorter `dependency_versions`), so it can't catch a script-side
+    field regression.
   - Neither `f1_oracle_comparator.rs` nor `f1_oracle_derivation.rs` carries a `FROZEN` header, unlike
     every other `crates/pc-detect/tests/*.rs` file — both are frozen by three spec sections' worth of
     prose but not by a marker in the file a future editor actually opens.
