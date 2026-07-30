@@ -38,6 +38,15 @@
 //!
 //! **No boolean success channel (§16.24 item 6).** There is no `is_ok()`. A CI gate reads
 //! `report.gating().is_empty()` AND `report.pairs_compared == <authored literal>`.
+//!
+//! A `derivation == None` artifact block disables the leg-1 row, the structural guard, and the
+//! derivation-conditional §16.24 item 18(i) message for its pair — but NOT the signature check
+//! below, which is unconditional. That's what makes the None-disabling safe: a dropped derivation
+//! is still caught by the signature mismatch even though the geometry checks it would have fed are
+//! off.
+//!
+//! The comparator does NOT re-check the four derivation-law equations from spec §16.27 item 1(c)
+//! — those are the recorder's responsibility, not the comparator's.
 
 use crate::detector::RawBlock;
 use crate::yolo::class_to_language;
@@ -46,6 +55,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 // ─────────────────────────────────────────────────────── the oracle artifact
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Derivation {
+    YoloUnioned,
+    YoloSynthesizedCorners,
+    YoloSplit,
+    DbnetScattered,
+}
 
 /// One upstream block as recorded by the oracle script (`upstream + cv2.dnn`, §16.20 item 6).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -75,6 +93,16 @@ pub struct OracleBlock {
     /// commissioned demo_bubbles run, not here (plan §1.6).
     #[serde(default)]
     pub base_xyxy_pretruncation: Option<[f64; 4]>,
+    #[serde(default)]
+    pub derivation: Option<Derivation>,
+    #[serde(default)]
+    pub rect_yolo: Option<[i32; 4]>,
+    #[serde(default)]
+    pub eng_expanded: bool,
+    #[serde(default)]
+    pub lines_pre_expand: Option<Vec<Vec<[i32; 2]>>>,
+    #[serde(default)]
+    pub expand_size: Option<i32>,
 }
 
 /// The committed upstream oracle artifact.
@@ -204,6 +232,11 @@ pub enum Mechanism {
     /// Unexplained. **Blocking**: §16.24 item 4 — "`Open` is a blocking violation, never a
     /// verdict."
     Open,
+    /// spec §16.27 item 3 — a block upstream constructed from a single unassigned DBNet line
+    /// then merged. Upstream side only, by construction: v1 synthesizes no DBNet line polygons,
+    /// so we can never produce one. Cites its register entry; until a real §14 register entry
+    /// exists, the anchor is "§16.27 item 3" itself (that item's own text).
+    DbnetScattered { register_entry: &'static str },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +247,7 @@ pub struct ExpectedPair {
     /// `lines` as `bbox = (0,0,0,0)` and unioning it would corrupt every line-ful pair while
     /// line-less pairs still passed, so the branch has to be an assertion.
     pub branch: IdentityBranch,
+    pub derivation: Option<Derivation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +261,7 @@ pub struct UnmatchedEntry {
 /// gate). Declared *alongside* the pairing list on purpose — the two are cross-checked, so a
 /// copy-paste error in either is caught.
 ///
-/// **Exactly three fields (§16.24 item 21 R5).** The six mechanism counts of item 11's equations
+/// **Exactly three fields (§16.24 item 21 R5).** The seven mechanism counts of item 11's equations
 /// are **derived** from the signed entry lists into [`DerivedAccounting`] and never authored, so a
 /// mislabelled count is unrepresentable rather than merely detectable. Adding a mechanism-count
 /// field here would reintroduce the class of defect the rename and the derivation removed.
@@ -325,8 +359,9 @@ pub enum Divergence {
     },
     /// §16.24 item 18(i) — leg 2's monotonicity. Adds no power over the equality; adds the
     /// attribution: a bounding union cannot narrow an edge (`Rect::merge`, `geometry.rs:60-67`),
-    /// so this is a **leg-1 engine-geometry** divergence and not a line-union difference. Never
-    /// appears without `GeometryIdentity`, which is itself asserted.
+    /// so this is a leg-1 engine-geometry divergence only when the pair's upstream derivation is
+    /// `YoloUnioned`; for `YoloSplit` and `DbnetScattered` a narrowed edge is expected rather than
+    /// a divergence. Never appears without `GeometryIdentity`, which is itself asserted.
     UnionMonotonicity {
         ours: Rect,
         upstream: Rect,
@@ -409,6 +444,30 @@ pub enum Divergence {
         ours: (u32, u32),
         upstream: (u32, u32),
     },
+    /// spec §16.27 item 2 — GATING. The new geometry gate `ours.rect == rect_yolo`, exact and
+    /// epsilon-free (no tolerance, unlike the old identity-based check). `rect_yolo: None` here
+    /// means the recorded derivation requires a parent yolo box and none was recorded, which
+    /// itself gates rather than silently passing.
+    Leg1YoloGeometry {
+        ours: Rect,
+        rect_yolo: Option<[i32; 4]>,
+        derivation: Derivation,
+    },
+    /// spec §16.27 item 2(c) — GATING structural guard. A pair whose upstream derivation is
+    /// `YoloSplit` or `DbnetScattered` may not be paired at all. This replaces the leg-1 equality
+    /// row for these two derivations.
+    UnpairableDerivation {
+        ours_index: usize,
+        upstream_index: usize,
+        derivation: Derivation,
+    },
+    /// spec §16.28 item 2 (Fable ruling, Amendment 1) — GATING. Exact bidirectional equality
+    /// between the signed and recorded derivations.
+    DerivationSignatureMismatch {
+        ours: Rect,
+        signed: Option<Derivation>,
+        recorded: Option<Derivation>,
+    },
     // ── DIAGNOSTIC (§16.20 item 3(d): never gated) ──
     ConfidenceDelta {
         ours: Rect,
@@ -436,7 +495,7 @@ impl Divergence {
     }
 }
 
-/// §16.24 item 11's six terms, **derived** by partitioning the signed entry lists by `Mechanism`
+/// §16.24 item 11's seven terms, **derived** by partitioning the signed entry lists by `Mechanism`
 /// (item 21 R5). Reported, never authored. Each term names exactly one mechanism class on one side:
 /// `class_duplicates` is unsuffixed because §14.13 duplicates are upstream-only by definition, and
 /// `coverage_filtered_ours` is ours-only for the mirror reason (§14.17 / §16.20 item 9).
@@ -445,6 +504,7 @@ pub struct DerivedAccounting {
     pub pairs: usize,
     pub class_duplicates: usize,
     pub documented_split_merge_upstream: usize,
+    pub dbnet_scattered: usize,
     pub open_upstream: usize,
     pub coverage_filtered_ours: usize,
     pub documented_split_merge_ours: usize,
@@ -452,11 +512,12 @@ pub struct DerivedAccounting {
 }
 
 impl DerivedAccounting {
-    /// `pairs + class_duplicates + documented_split_merge_upstream + open_upstream`.
+    /// `pairs + class_duplicates + documented_split_merge_upstream + dbnet_scattered + open_upstream`.
     pub fn upstream_sum(&self) -> usize {
         self.pairs
             + self.class_duplicates
             + self.documented_split_merge_upstream
+            + self.dbnet_scattered
             + self.open_upstream
     }
     /// `pairs + coverage_filtered_ours + documented_split_merge_ours + open_ours`.
@@ -500,7 +561,7 @@ pub struct ComparisonReport {
     pub branches: Vec<(usize, usize, IdentityBranch)>,
     /// One per compared pair, in authored order (§16.24 item 18(h)).
     pub residuals: Vec<PairResidual>,
-    /// Item 11's six terms, derived from the signed entry lists (§16.24 item 21 R5). Reported so a
+    /// Item 11's seven terms, derived from the signed entry lists (§16.24 item 21 R5). Reported so a
     /// human sees the arithmetic; not an independent gate, since with derived counts the equations'
     /// left side is `|pairs| + |unmatched|` by construction.
     pub derived: DerivedAccounting,
@@ -509,6 +570,11 @@ pub struct ComparisonReport {
     /// properties*. `residual_leg1` is the precedent: non-zero in the healthy case, and outside
     /// `divergences` for exactly the reason coverage must be.
     pub coverage: FieldCoverage,
+    /// spec §16.28 item 5 — count of pairs on which the leg-1 `ours.rect == rect_yolo` row was
+    /// actually EVALUATED (regardless of whether it passed). Zero for a pair whose recorded
+    /// `derivation` is `None`, and zero for a pair caught by the structural guard below. No
+    /// specific expected value is ratified anywhere yet — each test authors its own expected count.
+    pub leg1_rows_checked: usize,
     pub divergences: Vec<Divergence>,
 }
 
@@ -666,6 +732,7 @@ pub fn compare(
     let mut branches = Vec::new();
     let mut residuals = Vec::new();
     let mut pairs_compared = 0;
+    let mut leg1_rows_checked = 0;
 
     // Compare only pairs whose two signed indices resolve. The authored order is observable.
     for pair in &expectations.pairs {
@@ -689,45 +756,87 @@ pub fn compare(
             });
         }
 
-        let upstream_rect = upstream_block.rect();
-        if expected_rect != upstream_rect {
-            divergences.push(Divergence::GeometryIdentity {
+        // Signature verification is unconditional; only the recorded derivation controls whether
+        // the derivation-specific geometry machinery below is enabled.
+        if pair.derivation != upstream_block.derivation {
+            divergences.push(Divergence::DerivationSignatureMismatch {
                 ours: ours_rect,
-                expected: expected_rect,
-                upstream: upstream_rect,
+                signed: pair.derivation,
+                recorded: upstream_block.derivation,
             });
         }
+        let unpairable_derivation = match upstream_block.derivation {
+            Some(derivation)
+                if matches!(
+                    derivation,
+                    Derivation::YoloSplit | Derivation::DbnetScattered
+                ) =>
+            {
+                divergences.push(Divergence::UnpairableDerivation {
+                    ours_index: pair.ours,
+                    upstream_index: pair.upstream,
+                    derivation,
+                });
+                true
+            }
+            Some(derivation) => {
+                leg1_rows_checked += 1;
+                let rect_yolo = upstream_block.rect_yolo;
+                if rect_yolo != Some(rect_to_xyxy(ours_rect)) {
+                    divergences.push(Divergence::Leg1YoloGeometry {
+                        ours: ours_rect,
+                        rect_yolo,
+                        derivation,
+                    });
+                }
+                false
+            }
+            None => false,
+        };
 
-        // A union cannot move x1/y1 inward or x2/y2 inward. These are deliberately four
-        // independent comparisons: the impossible polarity differs between the leading and
-        // trailing edges.
-        if upstream_rect.x1 > ours_rect.x1 {
-            divergences.push(Divergence::UnionMonotonicity {
-                ours: ours_rect,
-                upstream: upstream_rect,
-                edge: Edge::X1,
-            });
-        }
-        if upstream_rect.y1 > ours_rect.y1 {
-            divergences.push(Divergence::UnionMonotonicity {
-                ours: ours_rect,
-                upstream: upstream_rect,
-                edge: Edge::Y1,
-            });
-        }
-        if upstream_rect.x2 < ours_rect.x2 {
-            divergences.push(Divergence::UnionMonotonicity {
-                ours: ours_rect,
-                upstream: upstream_rect,
-                edge: Edge::X2,
-            });
-        }
-        if upstream_rect.y2 < ours_rect.y2 {
-            divergences.push(Divergence::UnionMonotonicity {
-                ours: ours_rect,
-                upstream: upstream_rect,
-                edge: Edge::Y2,
-            });
+        let upstream_rect = upstream_block.rect();
+        if !unpairable_derivation {
+            // §16.27 items 2(c) and 6: an unpairable split/scattered box is already a gating
+            // row, and its narrowed edges are expected rather than union divergences.
+            if expected_rect != upstream_rect {
+                divergences.push(Divergence::GeometryIdentity {
+                    ours: ours_rect,
+                    expected: expected_rect,
+                    upstream: upstream_rect,
+                });
+            }
+
+            // A union cannot move x1/y1 inward or x2/y2 inward. These are deliberately four
+            // independent comparisons: the impossible polarity differs between the leading and
+            // trailing edges.
+            if upstream_rect.x1 > ours_rect.x1 {
+                divergences.push(Divergence::UnionMonotonicity {
+                    ours: ours_rect,
+                    upstream: upstream_rect,
+                    edge: Edge::X1,
+                });
+            }
+            if upstream_rect.y1 > ours_rect.y1 {
+                divergences.push(Divergence::UnionMonotonicity {
+                    ours: ours_rect,
+                    upstream: upstream_rect,
+                    edge: Edge::Y1,
+                });
+            }
+            if upstream_rect.x2 < ours_rect.x2 {
+                divergences.push(Divergence::UnionMonotonicity {
+                    ours: ours_rect,
+                    upstream: upstream_rect,
+                    edge: Edge::X2,
+                });
+            }
+            if upstream_rect.y2 < ours_rect.y2 {
+                divergences.push(Divergence::UnionMonotonicity {
+                    ours: ours_rect,
+                    upstream: upstream_rect,
+                    edge: Edge::Y2,
+                });
+            }
         }
 
         residuals.push(PairResidual {
@@ -883,6 +992,7 @@ pub fn compare(
         residuals,
         derived,
         coverage,
+        leg1_rows_checked,
         divergences,
     }
 }
@@ -905,6 +1015,7 @@ fn derive_accounting(
         pairs,
         class_duplicates: 0,
         documented_split_merge_upstream: 0,
+        dbnet_scattered: 0,
         open_upstream: 0,
         coverage_filtered_ours: 0,
         documented_split_merge_ours: 0,
@@ -915,6 +1026,7 @@ fn derive_accounting(
         match entry.mechanism {
             Mechanism::ClassDuplicateOf { .. } => derived.class_duplicates += 1,
             Mechanism::DocumentedSplitMerge { .. } => derived.documented_split_merge_upstream += 1,
+            Mechanism::DbnetScattered { .. } => derived.dbnet_scattered += 1,
             Mechanism::Open => derived.open_upstream += 1,
             Mechanism::CoverageFilteredUpstream { .. } => {}
         }
@@ -925,6 +1037,7 @@ fn derive_accounting(
             Mechanism::DocumentedSplitMerge { .. } => derived.documented_split_merge_ours += 1,
             Mechanism::Open => derived.open_ours += 1,
             Mechanism::ClassDuplicateOf { .. } => {}
+            Mechanism::DbnetScattered { .. } => {}
         }
     }
     derived
@@ -954,6 +1067,13 @@ fn validate_mechanism(
             });
         }
         (_, Mechanism::DocumentedSplitMerge { .. }) => {}
+        (Side::Upstream, Mechanism::DbnetScattered { .. }) => {}
+        (Side::Ours, Mechanism::DbnetScattered { .. }) => {
+            invalid(
+                "dbnet-scattered mechanism is upstream-side-only",
+                divergences,
+            );
+        }
         (Side::Upstream, Mechanism::ClassDuplicateOf { upstream_index }) => {
             if upstream_index >= upstream.blocks.len() || !paired_upstream.contains(&upstream_index)
             {

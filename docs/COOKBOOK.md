@@ -552,9 +552,34 @@ a claim, not a verification.** Re-run the suite yourself; read the diff.
   sessions:** either delete `provenance_is_current`'s redundant condition 2 or amend its
   "four conditions" docstring to match; write the R1–R23 numbering into `provenance.rs` as a doc
   comment; add `UpstreamBoxOutsideFrame`'s own §14 register entry (it is adopted as a gating row
-  per §16.27 item 4 but has no register number yet); and get an explicit joint-architect or Fable
-  ruling authorizing the frozen-struct-literal adaptation in `f1_oracle_comparator.rs` that F1's
-  recording run (task #12/#13) will need — §16.27 item 1(g) deliberately does not grant it.
+  per §16.27 item 4 but has no register number yet).
+- **Still owed, as of 2026-07-30, from Phase 1's post-implementation review (§16.28's
+  derivation-schema landing) — none blocking, all cheap now and expensive after freeze:**
+  - A genuine spec ambiguity, escalated rather than resolved unilaterally: does §16.28 item 4's
+    "does not apply" (for a `derivation == None` pair) mean §16.27 item 6's derivation-conditional
+    18(i) message reverts to its pre-erratum unconditional form, or is simply unavailable/silent for
+    that pair? `f1_oracle_comparator.rs`'s frozen
+    `the_refuting_pair_is_attributed_to_leg_one_by_the_monotonicity_message` test runs on a `None`
+    pair and its name asserts the former reading; nothing in code depends on the answer today
+    (`UnionMonotonicity` carries no runtime message), but the test's own licence is unclear. Needs
+    the two Opus architects jointly, per cookbook rule 8's routing for a frozen-test question — not
+    a unilateral call.
+  - §16.28 item 8's full-shape JSON exemplar pins only one of `Derivation`'s four serde spellings
+    (`yolo_unioned`); the other three are pinned only in `f1_oracle_derivation.rs`. A one-line
+    cross-reference in the exemplar's comment pointing at that file would close the gap without
+    exceeding the exemplar's authorized scope (adding all four to one block literal would).
+  - `Divergence::class()` ends in a `_ =>` wildcard and no exhaustive `match` over `Divergence`
+    exists anywhere in the workspace — so the partition test's own claim that its literal count is
+    "the ratchet that makes adding a variant without classifying it a failure" is true of *deleting*
+    a sample and false of *adding* an unclassified variant. Predates this session's work (was
+    equally true at 16 variants) but now anchors §16.28 item 3's ratified count of 19.
+  - Neither `f1_oracle_comparator.rs` nor `f1_oracle_derivation.rs` carries a `FROZEN` header, unlike
+    every other `crates/pc-detect/tests/*.rs` file — both are frozen by three spec sections' worth of
+    prose but not by a marker in the file a future editor actually opens.
+  - `OracleBlock`'s `eng_expanded`/`lines_pre_expand`/`expand_size` fields have no doc comment at
+    their declaration site, unlike every sibling field on that struct — the reasoning for why the
+    "REQUIRED together" conditional binds the recorder rather than the type (§16.28 item 1(e)) lives
+    only in the spec and the PR history, not at the type.
 
 ---
 

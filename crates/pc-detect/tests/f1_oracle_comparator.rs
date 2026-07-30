@@ -10,9 +10,9 @@
 
 use pc_core::{Language, Rect};
 use pc_detect::oracle::{
-    self, ComparisonReport, DerivedAccounting, Divergence, DivergenceClass, Edge, Expectations,
-    ExpectedPair, IdentityBranch, Mechanism, OracleBlock, OracleCoverage, OursSide, Side, Totals,
-    UnmatchedEntry, UpstreamOracle,
+    self, ComparisonReport, Derivation, DerivedAccounting, Divergence, DivergenceClass, Edge,
+    Expectations, ExpectedPair, IdentityBranch, Mechanism, OracleBlock, OracleCoverage, OursSide,
+    Side, Totals, UnmatchedEntry, UpstreamOracle,
 };
 use pc_detect::RawBlock;
 
@@ -63,11 +63,19 @@ fn oracle_block(
         confidence: Some(confidence),
         language: Some(language),
         base_xyxy_pretruncation: None,
+        derivation: None,
+        rect_yolo: None,
+        eng_expanded: false,
+        lines_pre_expand: None,
+        expand_size: None,
     }
 }
 
 /// A line-less oracle block with no optional fields recorded — the shape the degenerate branch and
-/// the NO-ORACLE rows are written against.
+/// the NO-ORACLE rows are written against. The five derivation-recording fields are deliberately
+/// left unrecorded here (None/false) because the closed `Derivation` enum admits no value for a
+/// line-less block — any value would be fabrication, not adaptation. Contrast with the full-shape
+/// JSON exemplar below, which populates them on purpose.
 fn bare_block(xyxy: [i32; 4]) -> OracleBlock {
     OracleBlock {
         xyxy,
@@ -75,6 +83,11 @@ fn bare_block(xyxy: [i32; 4]) -> OracleBlock {
         confidence: None,
         language: None,
         base_xyxy_pretruncation: None,
+        derivation: None,
+        rect_yolo: None,
+        eng_expanded: false,
+        lines_pre_expand: None,
+        expand_size: None,
     }
 }
 
@@ -126,26 +139,31 @@ fn expectations_truth() -> Expectations {
                 ours: 0,
                 upstream: 0,
                 branch: LineInformed,
+                derivation: None,
             },
             ExpectedPair {
                 ours: 1,
                 upstream: 1,
                 branch: LineLess,
+                derivation: None,
             },
             ExpectedPair {
                 ours: 2,
                 upstream: 2,
                 branch: LineInformed,
+                derivation: None,
             },
             ExpectedPair {
                 ours: 3,
                 upstream: 3,
                 branch: LineLess,
+                derivation: None,
             },
             ExpectedPair {
                 ours: 4,
                 upstream: 4,
                 branch: LineLess,
+                derivation: None,
             },
         ],
         unmatched_ours: vec![],
@@ -177,21 +195,25 @@ fn negative_control() -> (Vec<RawBlock>, UpstreamOracle, Expectations) {
                 ours: 0,
                 upstream: 0,
                 branch: LineInformed,
+                derivation: None,
             },
             ExpectedPair {
                 ours: 1,
                 upstream: 1,
                 branch: LineLess,
+                derivation: None,
             },
             ExpectedPair {
                 ours: 2,
                 upstream: 2,
                 branch: LineInformed,
+                derivation: None,
             },
             ExpectedPair {
                 ours: 3,
                 upstream: 3,
                 branch: LineLess,
+                derivation: None,
             },
         ],
         unmatched_ours: vec![],
@@ -434,6 +456,7 @@ fn the_line_less_identity_degenerates_to_plain_equality() {
             ours: 0,
             upstream: 0,
             branch: IdentityBranch::LineLess,
+            derivation: None,
         }],
         unmatched_ours: vec![],
         unmatched_upstream: vec![],
@@ -492,6 +515,7 @@ fn the_line_union_widens_the_box_and_satisfies_the_identity() {
             ours: 0,
             upstream: 0,
             branch: IdentityBranch::LineInformed,
+            derivation: None,
         }],
         unmatched_ours: vec![],
         unmatched_upstream: vec![],
@@ -515,6 +539,11 @@ fn the_line_union_widens_the_box_and_satisfies_the_identity() {
         confidence: None,
         language: None,
         base_xyxy_pretruncation: None,
+        derivation: None,
+        rect_yolo: None,
+        eng_expanded: false,
+        lines_pre_expand: None,
+        expand_size: None,
     }]);
     let report = oracle::compare(ours_side(&ours), &with_lines, &expectations);
     assert!(
@@ -575,6 +604,11 @@ fn the_declared_identity_branch_is_verified_and_an_empty_polygon_list_is_line_le
         confidence: Some(0.775),
         language: Some(Language::English),
         base_xyxy_pretruncation: None,
+        derivation: None,
+        rect_yolo: None,
+        eng_expanded: false,
+        lines_pre_expand: None,
+        expand_size: None,
     };
     assert_eq!(degenerate.lines_bbox(), None);
     assert_eq!(degenerate.identity_branch(), IdentityBranch::LineLess);
@@ -611,6 +645,7 @@ fn the_refuting_pair_is_attributed_to_leg_one_by_the_monotonicity_message() {
             ours: 0,
             upstream: 0,
             branch: IdentityBranch::LineLess,
+            derivation: None,
         }],
         unmatched_ours: vec![],
         unmatched_upstream: vec![],
@@ -745,6 +780,7 @@ fn every_pair_reports_both_residual_forms_and_leg_one_is_not_a_gate() {
             ours: 0,
             upstream: 0,
             branch: IdentityBranch::LineInformed,
+            derivation: None,
         }],
         unmatched_ours: vec![],
         unmatched_upstream: vec![],
@@ -763,6 +799,11 @@ fn every_pair_reports_both_residual_forms_and_leg_one_is_not_a_gate() {
             confidence: None,
             language: None,
             base_xyxy_pretruncation: Some([29.0, 105.4, 90.2, 261.8]),
+            derivation: None,
+            rect_yolo: None,
+            eng_expanded: false,
+            lines_pre_expand: None,
+            expand_size: None,
         }],
         pre_filter_blocks: vec![],
     };
@@ -911,6 +952,7 @@ fn a_malformed_authored_pairing_is_rejected() {
         ours: 0,
         upstream: 4,
         branch: IdentityBranch::LineLess,
+        derivation: None,
     };
     let report = oracle::compare(ours_side(&ours), &upstream_truth(), &twice);
     assert!(report.divergences.contains(&Divergence::PairedTwice {
@@ -928,6 +970,7 @@ fn a_malformed_authored_pairing_is_rejected() {
         ours: 9,
         upstream: 4,
         branch: IdentityBranch::LineLess,
+        derivation: None,
     };
     let report = oracle::compare(ours_side(&ours), &upstream_truth(), &out_of_range);
     assert!(report
@@ -1045,6 +1088,7 @@ fn the_upstream_coverage_filter_case_closes_as_documented_with_verified_evidence
             ours: 0,
             upstream: 0,
             branch: IdentityBranch::LineLess,
+            derivation: None,
         }],
         unmatched_ours: vec![UnmatchedEntry {
             index: 1,
@@ -1185,6 +1229,7 @@ fn a_class_duplicate_must_cite_a_paired_upstream_block() {
             ours: 0,
             upstream: 0,
             branch: IdentityBranch::LineLess,
+            derivation: None,
         }],
         unmatched_ours: vec![],
         unmatched_upstream: vec![UnmatchedEntry {
@@ -1198,8 +1243,8 @@ fn a_class_duplicate_must_cite_a_paired_upstream_block() {
         },
     };
 
-    // Valid: cites the paired block 0. Equations (§16.24 item 11, six derived terms):
-    // 1 + 1 + 0 + 0 = 2 upstream; 1 + 0 + 0 + 0 = 1 ours.
+    // Valid: cites the paired block 0. Equations (§16.24 item 11, seven derived terms):
+    // 1 + 1 + 0 + 0 + 0 = 2 upstream; 1 + 0 + 0 + 0 = 1 ours.
     assert_eq!(
         oracle::compare(ours_side(&ours), &upstream, &base).divergences,
         Vec::new()
@@ -1262,10 +1307,10 @@ fn declaring_a_documented_difference_does_not_silence_the_row() {
 }
 
 #[test]
-// spec §16.24 items 11 and 21 R5 — the ratified TWO-EQUATION accounting, with the six mechanism
+// spec §16.24 items 11 and 21 R5 — the ratified TWO-EQUATION accounting, with the seven mechanism
 // terms DERIVED and only the three totals authored:
 //
-//   pairs + class_duplicates + documented_split_merge_upstream + open_upstream == upstream_total
+//   pairs + class_duplicates + documented_split_merge_upstream + dbnet_scattered + open_upstream == upstream_total
 //   pairs + coverage_filtered_ours + documented_split_merge_ours + open_ours   == ours_total
 //
 // The literal "equals both totals" is unsatisfiable with one-sided extras, which is why item 11 is
@@ -1294,6 +1339,7 @@ fn the_derived_accounting_partitions_the_entries_and_both_equations_close() {
             ours: 0,
             upstream: 0,
             branch: IdentityBranch::LineLess,
+            derivation: None,
         }],
         unmatched_ours: vec![],
         unmatched_upstream: vec![UnmatchedEntry {
@@ -1310,7 +1356,7 @@ fn the_derived_accounting_partitions_the_entries_and_both_equations_close() {
     assert_eq!(report.divergences, Vec::new());
 
     // The mechanism counts are DERIVED, so the arithmetic is reported rather than authored, and
-    // each term names one mechanism class on one side. Equation 1: 1 + 1 + 0 + 0 = 2 upstream;
+    // each term names one mechanism class on one side. Equation 1: 1 + 1 + 0 + 0 + 0 = 2 upstream;
     // equation 2: 1 + 0 + 0 + 0 = 1 ours.
     assert_eq!(
         report.derived,
@@ -1318,6 +1364,7 @@ fn the_derived_accounting_partitions_the_entries_and_both_equations_close() {
             pairs: 1,
             class_duplicates: 1,
             documented_split_merge_upstream: 0,
+            dbnet_scattered: 0,
             open_upstream: 0,
             coverage_filtered_ours: 0,
             documented_split_merge_ours: 0,
@@ -1410,6 +1457,7 @@ fn confidence_and_language_are_diagnostic_and_absence_is_no_oracle() {
             ours: 0,
             upstream: 0,
             branch: IdentityBranch::LineLess,
+            derivation: None,
         }],
         unmatched_ours: vec![],
         unmatched_upstream: vec![],
@@ -1433,6 +1481,11 @@ fn confidence_and_language_are_diagnostic_and_absence_is_no_oracle() {
         confidence: Some(0.696),
         language: Some(Language::Japanese),
         base_xyxy_pretruncation: None,
+        derivation: None,
+        rect_yolo: None,
+        eng_expanded: false,
+        lines_pre_expand: None,
+        expand_size: None,
     });
     let report = oracle::compare(ours_side(&ours), &disagreeing, &expectations);
     assert!(report.gating().is_empty(), "{:?}", report.gating());
@@ -1476,6 +1529,11 @@ fn confidence_and_language_are_diagnostic_and_absence_is_no_oracle() {
         confidence: Some(0.775),
         language: Some(Language::English),
         base_xyxy_pretruncation: None,
+        derivation: None,
+        rect_yolo: None,
+        eng_expanded: false,
+        lines_pre_expand: None,
+        expand_size: None,
     });
     let report = oracle::compare(ours_side(&ours), &agreeing, &expectations);
     assert_eq!(report.divergences, Vec::new());
@@ -1522,6 +1580,11 @@ fn partial_oracle_coverage_gates_and_still_reports_the_covered_subset() {
                 confidence: Some(0.696),
                 language: Some(Language::English),
                 base_xyxy_pretruncation: None,
+                derivation: None,
+                rect_yolo: None,
+                eng_expanded: false,
+                lines_pre_expand: None,
+                expand_size: None,
             },
             OracleBlock {
                 xyxy: [300, 400, 366, 441],
@@ -1529,6 +1592,11 @@ fn partial_oracle_coverage_gates_and_still_reports_the_covered_subset() {
                 confidence: None,
                 language: Some(Language::English),
                 base_xyxy_pretruncation: None,
+                derivation: None,
+                rect_yolo: None,
+                eng_expanded: false,
+                lines_pre_expand: None,
+                expand_size: None,
             },
         ],
         pre_filter_blocks: vec![],
@@ -1539,11 +1607,13 @@ fn partial_oracle_coverage_gates_and_still_reports_the_covered_subset() {
                 ours: 0,
                 upstream: 0,
                 branch: IdentityBranch::LineLess,
+                derivation: None,
             },
             ExpectedPair {
                 ours: 1,
                 upstream: 1,
                 branch: IdentityBranch::LineLess,
+                derivation: None,
             },
         ],
         unmatched_ours: vec![],
@@ -1675,6 +1745,21 @@ fn the_divergence_class_partition_is_total_and_gating_excludes_diagnostics() {
             ours: (1024, 1434),
             upstream: (1024, 1433),
         },
+        Divergence::Leg1YoloGeometry {
+            ours: Rect::new(0, 0, 1, 1),
+            rect_yolo: Some([0, 0, 1, 1]),
+            derivation: Derivation::YoloUnioned,
+        },
+        Divergence::UnpairableDerivation {
+            ours_index: 0,
+            upstream_index: 0,
+            derivation: Derivation::YoloSplit,
+        },
+        Divergence::DerivationSignatureMismatch {
+            ours: Rect::new(0, 0, 1, 1),
+            signed: Some(Derivation::YoloUnioned),
+            recorded: None,
+        },
         // §16.25 item 5 — GATING, derived from item 3(e)'s OPEN-blocks rule rather than as an
         // exception to item 3(d): `Partial` means item 9's branch does not resolve, so the
         // partition row is OPEN, so it blocks.
@@ -1702,12 +1787,12 @@ fn the_divergence_class_partition_is_total_and_gating_excludes_diagnostics() {
         .filter(|row| row.class() == DivergenceClass::Diagnostic)
         .count();
 
-    // §16.25 item 11: the sample is now EXHAUSTIVE — 16 of 16 variants — because a test whose name
-    // claims totality while covering 10 of 16 is cookbook rule 1's dominant defect class sitting in
-    // the very test whose job is to prevent it. The literal 16 is the ratchet that makes adding a
+    // §16.25 item 11: the sample is now EXHAUSTIVE — 19 of 19 variants — because a test whose name
+    // claims totality while covering fewer variants is cookbook rule 1's dominant defect class sitting in
+    // the very test whose job is to prevent it. The literal 19 is the ratchet that makes adding a
     // variant without classifying it a failure here.
-    assert_eq!(samples.len(), 16, "every `Divergence` variant must appear");
-    assert_eq!((gating, diagnostic), (14, 2));
+    assert_eq!(samples.len(), 19, "every `Divergence` variant must appear");
+    assert_eq!((gating, diagnostic), (17, 2));
     assert_eq!(
         gating + diagnostic,
         samples.len(),
@@ -1759,6 +1844,11 @@ fn the_oracle_artifact_shape_round_trips_and_rejects_unknown_fields() {
             {
               "xyxy": [29, 105, 90, 261],
               "lines": [[[33, 110], [90, 110], [90, 250], [33, 250]]],
+              "derivation": "yolo_unioned",
+              "rect_yolo": [29, 105, 86, 261],
+              "eng_expanded": false,
+              "lines_pre_expand": [[[33, 110], [90, 110], [90, 250], [33, 250]]],
+              "expand_size": null,
               "confidence": 0.564,
               "language": "english",
               "base_xyxy_pretruncation": [29.0, 105.4, 90.2, 261.8]
@@ -1776,6 +1866,9 @@ fn the_oracle_artifact_shape_round_trips_and_rejects_unknown_fields() {
         full.blocks[0].base_xyxy_pretruncation,
         Some([29.0, 105.4, 90.2, 261.8])
     );
+    assert_eq!(full.blocks[0].derivation, Some(Derivation::YoloUnioned));
+    assert_eq!(full.blocks[0].rect_yolo, Some([29, 105, 86, 261]));
+    assert!(!full.blocks[0].eng_expanded);
     assert_eq!(full.pre_filter_blocks.len(), 1);
     // `Language` serialises lowercase (`pc-core/src/language.rs:5-10`), so the script must emit
     // `"english"`/`"japanese"` and not upstream's own language codes. Pinning it here is what
