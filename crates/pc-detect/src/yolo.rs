@@ -143,9 +143,13 @@ pub fn nms(candidates: Vec<Candidate>) -> Vec<Candidate> {
 /// Letterboxed coords -> base-image coords (spec §8.3 step 4): multiply by
 /// [`LetterboxGeometry::resize_ratio`], truncate to i32, then **clip to the image**.
 ///
-/// spec §16.6 item 4: clamping `x1,y1 >= 0` and `x2,y2 <= image_size` is part of the
-/// port (upstream's yolov5 `clip_coords`), and is required for `run()` to produce a
-/// `PageDataRaw` that passes its own `validate()` on frame-overhanging detections.
+/// spec §14 register entry 18 (re-grounded by §16.27 item 9): clamping `x1,y1 >= 0` and
+/// `x2,y2 <= image_size` is a **deliberate v1 divergence**, not a port of an upstream
+/// mechanism — `clip_coords` does not exist anywhere in the pinned upstream checkout
+/// (`grep -rn clip_coords` exits 1). Upstream's only clamping is the IoU-intersection
+/// arithmetic in `box_iou` (`yolov5_utils.py:166,169`, both `.clamp(0)`), unrelated to
+/// this bounds clamp. v1 clamps because `run()` must produce a `PageDataRaw` that passes
+/// its own `validate()` on frame-overhanging detections.
 pub fn rescale(candidates: &[Candidate], geometry: &LetterboxGeometry) -> Vec<RawBlock> {
     let ratio_x = geometry.image_size.0 as f32 / (geometry.net_size as f32 - geometry.dw);
     let ratio_y = geometry.image_size.1 as f32 / (geometry.net_size as f32 - geometry.dh);
@@ -160,6 +164,10 @@ pub fn rescale(candidates: &[Candidate], geometry: &LetterboxGeometry) -> Vec<Ra
             let x2 = (candidate.xyxy[2] * ratio_x) as i32;
             let y2 = (candidate.xyxy[3] * ratio_y) as i32;
             RawBlock {
+                // DEVIATION(18): clamp rescaled coords to the image bounds. Deliberate v1
+                // divergence, not a port — upstream has no equivalent (§14 register entry 18 /
+                // §16.27 item 9). Required so `run()` can produce a `PageDataRaw` that passes
+                // its own `validate()` on frame-overhanging detector output.
                 rect: pc_core::Rect::new(
                     x1.clamp(0, max_x),
                     y1.clamp(0, max_y),

@@ -294,7 +294,10 @@ fn rescale_truncates_toward_zero_before_clipping() {
 
 #[test]
 fn rescale_clips_boxes_that_overhang_image_bounds() {
-    // spec §16.6 item 4 (resolved: clip TO bounds, matching upstream's `clip_coords`).
+    // spec §16.6 item 4 (resolved: clip TO bounds). NOT a port of an upstream mechanism: this
+    // comment cited `clip_coords`, which does not exist in the pinned upstream checkout; upstream's
+    // only clamping is the IoU-intersection arithmetic at `yolov5_utils.py:166,169`. The clamp is a
+    // deliberate v1 divergence — §14 register entry 18 / §16.27 item 9.
     // Raw: (-20, -8, 2100, 1100) * 0.5 = (-10, -4, 1050, 550) -> clipped to the 512x256
     // base image.
     let blocks = rescale(
