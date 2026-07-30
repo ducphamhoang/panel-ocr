@@ -15,10 +15,23 @@ the one attempt failed (Caveat 1). So treat every statement about what a role "c
 as **what the definition asks for, not as something measured**, and keep stating the
 prohibition in the brief as well.
 
-What *is* established, and gated by `crates/pc-testkit/tests/agent_definitions.rs`: the
-four files parse as YAML, their names match their filenames, and their `tools` and `model`
-fields hold the documented values. Necessary, not sufficient — none of that shows the
-harness reads them.
+What the gate in `crates/pc-testkit/tests/agent_definitions.rs` establishes, enumerated
+rather than summarised because summarising it has already overstated it twice:
+
+- the directory holds exactly the four expected names, and each `name` matches its filename;
+- each frontmatter carries all four required keys, and `model` is an allowed value and the
+  one pinned for that role;
+- the three read-only definitions list **none** of `Edit`/`Write`/`NotebookEdit`, and
+  `rust-engineer` lists `Edit` and `Write`;
+- each frontmatter parses **under `yaml-rust2` 0.11.0 plus a printable-characters rule** —
+  which is a *proxy*, not "valid YAML": that crate is measurably laxer than PyYAML (it accepts
+  control bytes PyYAML rejects), and the harness's own loader is neither of them;
+- the `Bash` caveat is still present in all three read-only definitions and in this file.
+
+It establishes **nothing** about whether the harness reads these files, whether it honours
+`tools` or `model`, or even whether `Read`/`Grep`/`Glob`/`Bash` are present — **no test
+asserts that a tool is present**, apart from the two `rust-engineer` rows above. Passing this
+gate means the files are well-formed and self-consistent, not that they do anything.
 
 If the definitions do load, then `fresh-reader`, `architect` and `fable-adjudicator` list
 no `Edit`/`Write`/`NotebookEdit`, so the harness would withhold those three tools whatever
