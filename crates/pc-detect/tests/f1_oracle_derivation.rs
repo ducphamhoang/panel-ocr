@@ -554,3 +554,216 @@ fn field_coverage_carries_no_derivation_member() {
         language_whole_artifact: _,
     } = report.coverage;
 }
+
+/// spec §16.27 item 7 — a reachable synthesized-corners pair signs its derivation and closes both
+/// the identity and the leg-1 row.
+#[test]
+fn a_synthesized_corners_pair_closes_with_one_line() {
+    let rect = Rect::new(120, 240, 180, 280);
+    let lines = vec![vec![
+        [rect.x1, rect.y1],
+        [rect.x2, rect.y1],
+        [rect.x2, rect.y2],
+        [rect.x1, rect.y2],
+    ]];
+    let ours = vec![RawBlock {
+        rect,
+        class_index: 0,
+        confidence: 0.5,
+    }];
+    let upstream = one_block_frame(OracleBlock {
+        xyxy: [rect.x1, rect.y1, rect.x2, rect.y2],
+        lines: lines.clone(),
+        confidence: None,
+        language: None,
+        base_xyxy_pretruncation: None,
+        derivation: Some(Derivation::YoloSynthesizedCorners),
+        rect_yolo: Some([rect.x1, rect.y1, rect.x2, rect.y2]),
+        eng_expanded: false,
+        lines_pre_expand: Some(lines),
+        expand_size: None,
+    });
+    let report = oracle::compare(
+        ours_side(&ours),
+        &upstream,
+        &one_pair(
+            IdentityBranch::LineInformed,
+            Some(Derivation::YoloSynthesizedCorners),
+        ),
+    );
+
+    assert_eq!(report.divergences, Vec::new());
+    assert_eq!(report.leg1_rows_checked, 1);
+    assert_eq!(report.residuals[0].residual_full, [0, 0, 0, 0]);
+    assert_eq!(report.residuals[0].upstream_line_count, 1);
+}
+
+/// spec §16.27 item 7 — a YoloUnioned identity may be dominated by lines, while a one-pixel
+/// `rect_yolo` error is attributed to leg 1 alone.
+#[test]
+fn dominating_lines_keep_identity_clean_and_isolate_a_yolo_box_error() {
+    let ours_rect = Rect::new(100, 100, 200, 200);
+    let lines = vec![vec![[90, 80], [220, 80], [220, 230], [90, 230]]];
+    let base = OracleBlock {
+        xyxy: [90, 80, 220, 230],
+        lines: lines.clone(),
+        confidence: None,
+        language: None,
+        base_xyxy_pretruncation: None,
+        derivation: Some(Derivation::YoloUnioned),
+        rect_yolo: Some([100, 100, 200, 200]),
+        eng_expanded: false,
+        lines_pre_expand: Some(lines),
+        expand_size: None,
+    };
+    let ours = vec![RawBlock {
+        rect: ours_rect,
+        class_index: 0,
+        confidence: 0.5,
+    }];
+
+    let report = oracle::compare(
+        ours_side(&ours),
+        &one_block_frame(base.clone()),
+        &one_pair(IdentityBranch::LineInformed, Some(Derivation::YoloUnioned)),
+    );
+    assert_eq!(report.divergences, Vec::new());
+    assert_eq!(report.leg1_rows_checked, 1);
+
+    let mut off_by_one = base;
+    off_by_one.rect_yolo = Some([99, 100, 200, 200]);
+    let report = oracle::compare(
+        ours_side(&ours),
+        &one_block_frame(off_by_one),
+        &one_pair(IdentityBranch::LineInformed, Some(Derivation::YoloUnioned)),
+    );
+    assert_eq!(
+        report.divergences,
+        vec![Divergence::Leg1YoloGeometry {
+            ours: ours_rect,
+            rect_yolo: Some([99, 100, 200, 200]),
+            derivation: Derivation::YoloUnioned,
+        }]
+    );
+    assert_eq!(report.leg1_rows_checked, 1);
+}
+
+/// spec §16.27 item 7 — the identity unions every polygon, and the served line census counts both.
+#[test]
+fn a_multi_line_pair_uses_the_combined_line_bbox() {
+    let ours_rect = Rect::new(100, 100, 200, 200);
+    let lines = vec![
+        vec![[110, 110], [190, 110], [190, 190], [110, 190]],
+        vec![[190, 190], [230, 190], [230, 230], [190, 230]],
+    ];
+    let upstream = one_block_frame(OracleBlock {
+        xyxy: [100, 100, 230, 230],
+        lines: lines.clone(),
+        confidence: None,
+        language: None,
+        base_xyxy_pretruncation: None,
+        derivation: Some(Derivation::YoloUnioned),
+        rect_yolo: Some([100, 100, 200, 200]),
+        eng_expanded: false,
+        lines_pre_expand: Some(lines),
+        expand_size: None,
+    });
+    let ours = vec![RawBlock {
+        rect: ours_rect,
+        class_index: 0,
+        confidence: 0.5,
+    }];
+    let report = oracle::compare(
+        ours_side(&ours),
+        &upstream,
+        &one_pair(IdentityBranch::LineInformed, Some(Derivation::YoloUnioned)),
+    );
+
+    assert_eq!(report.divergences, Vec::new());
+    assert_eq!(report.residuals[0].upstream_line_count, 2);
+    assert_eq!(report.leg1_rows_checked, 1);
+}
+
+/// spec §16.27 item 7 — split-shaped unmatched entries use the documented mechanism on both
+/// sides, while no leg-1 row is evaluated for the never-paired split block.
+#[test]
+fn a_split_shaped_unmatched_structure_closes_derived_accounting() {
+    let parent = Rect::new(100, 200, 180, 260);
+    let ours = vec![
+        RawBlock {
+            rect: Rect::new(10, 20, 40, 50),
+            class_index: 0,
+            confidence: 0.5,
+        },
+        RawBlock {
+            rect: parent,
+            class_index: 0,
+            confidence: 0.5,
+        },
+    ];
+    let upstream = UpstreamOracle {
+        scale: FRAME_SCALE,
+        image_size: FRAME_SIZE,
+        blocks: vec![
+            OracleBlock {
+                xyxy: [10, 20, 40, 50],
+                lines: vec![],
+                confidence: None,
+                language: None,
+                base_xyxy_pretruncation: None,
+                derivation: Some(Derivation::YoloUnioned),
+                rect_yolo: Some([10, 20, 40, 50]),
+                eng_expanded: false,
+                lines_pre_expand: None,
+                expand_size: None,
+            },
+            OracleBlock {
+                xyxy: [110, 210, 145, 240],
+                lines: vec![vec![[110, 210], [145, 210], [145, 240], [110, 240]]],
+                confidence: None,
+                language: None,
+                base_xyxy_pretruncation: None,
+                derivation: Some(Derivation::YoloSplit),
+                rect_yolo: Some([parent.x1, parent.y1, parent.x2, parent.y2]),
+                eng_expanded: false,
+                lines_pre_expand: None,
+                expand_size: None,
+            },
+        ],
+        pre_filter_blocks: vec![],
+    };
+    let expectations = Expectations {
+        pairs: vec![ExpectedPair {
+            ours: 0,
+            upstream: 0,
+            branch: IdentityBranch::LineLess,
+            derivation: Some(Derivation::YoloUnioned),
+        }],
+        unmatched_ours: vec![UnmatchedEntry {
+            index: 1,
+            mechanism: Mechanism::DocumentedSplitMerge {
+                register_entry: "§16.27 item 2(c)",
+            },
+        }],
+        unmatched_upstream: vec![UnmatchedEntry {
+            index: 1,
+            mechanism: Mechanism::DocumentedSplitMerge {
+                register_entry: "§16.27 item 2(c)",
+            },
+        }],
+        totals: Totals {
+            pairs: 1,
+            ours_total: 2,
+            upstream_total: 2,
+        },
+    };
+
+    let report = oracle::compare(ours_side(&ours), &upstream, &expectations);
+
+    assert_eq!(report.divergences, Vec::new());
+    assert_eq!(report.leg1_rows_checked, 1);
+    assert_eq!(report.derived.documented_split_merge_upstream, 1);
+    assert_eq!(report.derived.documented_split_merge_ours, 1);
+    assert_eq!(report.derived.upstream_sum(), 2);
+    assert_eq!(report.derived.ours_sum(), 2);
+}

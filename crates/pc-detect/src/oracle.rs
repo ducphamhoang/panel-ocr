@@ -66,6 +66,10 @@ pub enum Derivation {
 }
 
 /// One upstream block as recorded by the oracle script (`upstream + cv2.dnn`, §16.20 item 6).
+///
+/// The identity operand is `lines_pre_expand` when the artifact recorded it (`Some`), otherwise
+/// the served `lines`. [`lines_bbox`], [`identity_branch`], and [`reconstruct`] all use that same
+/// operand; the served `lines` remain authoritative for [`PairResidual::upstream_line_count`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OracleBlock {
@@ -170,6 +174,12 @@ impl OracleBlock {
         xyxy_to_rect(self.xyxy)
     }
 
+    /// The line polygons used by the geometry identity: pre-expansion lines when recorded, or
+    /// the served lines when no pre-expansion list was recorded.
+    pub fn identity_lines(&self) -> &[Vec<[i32; 2]>] {
+        self.lines_pre_expand.as_deref().unwrap_or(&self.lines)
+    }
+
     /// Which branch of the identity this block's data selects. An empty polygon list — and a list
     /// of empty polygons — is `LineLess`; treating either as a point at the origin and unioning it
     /// would drag every box's `x1`/`y1` to 0.
@@ -182,7 +192,7 @@ impl OracleBlock {
 
     /// `bbox` over every point of every polygon; `None` when there are no points at all.
     pub fn lines_bbox(&self) -> Option<Rect> {
-        let mut points = self.lines.iter().flatten();
+        let mut points = self.identity_lines().iter().flatten();
         let first = points.next()?;
         let mut bbox = Rect::new(first[0], first[1], first[0], first[1]);
         for point in points {
