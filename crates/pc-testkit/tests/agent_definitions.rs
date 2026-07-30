@@ -1,5 +1,6 @@
 //! Gates the `.claude/agents/` frontmatter consumed by the agent harness.
-//!
+//! Two of these four agent definitions once shipped unable to load because of invalid YAML, so the
+//! prohibitions they encode silently did not exist.
 use pc_testkit::paths;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -100,19 +101,47 @@ fn frontmatter_block(path: &Path) -> String {
 // closer proxy for the harness's loader than the old rule but is still a proxy — and now with
 // measured evidence that two real parsers differ, so the residual risk is concrete rather than
 // theoretical.
-// The additive constraint is one sentence: reject any character below 0x20 except TAB, LF, and
-// CR, and reject DEL (0x7F).
+// The additive constraint is one sentence: reject any character below 0x20 or DEL (0x7F)
+// throughout frontmatter. It has no quoted/unquoted branch logic (14c-bis: branch logic here
+// caused three prior rounds of holes), applies 14c-quater consistently, and deliberately
+// over-rejects PyYAML for quoted TAB: no legitimate agent definition contains a tab, a tab is
+// almost certainly a paste accident, and a PyYAML-like loader rejects an unquoted tab — the
+// silently-dead-definition failure this gate exists to catch.
 fn frontmatter_gate(document: &str) -> Result<Yaml, String> {
-    if let Some((byte_offset, character)) = document.char_indices().find(|(_, character)| {
-        (*character < '\u{20}' && !matches!(character, '\t' | '\n' | '\r'))
-            || *character == '\u{7f}'
-    }) {
-        return Err(format!(
-            "frontmatter contains non-printable character U+{:04X} at byte offset {byte_offset}",
-            character as u32
-        ));
+    frontmatter_gate_with_context(document, 1, 0)
+}
+
+fn frontmatter_gate_with_context(
+    document: &str,
+    first_line_number: usize,
+    first_byte_offset: usize,
+) -> Result<Yaml, String> {
+    let mut line_byte_offset = 0;
+    for (line_index, line_with_ending) in document.split_inclusive('\n').enumerate() {
+        let line = line_with_ending
+            .strip_suffix('\n')
+            .unwrap_or(line_with_ending);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if let Some((character_offset, character)) = line
+            .char_indices()
+            .find(|(_, character)| *character < '\u{20}' || *character == '\u{7f}')
+        {
+            let code_point = character as u32;
+            let name = match character {
+                '\t' => " (TAB)",
+                '\u{1b}' => " (ESC)",
+                _ => "",
+            };
+            let line_number = first_line_number + line_index;
+            let byte_offset = first_byte_offset + line_byte_offset + character_offset;
+            return Err(format!(
+                "frontmatter contains non-printable character U+{code_point:04X}{name} at line {line_number}, byte offset {byte_offset}"
+            ));
+        }
+        line_byte_offset += line_with_ending.len();
     }
 
+    // Keep the parser's existing empty-document diagnostic below.
     let documents = YamlLoader::load_from_str(document).map_err(|error| error.to_string())?;
     documents
         .into_iter()
@@ -121,7 +150,7 @@ fn frontmatter_gate(document: &str) -> Result<Yaml, String> {
 }
 
 fn parsed_frontmatter(path: &Path) -> Yaml {
-    frontmatter_gate(&frontmatter_block(path))
+    frontmatter_gate_with_context(&frontmatter_block(path), 2, 4)
         .unwrap_or_else(|error| panic!("{} has invalid YAML frontmatter: {error}", path.display()))
 }
 
@@ -253,10 +282,16 @@ fn the_acceptance_gate_accepts_and_rejects_the_recorded_frontmatter_cases() {
             "name: sample\ndescription: sample description\ntools: Read\nmodel: opus\n",
             true,
         ),
-        // TAB is legal inside a YAML quoted scalar and must not be rejected as C0 control data.
+        // PyYAML accepts quoted TAB; we reject it deliberately because tabs are paste accidents
+        // in agent definitions and can make an unquoted value fail to load.
         (
             "name: sample\ndescription: \"quoted\tvalue\"\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
-            true,
+            false,
+        ),
+        // PyYAML rejects unquoted TAB while yaml-rust2 accepts it; we take the stricter side.
+        (
+            "name: sample\ndescription: unquoted\tvalue\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
+            false,
         ),
     ];
 
@@ -268,8 +303,9 @@ fn the_acceptance_gate_accepts_and_rejects_the_recorded_frontmatter_cases() {
         );
     }
 
-    // An unquoted literal TAB is deliberately unpinned: PyYAML rejects it while yaml-rust2
-    // accepts it, and which parser the harness follows in this case is undecided.
+    // Literal TAB is now pinned to rejection: PyYAML and yaml-rust2 disagree on unquoted TAB,
+    // and 14c-quater requires taking the stricter side; both TAB cases above are deliberately
+    // commented so this decision cannot be silently reverted.
 }
 
 #[test]
