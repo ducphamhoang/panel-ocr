@@ -548,6 +548,13 @@ a claim, not a verification.** Re-run the suite yourself; read the diff.
 - **The `codex:rescue` wrapper often returns `completed` in ~40s having launched a background
   job and written nothing.** Six times in one session. Treat its completion as "dispatched",
   not "done": check the artifact, and re-dispatch a **fresh** task rather than resuming.
+- **Still owed, as of 2026-07-30, carried here since there is no persistent task tracker across
+  sessions:** either delete `provenance_is_current`'s redundant condition 2 or amend its
+  "four conditions" docstring to match; write the R1–R23 numbering into `provenance.rs` as a doc
+  comment; add `UpstreamBoxOutsideFrame`'s own §14 register entry (it is adopted as a gating row
+  per §16.27 item 4 but has no register number yet); and get an explicit joint-architect or Fable
+  ruling authorizing the frozen-struct-literal adaptation in `f1_oracle_comparator.rs` that F1's
+  recording run (task #12/#13) will need — §16.27 item 1(g) deliberately does not grant it.
 
 ---
 
@@ -1000,3 +1007,24 @@ direction a union cannot produce.** It is evidence *against* the claim, printed 
   theorem and stands; the inference is derivation-conditional. Spec §16.27 item 6 corrects the same
   sentence where it had become normative — which is this rule recurring one level up: a diagnostic
   message is a claim, and a claim states its scope.
+
+---
+
+## 16. Weigh a review finding by its claim TYPE, not by a true/false ratio
+
+Measured once at 14 true / 6 false across a stop-time review channel, then confirmed again in
+the §16.27 transcription session: every false positive was a claim about what the *compiler* or
+*test runner* does (disproved by a successful build, one of them raised **five times** verbatim
+after the disproof), and every true finding — there, and in five separate rounds during §16.27's
+drafting — was a claim about what a *file contains*: a spec sentence contradicting its own
+preamble, a withdrawn citation surviving at a second site, a `BTreeSet` silently collapsing three
+distinct markers into one row, a provenance-overclaim in a paraphrase record. All five of the
+§16.27-session findings were real, none was a semantics guess.
+
+**The rule:** a review channel that reads files can tell you what a file says with high
+reliability; it cannot reliably tell you what code *does* at runtime without running it. Don't
+average these into one confidence number — sort findings by claim type first. A finding of the
+first kind ("this text asserts X, and Y elsewhere contradicts X") deserves fixing on sight. A
+finding of the second kind ("the compiler will do X") deserves a build before either action or
+dismissal. Treating both alike either drowns real findings in false ones or promotes a compiler
+guess to the same trust level as a grep.
