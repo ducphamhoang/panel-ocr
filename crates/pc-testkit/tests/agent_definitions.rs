@@ -477,9 +477,23 @@ fn claude_md_discloses_the_bash_limitation() {
          travel together so a reader can see the limit is checked rather than merely asserted."
     );
 
-    let discloses_bash_writes = text.lines().any(|line| {
-        line.contains("Bash") && (line.contains("shell write") || line.contains("can write"))
-    });
+    // Whitespace-normalised, NOT per-line. The first version of this check required `Bash` and a
+    // write-permission phrase on one physical line, and a later rewrap of the prose split
+    // "can write" across the line break and turned it red — §16.26 item 8's hazard (line breaks in
+    // a hand-wrapped file are semantic) recurring in a check written to guard prose. Any per-line
+    // predicate over hand-wrapped text is fragile by construction; normalise first.
+    // Strip the blockquote marker per line BEFORE flattening. Leaving it in inserts a `>` token
+    // between the words either side of a line break, so `shell writes` + `are prevented ...` never
+    // matches — the disclosure lives inside a `>` block. Found by this test failing on correct text.
+    let flattened = text
+        .lines()
+        .map(|line| line.trim_start().trim_start_matches('>').trim_start())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let flattened = flattened.split_whitespace().collect::<Vec<_>>().join(" ");
+    let discloses_bash_writes = flattened.contains("Bash")
+        && (flattened.contains("shell writes are prevented by instruction alone")
+            || flattened.contains("can write via"));
     assert!(
         discloses_bash_writes,
         "CLAUDE.md's Roles section no longer states that the read-only agents can still write via \

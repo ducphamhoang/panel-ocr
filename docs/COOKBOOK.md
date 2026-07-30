@@ -270,6 +270,38 @@ deliberate, documented state — but never count them as coverage.
 
 ---
 
+### 6a. A falsification probe that cannot reach its target reports success
+
+Worse than no falsification, because it produces the *evidence* of one. Three instances in a
+single edit, all the same underlying cause — **a hand-wrapped document, addressed as if it were
+flat text**:
+
+1. A test required `Bash` and a write-permission phrase **on one physical line** of `CLAUDE.md`.
+   Rewrapping a paragraph split `can write` across the break and turned it red. §16.26 item 8's
+   hazard — line breaks in a hand-wrapped file are semantic — landing in a check written to guard
+   prose.
+2. The fix flattened the file with `split_whitespace().join(" ")`, which **keeps the blockquote
+   `>` markers as tokens**, so flattening inserted `>` between the words either side of every
+   break. The phrase still never matched. The check now failed on *correct* text.
+3. The probe meant to prove the fixed test could fail ran `text.replace("shell writes are
+   prevented by instruction alone", "[x]")` on the **raw** file, where that phrase is split across
+   lines with `> ` between. It matched nothing, removed nothing, and the test passed — which I
+   briefly read as "the fix works".
+
+Instance 3 is the dangerous one. A probe that silently no-ops is indistinguishable from a probe
+that ran and found the property intact, and it *confirms* whatever you hoped.
+
+- **A falsification must be shown to have changed something.** Assert the mutation landed —
+  diff it, checksum it, or print the removed span — before believing the result. "The test still
+  passed after I broke it" is only evidence if you know you broke it.
+- **Prefer a mutation that cannot fail to apply.** Deleting a whole block, or renaming a single
+  token that appears verbatim (`Bash` → `Shell`), beats editing a sentence that might be wrapped.
+  Both replacements worked here; the phrase-level one did not.
+- **Never write a per-line predicate over hand-wrapped prose.** Normalise first, and strip
+  markup markers (`>`, `#`, list bullets) before joining — not just whitespace.
+
+---
+
 ## 7. Never accept a produced output as its own expected value
 
 Accepting a snapshot declares *"whatever the code emitted is the truth."* If the code was

@@ -5,18 +5,28 @@ unless the user explicitly overrides it for a given task.
 
 ## Roles
 
-Four of these roles are **defined in `.claude/agents/`**, so use those agent types
-rather than a generic subagent with a hand-written role preamble. The reason is not
-convenience: a role's prohibitions live in frontmatter the harness reads, where before
-they were only sentences in a prompt. `fresh-reader`, `architect` and
-`fable-adjudicator` list no `Edit`/`Write`/`NotebookEdit`, so **those three tools** are
-unavailable to them whatever they decide; and `model` is part of the definition too, so
-a review can no longer silently run on the wrong tier because a spawn forgot to pass
-one.
+Four of these roles have definitions in `.claude/agents/`. The *intent* is that a role's
+prohibitions live in frontmatter the harness reads, instead of being sentences in a prompt
+that an agent can ignore.
 
-**Both caveats below are load-bearing — read them before relying on any of that.** The
-first says the mechanism has never been observed working; the second says what
-"read-only" does and does not cover. Neither is a footnote.
+**Status first, because it changes how to read everything below: that mechanism has never
+been observed working.** No agent has yet been spawned from any of these definitions, and
+the one attempt failed (Caveat 1). So treat every statement about what a role "cannot" do
+as **what the definition asks for, not as something measured**, and keep stating the
+prohibition in the brief as well.
+
+What *is* established, and gated by `crates/pc-testkit/tests/agent_definitions.rs`: the
+four files parse as YAML, their names match their filenames, and their `tools` and `model`
+fields hold the documented values. Necessary, not sufficient — none of that shows the
+harness reads them.
+
+If the definitions do load, then `fresh-reader`, `architect` and `fable-adjudicator` list
+no `Edit`/`Write`/`NotebookEdit`, so the harness would withhold those three tools whatever
+the agent decided; and `model` being part of the definition would stop a review silently
+running on the wrong tier because a spawn forgot to pass one. Caveat 2 covers what
+"read-only" would still not cover even then.
+
+Both caveats are load-bearing. Neither is a footnote.
 
 > **CAVEAT 1, MEASURED 2026-07-30: the definitions are NOT hot-reloaded.** Spawning
 > `rust-engineer` in the same session that created the files failed with *"Agent type
@@ -28,11 +38,16 @@ first says the mechanism has never been observed working; the second says what
 > "the harness enforces the prohibition" as the intended design rather than an
 > established fact, and keep stating the prohibition in the brief as well.
 >
-> **CAVEAT 2: "read-only" names three withheld tools — it does NOT mean the agent
-> cannot write.** All three read-only agents carry `Bash`, so a determined one can write
-> via `>`, `sed -i`, or `git commit`. **Do not describe them as unable to edit;** the
-> accurate statement is that `Edit`/`Write`/`NotebookEdit` are unavailable and shell
-> writes are prevented by instruction alone.
+> **CAVEAT 2: "read-only" names three tools a definition withholds — it does NOT mean the
+> agent cannot write.** All three read-only agents carry `Bash`, so a determined one can
+> write via `>`, `sed -i`, or `git commit`. **Do not describe them as unable to edit;** the
+> accurate statement is that their definitions withhold `Edit`/`Write`/`NotebookEdit` —
+> which the harness would honour if it reads them at all, per Caveat 1 — while shell writes
+> are prevented by instruction alone, in every case.
+>
+> Note the asymmetry, because it decides how much Caveat 1 costs you: the tool restriction
+> depends on the unverified loading, but the shell-write gap does **not**. That half is
+> instruction-only whether or not the definitions ever load.
 >
 > Keeping `Bash` was a deliberate decision (maintainer, 2026-07-30). Every high-value
 > finding these reviewers produced came from *running* something — a constructed probe
