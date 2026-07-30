@@ -84,3 +84,35 @@ If these fixtures are ever refreshed from a newer upstream commit, update the co
 hash, date, and version in the table above in the same change, and re-run
 `cargo xtask calibrate-goldens` (task F2) so `docs/GOLDEN_CALIBRATION.md` still
 describes the files actually present.
+
+---
+
+## `oracle_pages/` — Pepper&Carrot (F1 oracle candidate pages, §16.24 item 17)
+
+These three files are **not** from PanelCleaner. They are the real manga-style pages
+the F1 recording run (task #12/#13) compares our detector output against upstream's,
+per §7.2's "one or two full manga pages the maintainer supplies, license-clean" and
+§16.24 item 17's ratification.
+
+| | |
+|---|---|
+| Work | *Pepper&Carrot*, episode 1, "Potion of Flight", Japanese translation |
+| Author | David Revoy and the Pepper&Carrot translation contributors |
+| Source | https://www.peppercarrot.com/0_sources/ep01_Potion-of-Flight/low-res/ |
+| License | **CC-BY 4.0** — redistribution permitted with attribution |
+| Retrieved | 2026-07-30 |
+| Modified | No — byte-for-byte as served |
+
+| Vendored file | Size | sha256 | Status |
+|---|---|---|---|
+| `oracle_pages/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg` | 441,914 B | `3bef9922e09cea66ab12271da0070025768ae9bc5d286f41ced617468131267e` | **P01 — the ratified oracle page** (§16.24 item 17; exact hash match) |
+| `oracle_pages/ja_Pepper-and-Carrot_by-David-Revoy_E01P02.jpg` | 448,475 B | `d7ba528d2ab96c7fb0723197d2349d2981a0b0dd853b16179e1a06cbdd5064d3` | P02 — rejected sibling (item 17(a)); size matches the recorded figure, no sha256 was ever ratified for it |
+| `oracle_pages/ja_Pepper-and-Carrot_by-David-Revoy_E01P03.jpg` | 302,541 B | `c62ff81bdac3c979959c55d4cd4dea01659a35097d7cc5723c57c54531694e23` | P03 — rejected sibling (item 17(a)); size matches the recorded figure, no sha256 was ever ratified for it |
+
+P02/P03 are vendored (not just P01) because §16.27 item 1(f)'s `DbnetScattered` census is
+measured over all three pages, not P01 alone (see `docs/PIPELINE_SPEC_V1.md` §16.27 item 1(f)
+and item 3). P01 is the only one of the three with a sha256 ratified anywhere in the spec;
+P02/P03's identity rests on the (weaker) size match recorded at item 17(a) — this table does
+not claim their sha256 values are ratified, only that they are what this session fetched and
+hashed on 2026-07-30, recorded here per this file's own convention of hash-verifiable
+vendored fixtures. P04 (a 1200x24 footer strip, not a page — item 17(a)) is not vendored.
