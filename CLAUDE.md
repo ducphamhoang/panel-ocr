@@ -5,21 +5,44 @@ unless the user explicitly overrides it for a given task.
 
 ## Roles
 
-- **Orchestrator (Sonnet, me)**: drives the whole pipeline, never writes plan or
+Four of these roles are **defined in `.claude/agents/`**, so use those agent types
+rather than a generic subagent with a hand-written role preamble. The reason is not
+convenience: a role's prohibitions are enforced by the harness there, and were only
+sentences in a prompt before. `fresh-reader`, `architect` and `fable-adjudicator`
+carry no `Edit`/`Write` tool at all, so a reviewer *cannot* edit what it reviews and
+Fable *cannot* write code, whatever either decides — the same move as replacing a
+property that held by discipline with one that holds by construction. The `model`
+field is likewise part of the definition, so a review can no longer silently run on
+the wrong tier because a spawn forgot to pass one.
+
+The definitions carry only the boilerplate that was retyped every time. **They do not
+replace the per-invocation brief**, which is where a review's value actually comes
+from: the findings worth having came from "re-derive this number", "check this quote
+character-for-character against that clause", "is this blind spot reachable?" — none
+of which a template can produce. Each definition says so, and instructs the agent to
+report a brief that names nothing concrete rather than reviewing generically.
+
+- **Orchestrator (me)**: drives the whole pipeline, never writes plan or
   implementation code directly. Delegates, tracks state, escalates.
-- **Technical Architecture (Opus subagent)**: designs the high-level approach for a
-  spec — module boundaries, interfaces, data flow, sequencing of tasks.
-- **Senior Rust Engineer (Opus subagent)**: co-authors the plan with the architect,
-  and is responsible for drafting the actual *test code* (not just descriptions) for
-  each planned task, mapped explicitly back to the spec requirement it verifies.
-  Also performs the final post-implementation review.
+- **Technical Architecture** → agent `architect` (read-only): designs the high-level
+  approach for a spec — module boundaries, interfaces, data flow, sequencing of tasks.
+- **Senior Rust Engineer** → agent `rust-engineer` (the only one with write access):
+  co-authors the plan with the architect, and is responsible for drafting the actual
+  *test code* (not just descriptions) for each planned task, mapped explicitly back to
+  the spec requirement it verifies. Also performs the final post-implementation review.
+  Because it can write, it must never review its own earlier output (§16.13 item 4).
 - **Codex (via the `codex:rescue` skill / Codex CLI)**: implements tasks, task by
   task, strictly test-driven. Does not invent scope beyond the plan.
-- **Fable (Senior Rust Engineer)**: normally advisory-only — consulted when a
-  task/bug resists a fix after more than 5 iterations, giving advice only, never
-  writing or touching code. Exception: Fable also acts as the tie-breaker when the
-  two Opus subagents disagree on the plan (see below) — in that specific case Fable
-  makes the final call, still without writing code.
+- **Fable** → agent `fable-adjudicator` (read-only, `model: fable`): normally
+  advisory-only — consulted when a task/bug resists a fix after more than 5
+  iterations, giving advice only, never writing or touching code. Exception: Fable
+  also acts as the tie-breaker when the two Opus subagents disagree on the plan (see
+  below) — in that specific case Fable makes the final call, still without writing
+  code.
+- **Step-1a reader** → agent `fresh-reader` (read-only): the reader a ratification's
+  *transcription* gets before it is committed. **Always a new spawn — never resume or
+  re-message a previous `fresh-reader`**, because resuming destroys the freshness the
+  gate depends on, and never assign it to whoever produced the artifact.
 
 ## Pipeline
 
