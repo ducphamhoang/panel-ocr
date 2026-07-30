@@ -45,6 +45,9 @@ enum Command {
         /// Model path used by the detector recording preflight, e.g. `onnx:/path/model.onnx`.
         #[arg(long, value_name = "SPEC")]
         detector: Option<String>,
+        /// Pinned PanelCleaner checkout used by the detector oracle recorder.
+        #[arg(long)]
+        detector_upstream: Option<PathBuf>,
         /// Verified ONNX model path for the dependency-free `model-signature` group.
         #[arg(long)]
         model_signature: Option<PathBuf>,
@@ -67,6 +70,7 @@ fn main() -> Result<()> {
             only,
             python,
             detector,
+            detector_upstream,
             model_signature,
             force,
         } => {
@@ -84,6 +88,7 @@ fn main() -> Result<()> {
                 &groups,
                 python.as_deref(),
                 detector.as_deref(),
+                detector_upstream.as_deref(),
                 model_signature.as_deref(),
                 force,
             )?;

@@ -3,15 +3,23 @@
 //! Each recordable group is independent and independently skippable, so a partially
 //! capable environment records what it can and reports exactly what it could not.
 
-use crate::env::{detector_backend_status, PythonTooling, NO_PYTHON_HELP};
+use crate::env::{detector_backend_status, DetectorStatus, PythonTooling, NO_PYTHON_HELP};
 use crate::model_signature;
 use crate::paths;
 use anyhow::{bail, Context, Result};
-use pc_testkit::provenance::{ArtifactRecord, GroupProvenance};
+use pc_testkit::provenance::{
+    ArtifactRecord, DetectorPins, GroupProvenance, OursPins, UpstreamPins,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+const DETECTOR_STEM: &str = "ja_Pepper-and-Carrot_by-David-Revoy_E01P01";
+const DETECTOR_PAGE_SOURCE: &str = "oracle_pages/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg";
+const DETECTOR_EXECUTION_PROVIDER: &str = "cpu";
+const DETECTOR_PAGE_RECORDED: &str =
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Group {
@@ -67,12 +75,14 @@ pub fn run(
     groups: &[Group],
     python: Option<&Path>,
     detector: Option<&str>,
+    detector_upstream: Option<&Path>,
     model_signature_path: Option<&Path>,
     force: bool,
 ) -> Result<Vec<(Group, Outcome)>> {
-    let needs_python = groups
-        .iter()
-        .any(|group| matches!(group, Group::Nlm | Group::InterArea | Group::FindEdges));
+    let needs_python = groups.iter().any(|group| {
+        matches!(group, Group::Nlm | Group::InterArea | Group::FindEdges)
+            || (cfg!(feature = "onnx") && matches!(group, Group::Detector))
+    });
     let tooling = if needs_python {
         let tooling = PythonTooling::discover(python)?;
         match &tooling {
@@ -106,9 +116,19 @@ pub fn run(
                     reason: NO_PYTHON_HELP.into(),
                 }),
             },
-            Group::Detector => Ok(Outcome::Skipped {
-                reason: detector_backend_status(detector)?.explain(),
-            }),
+            Group::Detector => match detector_backend_status(detector)? {
+                DetectorStatus::Ready { model_path } => match &tooling {
+                    Some(tooling) => {
+                        record_detector_dispatch(tooling, detector_upstream, &model_path, force)
+                    }
+                    None => Ok(Outcome::Skipped {
+                        reason: NO_PYTHON_HELP.into(),
+                    }),
+                },
+                status => Ok(Outcome::Skipped {
+                    reason: status.explain(),
+                }),
+            },
             Group::ModelSignature => model_signature::record(model_signature_path, force),
         };
         let outcome = match attempt {
@@ -415,6 +435,389 @@ fn verify_find_edges(tooling: &PythonTooling) -> Result<Outcome> {
     })
 }
 
+// ------------------------------------------------------------- group: detector
+
+/// The detector group has one fixed ratified page for v1. The source remains under the
+/// upstream fixture tree until the later atomic fixture commit moves the byte-identical page
+/// into this group's directory (§16.29 item 2).
+pub fn detector_plan(out_dir: &Path, stem: &str) -> std::collections::BTreeSet<PathBuf> {
+    [
+        out_dir.join(format!("{stem}_detector_mask.png")),
+        out_dir.join(format!("{stem}_detector_blocks.json")),
+        out_dir.join(format!("{stem}_base.png")),
+        out_dir.join(format!("{stem}_raw_mask.png")),
+        out_dir.join(format!("{stem}#raw.json")),
+        out_dir.join(format!("{stem}_upstream_oracle.json")),
+        out_dir.join(format!("{stem}_upstream_group_output_equality.json")),
+        out_dir.join(pc_testkit::provenance::PROVENANCE_FILE_NAME),
+        // §16.29 item 2: the committed oracle page itself, copied (not just referenced) into
+        // the recorded group so `detector.input_page` resolves to a real file here.
+        out_dir.join(
+            Path::new(DETECTOR_PAGE_RECORDED)
+                .file_name()
+                .expect("DETECTOR_PAGE_RECORDED names a file"),
+        ),
+    ]
+    .into_iter()
+    .collect()
+}
+
+fn record_detector_dispatch(
+    tooling: &PythonTooling,
+    upstream_checkout: Option<&Path>,
+    model: &Path,
+    force: bool,
+) -> Result<Outcome> {
+    #[cfg(feature = "onnx")]
+    {
+        record_detector(tooling, upstream_checkout, model, force)
+    }
+    #[cfg(not(feature = "onnx"))]
+    {
+        let _ = (tooling, upstream_checkout, model, force);
+        bail!("detector recording requires xtask's `onnx` feature")
+    }
+}
+
+/// Verify the model before invoking the supplied inference closure. Keeping this seam pure in
+/// its ordering makes the dangerous failure mode directly testable without ONNX or a model.
+fn with_verified_model<T>(model: &Path, inference: impl FnOnce() -> Result<T>) -> Result<T> {
+    pc_models::verify_sha256(model, pc_models::COMIC_TEXT_DETECTOR.sha256)
+        .with_context(|| format!("verifying detector model {}", model.display()))?;
+    inference()
+}
+
+fn ensure_cpu_execution_provider(execution_provider: &str) -> Result<()> {
+    if execution_provider != DETECTOR_EXECUTION_PROVIDER {
+        bail!(
+            "detector recording refuses execution provider `{execution_provider}`; only `cpu` is ratified (§16.22 item 5(b))"
+        );
+    }
+    Ok(())
+}
+
+/// Build the canonical detector provenance from a fully normalised manifest. This function does
+/// no I/O, so its shape and validator controls can run in the default CI tier without ONNX.
+fn provenance_for(manifest: &Value) -> Result<GroupProvenance> {
+    let records = manifest
+        .get("records")
+        .and_then(Value::as_array)
+        .context("detector manifest has no records array")?
+        .iter()
+        .map(|record| {
+            Ok(ArtifactRecord {
+                name: manifest_string(record, "name")?.into(),
+                output: manifest_string(record, "output")?.into(),
+                output_sha256: record
+                    .get("output_sha256")
+                    .or_else(|| record.get("sha256"))
+                    .and_then(Value::as_str)
+                    .context("detector record has no sha256")?
+                    .into(),
+                committed: record
+                    .get("committed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                source: None,
+                source_sha256: None,
+                params: record
+                    .get("params")
+                    .and_then(Value::as_object)
+                    .map(|object| object.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let ours: OursPins = serde_json::from_value(
+        manifest
+            .get("ours")
+            .cloned()
+            .context("detector manifest has no ours pins")?,
+    )
+    .context("malformed detector ours pins")?;
+    let upstream: UpstreamPins = serde_json::from_value(
+        manifest
+            .get("upstream")
+            .cloned()
+            .context("detector manifest has no upstream pins")?,
+    )
+    .context("malformed detector upstream pins")?;
+
+    Ok(GroupProvenance {
+        schema_version: pc_testkit::provenance::PROVENANCE_SCHEMA_VERSION,
+        group: "detector".into(),
+        tool: manifest_string(manifest, "tool")?.into(),
+        command_line: manifest_string(manifest, "xtask_command_line")?.into(),
+        tool_versions: manifest_versions(manifest),
+        records,
+        detector: Some(DetectorPins {
+            input_page: manifest_string(manifest, "input_page")?.into(),
+            input_page_sha256: manifest_string(manifest, "input_page_sha256")?.into(),
+            model: manifest_string(manifest, "model")?.into(),
+            model_digest: manifest_string(manifest, "model_digest")?.into(),
+            ours,
+            upstream,
+        }),
+        diagnostics: manifest
+            .get("diagnostics")
+            .and_then(Value::as_object)
+            .map(|object| object.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default(),
+    })
+}
+
+#[cfg(feature = "onnx")]
+fn record_detector(
+    tooling: &PythonTooling,
+    upstream_checkout: Option<&Path>,
+    model: &Path,
+    force: bool,
+) -> Result<Outcome> {
+    let out_dir = paths::recorded_root().join("detector");
+    let planned = detector_plan(&out_dir, DETECTOR_STEM);
+    if !force
+        && planned
+            .iter()
+            .filter(|path| {
+                path.file_name().and_then(|name| name.to_str()) != Some("PROVENANCE.json")
+            })
+            .all(|path| path.is_file())
+        && provenance_is_current("detector")
+    {
+        return Ok(Outcome::Recorded {
+            detail: format!(
+                "{} detector artifacts and a current-schema PROVENANCE.json already present (use --force to re-record)",
+                planned.len() - 1
+            ),
+        });
+    }
+
+    let Some(upstream_checkout) = upstream_checkout else {
+        return Ok(Outcome::Skipped {
+            reason: "detector recording needs --detector-upstream PATH pointing at the pinned PanelCleaner checkout; no fixture was emitted.".into(),
+        });
+    };
+    let page = paths::upstream_root().join(DETECTOR_PAGE_SOURCE);
+    if !page.is_file() {
+        bail!("detector input page is missing: {}", page.display());
+    }
+    std::fs::create_dir_all(&out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
+
+    // §16.29 item 2: `detector.input_page` must resolve to a file inside this recorded group
+    // (the shipped provenance validator forces this, and the frozen whole-tree walker later
+    // hashes whatever `input_page` names), so the page is copied here, byte-preserving, rather
+    // than only referenced by path. This is a plain file copy, not a git operation — nothing is
+    // staged or committed by this recorder; the eventual `git add` of this directory, including
+    // this copy, is the separate atomic-commit step §16.24 item 6 gates.
+    let recorded_page = out_dir.join(
+        Path::new(DETECTOR_PAGE_RECORDED)
+            .file_name()
+            .expect("DETECTOR_PAGE_RECORDED names a file"),
+    );
+    std::fs::copy(&page, &recorded_page)
+        .with_context(|| format!("copying {} to {}", page.display(), recorded_page.display()))?;
+
+    // §16.24 item 14: this is the first operation that can lead to either detector running.
+    // The upstream script repeats the same check before importing/invoking cv2.dnn.
+    with_verified_model(model, || {
+        ensure_cpu_execution_provider(DETECTOR_EXECUTION_PROVIDER)?;
+
+        let config = pc_config::TextDetectorConfig::default();
+        let detector = pc_detect::onnx::OnnxDetector::from_path_with_config(model, &config)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let decoded = image::open(&page)
+            .with_context(|| format!("decoding {}", page.display()))?
+            .to_rgb8();
+        let decoded_rgb_digest = sha256_bytes(decoded.as_raw());
+        let (new_width, new_height, scale) =
+            pc_detect::calculate_new_size_and_scale(decoded.width(), decoded.height(), 1000, 4000);
+        let base = pc_detect::resize_area(&decoded, new_width, new_height);
+
+        // Record the detector boundary directly, then prove the serialized replay consumer
+        // sees the same pre-filter block list before using it for the whole-page run.
+        let direct = pc_detect::TextDetector::detect(&detector, &base)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        pc_detect::write_replay_fixture(&out_dir, DETECTOR_STEM, &direct.mask, &direct.blocks);
+        let replay = pc_detect::ReplayDetector::new(&out_dir, DETECTOR_STEM);
+        let replayed = pc_detect::TextDetector::detect(&replay, &base)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if direct.blocks != replayed.blocks {
+            bail!("direct ONNX and ReplayDetector pre-filter block lists differ");
+        }
+
+        let input = pc_detect::DetectInput {
+            schema_version: pc_core::SCHEMA_VERSION,
+            source: pc_core::ImageHandle::from_path(&page),
+            original_path: PathBuf::from(DETECTOR_PAGE_RECORDED),
+            target_height_lower: 1000,
+            target_height_upper: 4000,
+            base_image_dest: Some(out_dir.join(format!("{DETECTOR_STEM}_base.png"))),
+            raw_mask_dest: Some(out_dir.join(format!("{DETECTOR_STEM}_raw_mask.png"))),
+            min_mask_coverage: pc_detect::DEFAULT_MIN_MASK_COVERAGE,
+            config,
+        };
+        let output =
+            pc_detect::run(input, &replay).map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if output.page.scale != 1.0 || scale != 1.0 {
+            bail!(
+                "detector recording requires scale == 1.0 on both sides; ours={} upstream-input={scale}",
+                output.page.scale
+            );
+        }
+        let mut page_json = output.page.clone();
+        let residue = pc_testkit::paths::relativize_page_data_raw(
+            &mut page_json,
+            &pc_testkit::paths::fixtures_root(),
+        );
+        if !residue.is_empty() {
+            bail!("PageDataRaw contains paths outside fixtures root: {residue:?}");
+        }
+        let raw_path = out_dir.join(format!("{DETECTOR_STEM}#raw.json"));
+        let mut raw_bytes = serde_json::to_vec_pretty(&page_json)?;
+        raw_bytes.push(b'\n');
+        std::fs::write(&raw_path, raw_bytes)
+            .with_context(|| format!("writing {}", raw_path.display()))?;
+
+        let mut upstream_manifest = run_script(
+            {
+                let decoded_page =
+                    paths::scratch_dir()?.join(format!("{DETECTOR_STEM}_decoded_rgb.png"));
+                image::DynamicImage::ImageRgb8(decoded.clone())
+                    .save(&decoded_page)
+                    .with_context(|| format!("writing {}", decoded_page.display()))?;
+                Command::new(&tooling.interpreter)
+                    .arg(paths::script("record_detector_oracle.py"))
+                    .arg(upstream_checkout)
+                    .arg(model)
+                    .arg(&decoded_page)
+                    .arg(&out_dir)
+                    .arg(DETECTOR_STEM)
+            },
+            "record_detector_oracle.py",
+        )?;
+        let oracle_path = out_dir.join(format!("{DETECTOR_STEM}_upstream_oracle.json"));
+        let oracle: Value = serde_json::from_slice(
+            &std::fs::read(&oracle_path)
+                .with_context(|| format!("reading {}", oracle_path.display()))?,
+        )
+        .context("parsing upstream detector oracle")?;
+        if oracle.get("scale").and_then(Value::as_f64) != Some(1.0) {
+            bail!("upstream detector oracle scale is not 1.0");
+        }
+        let actual_page_digest = pc_models::sha256_hex(&page)?;
+        let script_page_digest = pc_models::sha256_hex(
+            &paths::scratch_dir()?.join(format!("{DETECTOR_STEM}_decoded_rgb.png")),
+        )?;
+        if manifest_string(&upstream_manifest, "model_digest")?
+            != pc_models::COMIC_TEXT_DETECTOR.sha256
+            || manifest_string(&upstream_manifest, "input_page_sha256")? != script_page_digest
+        {
+            bail!("upstream manifest identity does not match the verified model/decoded page");
+        }
+        if manifest_string(&upstream_manifest["upstream"], "decoded_rgb_digest")?
+            != decoded_rgb_digest
+        {
+            bail!("ours and upstream decoded RGB digests differ");
+        }
+
+        let model_digest = pc_models::COMIC_TEXT_DETECTOR.sha256.to_owned();
+        let panel_ocr_commit = current_commit()?;
+        let mut records = Vec::new();
+        for (name, record_name) in [
+            (
+                format!("{DETECTOR_STEM}_detector_mask.png"),
+                "detector_mask",
+            ),
+            (
+                format!("{DETECTOR_STEM}_detector_blocks.json"),
+                "detector_blocks",
+            ),
+            (format!("{DETECTOR_STEM}_base.png"), "base"),
+            (format!("{DETECTOR_STEM}_raw_mask.png"), "raw_mask"),
+            (format!("{DETECTOR_STEM}#raw.json"), "raw_page"),
+            (
+                format!("{DETECTOR_STEM}_upstream_oracle.json"),
+                "upstream_oracle",
+            ),
+            (
+                format!("{DETECTOR_STEM}_upstream_group_output_equality.json"),
+                "group_output_equality",
+            ),
+        ] {
+            let path = out_dir.join(&name);
+            records.push(serde_json::json!({
+                "name": record_name,
+                "output": paths::display_relative(&path),
+                "output_sha256": pc_models::sha256_hex(&path)?,
+                "committed": true,
+            }));
+        }
+        let ours = serde_json::json!({
+            "backend": "ort",
+            "decoded_rgb_digest": decoded_rgb_digest,
+            "decoded_from": "input_page",
+            "execution_provider": DETECTOR_EXECUTION_PROVIDER,
+            "intra_threads": 0,
+            "inter_threads": 0,
+            "pad_value": pc_detect::onnx::PAD_VALUE,
+            "panel_ocr_commit": panel_ocr_commit,
+            "profile_non_default": {},
+        });
+        upstream_manifest["records"] = Value::Array(records);
+        upstream_manifest["input_page"] = Value::String(DETECTOR_PAGE_RECORDED.into());
+        upstream_manifest["model"] = Value::String(pc_models::COMIC_TEXT_DETECTOR.file_name.into());
+        upstream_manifest["model_digest"] = Value::String(model_digest);
+        upstream_manifest["input_page_sha256"] = Value::String(actual_page_digest);
+        upstream_manifest["ours"] = ours;
+        upstream_manifest["xtask_command_line"] =
+            Value::String("cargo xtask record-fixtures --only detector".into());
+        let provenance = provenance_for(&upstream_manifest)?;
+        let violations = pc_testkit::provenance::validate("detector", &provenance);
+        if !violations.is_empty() {
+            bail!("detector provenance failed validation: {violations:?}");
+        }
+        write_provenance(
+            &out_dir.join(pc_testkit::provenance::PROVENANCE_FILE_NAME),
+            &provenance,
+        )?;
+
+        Ok(Outcome::Recorded {
+            detail: format!(
+                "{} detector artifacts in {}",
+                records_len(&provenance),
+                paths::display_relative(&out_dir)
+            ),
+        })
+    })
+}
+
+fn records_len(provenance: &GroupProvenance) -> usize {
+    provenance.records.len()
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn current_commit() -> Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .context("reading panel-ocr commit")?;
+    if !output.status.success() {
+        bail!("git rev-parse HEAD failed: {}", output.status);
+    }
+    Ok(String::from_utf8(output.stdout)
+        .context("git rev-parse HEAD returned non-UTF-8")?
+        .trim()
+        .to_owned())
+}
+
 // ----------------------------------------------------------------------- utils
 
 fn run_script(command: &mut Command, label: &str) -> Result<serde_json::Value> {
@@ -456,7 +859,7 @@ fn manifest_params(value: &Value, keys: &[&str]) -> BTreeMap<String, Value> {
 }
 
 fn manifest_versions(value: &Value) -> BTreeMap<String, String> {
-    ["python", "opencv_version", "numpy_version"]
+    ["python", "opencv_version", "numpy_version", "torch_version"]
         .iter()
         .filter_map(|key| {
             manifest_string(value, key)
@@ -950,5 +1353,137 @@ mod provenance_is_current_falsification {
             "KNOWN GAP: a non-detector group may record NO tool versions at all and still read \
              as current"
         );
+    }
+}
+
+#[cfg(test)]
+mod detector_recording_tests {
+    use super::{detector_plan, provenance_for, with_verified_model, DETECTOR_STEM};
+    use pc_testkit::provenance::{Backend, Violation};
+    use serde_json::json;
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const COMMIT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn manifest() -> serde_json::Value {
+        json!({
+            "tool": "PanelCleaner detector oracle recorder",
+            "xtask_command_line": "cargo xtask record-fixtures --only detector",
+            "python": "3.12.3",
+            "opencv_version": "5.0.0",
+            "numpy_version": "2.5.1",
+            "torch_version": "2.13.0+cpu",
+            "input_page": "tests/fixtures/recorded/detector/page.jpg",
+            "input_page_sha256": DIGEST,
+            "model": "comictextdetector.pt.onnx",
+            "model_digest": DIGEST,
+            "records": [{
+                "name": "raw_page",
+                "output": "tests/fixtures/recorded/detector/page#raw.json",
+                "output_sha256": DIGEST,
+                "committed": true
+            }],
+            "ours": {
+                "backend": "ort",
+                "decoded_rgb_digest": DIGEST,
+                "decoded_from": "input_page",
+                "execution_provider": "cpu",
+                "intra_threads": 0,
+                "inter_threads": 0,
+                "pad_value": 0,
+                "panel_ocr_commit": COMMIT,
+                "profile_non_default": {}
+            },
+            "upstream": {
+                "backend": "cv2_dnn",
+                "decoded_rgb_digest": DIGEST,
+                "decoded_from": "input_page",
+                "version": "2.11.11",
+                "commit": COMMIT,
+                "command_line": "record_detector_oracle.py ...",
+                "profile_non_default": {},
+                "dependency_versions": {"opencv": "5.0.0"}
+            },
+            "diagnostics": {}
+        })
+    }
+
+    #[test]
+    fn plan_is_the_literal_detector_artifact_set() {
+        let root = PathBuf::from("/tmp/detector-recording");
+        let expected = BTreeSet::from([
+            root.join("page_detector_mask.png"),
+            root.join("page_detector_blocks.json"),
+            root.join("page_base.png"),
+            root.join("page_raw_mask.png"),
+            root.join("page#raw.json"),
+            root.join("page_upstream_oracle.json"),
+            root.join("page_upstream_group_output_equality.json"),
+            root.join("PROVENANCE.json"),
+            // §16.29 item 2: the committed oracle page itself, copied into the group.
+            root.join("ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg"),
+        ]);
+        assert_eq!(detector_plan(&root, "page"), expected);
+        assert_eq!(DETECTOR_STEM, "ja_Pepper-and-Carrot_by-David-Revoy_E01P01");
+    }
+
+    #[test]
+    fn provenance_for_is_validated_without_filesystem_or_model() {
+        let provenance = provenance_for(&manifest()).expect("hand manifest should parse");
+        assert!(pc_testkit::provenance::validate("detector", &provenance).is_empty());
+    }
+
+    #[test]
+    fn provenance_negative_controls_name_the_specific_violation() {
+        let mut wrong_backend = manifest();
+        wrong_backend["ours"]["backend"] = json!("cv2_dnn");
+        let violations = pc_testkit::provenance::validate(
+            "detector",
+            &provenance_for(&wrong_backend).expect("manifest shape remains valid"),
+        );
+        assert!(violations.contains(&Violation::BackendContradictsSide {
+            at: "detector.ours".into(),
+            expected: Backend::Ort,
+            found: Backend::Cv2Dnn,
+        }));
+
+        let mut non_cpu = manifest();
+        non_cpu["ours"]["execution_provider"] = json!("cuda");
+        let violations = pc_testkit::provenance::validate(
+            "detector",
+            &provenance_for(&non_cpu).expect("manifest shape remains valid"),
+        );
+        assert!(violations.contains(&Violation::ExecutionProviderNotCpu {
+            found: "cuda".into(),
+        }));
+
+        let mut malformed_digest = manifest();
+        malformed_digest["model_digest"] = json!("not-a-digest");
+        let violations = pc_testkit::provenance::validate(
+            "detector",
+            &provenance_for(&malformed_digest).expect("manifest shape remains valid"),
+        );
+        assert!(violations.contains(&Violation::MalformedDigest {
+            at: "detector".into(),
+            field: "model_digest",
+            value: "not-a-digest".into(),
+        }));
+    }
+
+    #[test]
+    fn model_digest_failure_precedes_inference_closure() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let model = dir.path().join("wrong.onnx");
+        std::fs::write(&model, b"wrong model").expect("model bytes");
+        let inference_attempted = AtomicBool::new(false);
+        let result = with_verified_model(&model, || {
+            inference_attempted.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(!inference_attempted.load(Ordering::SeqCst));
     }
 }

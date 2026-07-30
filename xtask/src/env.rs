@@ -131,7 +131,14 @@ pub fn detector_backend_status(configured_detector: Option<&str>) -> Result<Dete
             model_source,
         });
     }
-    Ok(DetectorStatus::MangaPagesMissing)
+    let page = crate::paths::upstream_root()
+        .join("oracle_pages/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg");
+    if !page.is_file() {
+        return Ok(DetectorStatus::MangaPagesMissing);
+    }
+    Ok(DetectorStatus::Ready {
+        model_path: model_path.expect("checked above"),
+    })
 }
 
 pub(crate) fn parse_detector_spec(spec: &str) -> Result<PathBuf> {
@@ -152,6 +159,9 @@ pub enum DetectorStatus {
         model_source: Option<&'static str>,
     },
     MangaPagesMissing,
+    Ready {
+        model_path: PathBuf,
+    },
 }
 
 impl DetectorStatus {
@@ -173,6 +183,9 @@ impl DetectorStatus {
             } => format!("{MODEL_WEIGHTS_MISSING_EXPLANATION}\nNo model path was supplied."),
             Self::ModelWeightsMissing { .. } => MODEL_WEIGHTS_MISSING_EXPLANATION.into(),
             Self::MangaPagesMissing => MANGA_PAGES_MISSING_EXPLANATION.into(),
+            Self::Ready { model_path } => {
+                format!("detector recording is ready with {}", model_path.display())
+            }
         }
     }
 }
