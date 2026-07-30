@@ -753,6 +753,44 @@ config is linted, a schema validates, a spec section about spec sections is a sp
 
 ---
 
+## 14c. Never validate with a weaker parser than the real consumer
+
+Four agent definitions were written into `.claude/agents/`, whose whole point was that a role's
+prohibitions get enforced by the harness instead of by a sentence in a prompt. Before committing,
+they were "validated" with a hand-rolled check that split each frontmatter line on the first `":"`
+and confirmed four keys were present. It printed `OK` for all four.
+
+**Two of the four were invalid YAML and could not load.** `description: … Read-only: produces a
+design` and `description: Senior Rust Engineer. Two jobs: (1) …` — a bare `": "` inside an
+unquoted YAML plain scalar is a `ScannerError`, so those two definitions failed to parse and the
+prohibition they existed to enforce silently did not exist. The commit message asserted "all four
+frontmatter blocks parse". It was found by a stop-time review, not by the author.
+
+The error is not "I forgot to quote a string". The error is that **the checker was laxer than the
+consumer**, so its green meant "my regex found four keys", not "this parses". Any check laxer than
+the thing it stands in for reports false greens *by construction*, and a false green is worse than
+no check because it is trusted.
+
+- **A substitute check must be STRICTER than the real consumer, never laxer.** Stricter costs an
+  author one unnecessary quote. Laxer costs a shipped, silently-dead enforcement. When you cannot
+  use the real parser — here, no YAML crate in the workspace, and one is not worth adding for four
+  markdown files — pick a rule that over-rejects: *every frontmatter value must be double-quoted, or
+  contain no `": "` at all*. That admits fewer strings than YAML does, so passing it implies valid
+  YAML, which is the direction that cannot lie.
+- **Ask what your check would accept that the consumer rejects.** That set is your false-green
+  surface. If you cannot name it, you have not evaluated the check.
+- **This is the same failure as a grep narrower than the question**, which happened three separate
+  times in the same session: a `head -40` that hid the rest of a file, a case-sensitive verb scan
+  that missed lowercase `superseded`, and a `^#{2,3} 7.2` that concluded §7.2.1 "does not exist"
+  when it is a bold-text heading. Same shape every time — **a filter narrower than the question,
+  whose silence was read as an answer.** The parser case is the most dangerous of the four because
+  the narrow filter was wrapped in the word "validate".
+
+Generalised: **a validator is a claim about a consumer, and the claim has a direction.** Write it so
+that its failures are false alarms rather than false assurances.
+
+---
+
 ## 15. A supporting example can refute the claim it is cited for — check the sign
 
 §16.20 item 12 wrote that our geometry *"agrees closely and consistently with item 3(b)'s
