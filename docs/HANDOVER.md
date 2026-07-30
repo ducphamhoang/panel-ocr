@@ -7,8 +7,11 @@ belongs in `PIPELINE_SPEC_V1.md`, `COOKBOOK.md`, or `RULINGS.md` instead. If you
 
 ## Repo state
 
-- Branch `claude/codex-plugin-install-jxirxa`, everything **pushed**. Working tree clean apart from
-  this file and `docs/RULINGS.md` if they are not yet committed.
+- Branch `claude/codex-plugin-install-jxirxa`. `docs/RULINGS.md` landed in `bde477f`, already
+  pushed as of that commit. This file and `CLAUDE.md`'s agent-definition section were updated
+  again in the session that settled #26 (see Step 0) — check `git status` for what's still
+  uncommitted rather than trusting this bullet, since it goes stale the moment either changes
+  again.
 - Verification bar, actually run (not assumed): **837 default / 848 onnx**, 6 ignored per tier,
   `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean,
   `cargo fmt --all --check` clean.
@@ -21,16 +24,22 @@ belongs in `PIPELINE_SPEC_V1.md`, `COOKBOOK.md`, or `RULINGS.md` instead. If you
 
 ## Do this first
 
-**Step 0 — settle #26, ~10 minutes, it may delete work.** Spawn `fresh-reader` on a trivial read task
-and see whether the agent type exists. In the session that created the four definitions it did **not**
-(`Agent type 'rust-engineer' not found`, only built-ins listed), so they are not hot-reloaded and
-nobody has ever seen one run. If a fresh session also cannot spawn them, the honest response is to
-**delete** the agent-definition section of `CLAUDE.md` and probably the definitions too — seven
-commits describe a mechanism that never executes. Do not refine that section further before knowing.
+**Step 0 — DONE, this session.** Settled: spawned `fresh-reader` on a trivial read task from a fresh
+session, and it worked — the type resolved, the agent ran, and it returned real output. That reverses
+the open question this step names: the definitions are *not* hot-reloaded within a session (unchanged),
+but a fresh session *does* pick them up. `CLAUDE.md` is already updated with this result (Caveat 1 and
+the surrounding prose) — that is the permanent record now, not this file. Only `fresh-reader` was
+tested; `architect`, `rust-engineer` and `fable-adjudicator` were not separately confirmed. Still open,
+per `CLAUDE.md`: whether the harness additionally *honours* `tools`/`model` once it reads them — loading
+and enforcement are different questions, and only the first is settled.
 
-**Step 0.5 — read `docs/RULINGS.md` before transcribing anything from it.** Its header explains what
-it is and, more importantly, what it is not: an Orchestrator paraphrase, not a verbatim transcript. It
-partially closes the fidelity gap the first step-1a reader identified; it does not close it.
+**Step 0.5 — read `docs/RULINGS.md` before transcribing anything from it.** Done this session. Its
+header explains what it is and, more importantly, what it is not: an Orchestrator paraphrase, not a
+verbatim transcript. It partially closes the fidelity gap the first step-1a reader identified; it does
+not close it. A `fable-adjudicator` advisor pass checking the paraphrase for internal consistency
+against the spec/cookbook sections it cites is in progress as of this writing — not a re-derivation of
+the underlying engineering claims (the upstream oracle needed for that is gone, see below) and not
+Fable reviewing its own ruling from memory (a fresh spawn has none).
 
 ## Then the actual work
 
@@ -77,7 +86,9 @@ again.
 
 ## Open risks worth carrying
 
-- **#26 above.** The single largest unknown; it can invalidate a whole section of `CLAUDE.md`.
+- ~~**#26 above.**~~ Settled this session (see Step 0): hot-reload from a fresh session works. The
+  remaining open question — whether `tools`/`model` enforcement is honoured, not just loading — is
+  smaller in scope and is tracked in `CLAUDE.md` directly, not here.
 - **F-4 is a real spec conflict, not a porting bug.** §16.24 item 18(h)(ii)'s "`residual_full` must be
   zero" is **unsatisfiable on the ratified oracle page even with a perfect port**, because upstream's
   English-expansion loop mutates `blk.lines` after `adjust_bbox` and never updates `xyxy`. Fable ruled

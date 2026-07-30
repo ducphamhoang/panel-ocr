@@ -9,11 +9,18 @@ Four of these roles have definitions in `.claude/agents/`. The *intent* is that 
 prohibitions live in frontmatter the harness reads, instead of being sentences in a prompt
 that an agent can ignore.
 
-**Status first, because it changes how to read everything below: that mechanism has never
-been observed working.** No agent has yet been spawned from any of these definitions, and
-the one attempt failed (Caveat 1). So treat every statement about what a role "cannot" do
-as **what the definition asks for, not as something measured**, and keep stating the
-prohibition in the brief as well.
+**Status first, because it changes how to read everything below: the mechanism has now
+been observed working, once, from a fresh session.** The first attempt — spawning
+`rust-engineer` in the same session that created the files — failed (Caveat 1, first
+half). A later attempt from a separate, fresh session — spawning `fresh-reader` on a
+trivial read task — succeeded: the type resolved and the agent executed and returned
+real output. Only `fresh-reader` was tested this way; `architect`, `rust-engineer` and
+`fable-adjudicator` were not separately confirmed, though there is no reason to expect
+the loader to treat them differently. This settles hot-reload-from-a-fresh-session; it
+does **not** settle whether the harness honours `tools` or `model` (see the gate
+enumeration below and Caveat 1's second half) — so keep treating every statement about
+what a role "cannot" do as **what the definition asks for, not as something measured**,
+and keep stating the prohibition in the brief as well.
 
 What the gate in `crates/pc-testkit/tests/agent_definitions.rs` establishes, enumerated
 rather than summarised because summarising it has already overstated it twice:
@@ -38,23 +45,32 @@ smuggle back the generality bullet four is careful to deny. A summary sentence p
 an enumeration re-inflates the enumeration; that has happened here three times, twice inside
 the very edits written to fix it.
 
-If the definitions do load, then `fresh-reader`, `architect` and `fable-adjudicator` list
-no `Edit`/`Write`/`NotebookEdit`, so the harness would withhold those three tools whatever
-the agent decided; and `model` being part of the definition would stop a review silently
-running on the wrong tier because a spawn forgot to pass one. Caveat 2 covers what
-"read-only" would still not cover even then.
+This next paragraph states what the mechanism is *for*, not what it does — loading (the
+file parses, the agent type resolves) is now observed for `fresh-reader`, but whether the
+harness additionally *honours* `tools`/`model` once it reads them is a separate premise
+that nothing here establishes either way. **If** both hold — the definitions load, and the
+harness enforces `tools`/`model` from them — then `fresh-reader`, `architect` and
+`fable-adjudicator` listing no `Edit`/`Write`/`NotebookEdit` would mean the harness
+withholds those three tools regardless of what the agent decides; and `model` being part
+of the definition would stop a review silently running on the wrong tier because a spawn
+forgot to pass one. Caveat 2 covers what "read-only" would still not cover even then.
 
 Both caveats are load-bearing. Neither is a footnote.
 
-> **CAVEAT 1, MEASURED 2026-07-30: the definitions are NOT hot-reloaded.** Spawning
-> `rust-engineer` in the same session that created the files failed with *"Agent type
-> 'rust-engineer' not found"*, listing only the built-ins. So a session that adds or
-> edits a definition cannot use it, and must fall back to a generic subagent with the
-> role preamble written out by hand. **Whether a fresh session picks them up is still
-> unverified** — the frontmatter parses and the field names are the documented ones,
-> which is necessary and not sufficient. Until someone confirms a spawn works, treat
-> "the harness enforces the prohibition" as the intended design rather than an
-> established fact, and keep stating the prohibition in the brief as well.
+> **CAVEAT 1, MEASURED 2026-07-30 (same-session) and 2026-07-30 (fresh-session): the
+> definitions are NOT hot-reloaded within a session, but a fresh session DOES pick them
+> up.** Spawning `rust-engineer` in the same session that created the files failed with
+> *"Agent type 'rust-engineer' not found"*, listing only the built-ins — a session that
+> adds or edits a definition still cannot use it there, and must fall back to a generic
+> subagent with the role preamble written out by hand. In a later, separate session,
+> spawning `fresh-reader` on a trivial read task succeeded: the type resolved and the
+> agent executed and returned real output. Only `fresh-reader` was tested this way —
+> `architect`, `rust-engineer` and `fable-adjudicator` were not separately confirmed,
+> though there is no reason to expect the loader to treat them differently. This does
+> **not** establish that the harness honours `tools` or `model`: no test asserts a tool
+> is present, and this probe neither attempted a write nor checked which model ran. So
+> treat "the harness enforces the prohibition" as the intended design, not a confirmed
+> behaviour, and keep stating the prohibition in the brief as well.
 >
 > **CAVEAT 2: "read-only" names three tools a definition withholds — it does NOT mean the
 > agent cannot write.** All three read-only agents carry `Bash`, so a determined one can
@@ -64,8 +80,10 @@ Both caveats are load-bearing. Neither is a footnote.
 > are prevented by instruction alone, in every case.
 >
 > Note the asymmetry, because it decides how much Caveat 1 costs you: the tool restriction
-> depends on the unverified loading, but the shell-write gap does **not**. That half is
-> instruction-only whether or not the definitions ever load.
+> depends on two things — the definitions loading (now observed, for `fresh-reader`, in a
+> fresh session) **and** the harness honouring `tools` from them (still unverified either
+> way) — but the shell-write gap depends on neither. That half is instruction-only whether
+> or not the definitions load or their fields are enforced.
 >
 > Keeping `Bash` was a deliberate decision (maintainer, 2026-07-30). Every high-value
 > finding these reviewers produced came from *running* something — a constructed probe
