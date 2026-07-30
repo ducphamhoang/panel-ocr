@@ -5811,8 +5811,16 @@ settles two open design questions and records an agreed fix.
    instrumentation, empirically reproducing this exact failure mode and confirming the fix against
    the real P01 page — this is measured, not merely argued. `OracleBlock`'s doc comment must state
    this operand rule explicitly (§16.28 item 4's precedent: a `None`-disabling behavior must be
-   stated, not merely implemented), and `PairResidual::upstream_line_count`/`IdentityBranch` remain
-   keyed on the served `lines`, unaffected by which list the identity itself unions.
+   stated, not merely implemented). **Correction, found during implementation and recorded here
+   rather than silently fixed:** an earlier draft of this item claimed `IdentityBranch` also stays
+   keyed on the served `lines`, unaffected by the operand switch. That is wrong and was never
+   something either agent's plan asserted — `IdentityBranch` (`LineInformed`/`LineLess`) describes
+   whether the identity itself had lines to union, so it must follow the **same** operand as
+   `lines_bbox`/`reconstruct` (`lines_pre_expand` when recorded, else served `lines`); a block with a
+   recorded-but-empty `lines_pre_expand` is `LineLess` for the identity even though its served
+   `lines` is non-empty. Only `PairResidual::upstream_line_count` — the §16.27 item 8 census, which
+   is a claim about what upstream serves — stays keyed on the served `lines` regardless of which
+   list the identity unions.
 
 2. **RATIFIED (Fable) — the committed oracle page moves; it is not duplicated.** The rust-engineer
    read the shipped validator's comment (`crates/pc-testkit/src/provenance.rs:334-347`, citing
