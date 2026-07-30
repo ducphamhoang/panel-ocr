@@ -226,6 +226,19 @@ fn provenance_is_current_under(workspace_root: &Path, group: &str) -> bool {
     if !declared_matches {
         return false;
     }
+    // The detector group's input page is a committed declaration too, just not one carried in
+    // `records` (§16.24 item 2 forbids double-declaring it there) — so it needs this same
+    // provenance-to-disk check under its own field names, or a tampered/truncated committed page
+    // would read as current forever, same defect as condition 2 above but for a field outside
+    // `records`.
+    if let Some(detector) = &parsed.detector {
+        let page = workspace_root.join(&detector.input_page);
+        let page_matches = pc_models::sha256_hex(&page)
+            .is_ok_and(|actual| actual.eq_ignore_ascii_case(&detector.input_page_sha256));
+        if !page_matches {
+            return false;
+        }
+    }
 
     // 3. DISK -> PROVENANCE, the other direction. Every file in the group directory must be
     //    declared. Without this the skip accepts *unbound fixture state*: a stray, renamed or
@@ -1266,18 +1279,25 @@ mod provenance_is_current_falsification {
     }
 
     #[test]
-    // A real bug, caught by the stop-time review gate on the FIRST end-to-end run of the detector
-    // recorder, not by any test: condition 3's `declared` set was built only from `records`, but
-    // §16.24 item 2 forbids double-declaring `detector.input_page` as a record output too — it is
-    // declared exactly once, via `detector.input_page`/`input_page_sha256`. So the committed page
-    // sitting in the group directory looked like an undeclared orphan on EVERY check, and the
-    // detector group could never be recognized as current: every invocation re-ran the full
-    // recording (real ONNX inference, the Python subprocess) even when nothing had changed.
+    // Two real bugs, both caught by the stop-time review gate on the FIRST end-to-end run of the
+    // detector recorder rather than by any test, both stemming from the same root cause: §16.24
+    // item 2 forbids double-declaring `detector.input_page` as a record output too, so it is
+    // declared exactly once via `detector.input_page`/`input_page_sha256` — but conditions 2 and 3
+    // both iterated only `records` and never knew that field existed.
+    //
+    // Condition 3's `declared` set never contained the page's path, so the committed page always
+    // looked like an undeclared orphan and the detector group could never be recognized as
+    // current: every invocation re-ran the full recording (real ONNX inference, the Python
+    // subprocess) even when nothing had changed. Condition 2's digest loop never checked the
+    // page's bytes at all, so a tampered or truncated committed page would have read as current
+    // forever, the opposite failure direction.
     //
     // This constructs a detector-shaped group directly (not via the nlm-only `Tree` helper above)
-    // with one `records` entry AND a page file declared only through `detector.input_page`, and
-    // asserts the whole tree is current. Revert the `declared.insert(detector.input_page...)` line
-    // in `provenance_is_current_under` and this goes red.
+    // with one `records` entry and a page file declared only through `detector.input_page`, and
+    // asserts: the whole tree is current (condition 3's fix); a tampered page is NOT current
+    // (condition 2's fix); restoring the original bytes is current again. Revert either the
+    // `declared.insert(detector.input_page...)` line or the `detector.input_page_sha256` check in
+    // `provenance_is_current_under` and the corresponding half of this test goes red.
     fn a_detector_groups_input_page_declared_only_via_detector_input_page_is_still_current() {
         let dir = tempfile::tempdir().expect("temp dir");
         let root = dir.path().canonicalize().expect("canonical temp root");
@@ -1344,6 +1364,21 @@ mod provenance_is_current_falsification {
             provenance_is_current_under(&root, "detector"),
             "the input page, declared only via `detector.input_page`, must not read as an \
              undeclared orphan"
+        );
+
+        // Companion to condition 2's `a_committed_declaration_whose_bytes_changed_is_not_current`
+        // above, but for `detector.input_page` — also caught by the stop-time review gate: the
+        // digest loop iterated only `records`, so a tampered or truncated committed page would
+        // have read as current forever, never triggering a re-record.
+        std::fs::write(group_dir.join("page.jpg"), b"tampered bytes").expect("writable");
+        assert!(
+            !provenance_is_current_under(&root, "detector"),
+            "a page whose bytes no longer match `input_page_sha256` must not read as current"
+        );
+        std::fs::write(group_dir.join("page.jpg"), &page_bytes).expect("writable");
+        assert!(
+            provenance_is_current_under(&root, "detector"),
+            "restoring the original bytes restores currency"
         );
     }
 
