@@ -496,6 +496,26 @@ a claim, not a verification.** Re-run the suite yourself; read the diff.
 - **`git commit -a` does not stage untracked files.** It silently committed a `CLAUDE.md`
   edit while leaving out the new file the commit was *about*. `git status --porcelain` after
   every commit; `??` lines mean the commit is incomplete.
+- **A dispatched agent can revert your concurrent edits, and a commit message will then
+  describe content that does not exist.** Three edits to this file were wiped by a Codex job
+  restoring it while the Orchestrator was editing it in parallel; the loss surfaced only
+  because `git status` after `git add -A` did not list the file the commit message talked
+  about. **Diff what you actually staged against what your message claims, before pushing** —
+  and prefer not to edit a file while a write-agent is running anywhere in the tree.
+- **A file being written by an agent gives phantom readings, in both directions.** (a) The
+  Orchestrator ran `cargo test` while a Codex job was executing its own probes — which
+  temporarily rewrite a real definition file — and saw **five tests red that were fine**; a
+  clean re-run showed all green. (b) A second Codex job read that file mid-write, saw a
+  transient failing state, reported it as lacking functions it actually contained, and
+  declined the task; its refusal was *correct* given what it saw. A failure observed during
+  someone else's write is not evidence — check mtime and `git status` before believing a red.
+- **A subagent's transcript output file is NOT a progress signal.** It is not written
+  incrementally, so size and mtime stay frozen while the agent works. Judging by it declared a
+  live reader dead twice; one of those was producing a 99k-token review that found four
+  blocking defects. Watch the files the agent is *editing* instead — that worked every time.
+- **The `codex:rescue` wrapper often returns `completed` in ~40s having launched a background
+  job and written nothing.** Six times in one session. Treat its completion as "dispatched",
+  not "done": check the artifact, and re-dispatch a **fresh** task rather than resuming.
 
 ---
 
@@ -853,9 +873,49 @@ The lesson is not "keep patching until the reviewer runs out of ideas". It is:
   was a cost estimate, and three rounds of review plus three commits is the measured cost of having
   been wrong about it. Re-price the dependency against what avoiding it actually cost, not against
   what it looked like it would cost.
+  **(QUALIFIED by 14c-quater — "use the real parser" is not automatically an improvement in
+  strictness; measure before you believe it.)**
 - The cheap intermediate step, taken here, is to **extract the rule into a pure function with a
   literal table**, so each new class costs one row instead of one probe session. That is what made
   rounds two and three cheap; it does not make the accept-set knowable.
+
+### 14c-quater. The real parser was LAXER than the hand-rolled rule it replaced
+
+The dependency was approved and the gate rewritten to parse with `yaml-rust2 0.11.0`. One table row
+went red, correctly, and it inverted the assumption under the whole exercise. Measured directly, both
+parsers on the same four inputs:
+
+| frontmatter case | PyYAML | yaml-rust2 0.11.0 |
+|---|---|---|
+| unquoted scalar containing `\u{1b}` | REJECT (`ReaderError`) | **ACCEPT** |
+| quoted scalar containing `\u{1b}` | REJECT (`ReaderError`) | **ACCEPT** |
+| unquoted scalar containing a literal TAB | REJECT (`ScannerError`) | **ACCEPT** |
+| quoted scalar containing a literal TAB | ACCEPT | ACCEPT |
+
+YAML 1.2's `c-printable` production excludes C0 controls other than TAB/LF/CR, so PyYAML is
+spec-conformant here and `yaml-rust2` is permissive. **Adopting "the real parser" alone would have
+silently dropped coverage the hand-rolled rule already had** — control bytes, both branches, closed
+one commit earlier. A regression in strictness arriving inside a change whose whole justification was
+more rigour, and it would have read as a hardening in the commit message.
+
+- **"Use the real consumer" presumes there is one.** Here there are at least three: PyYAML, this
+  crate, and the harness's own loader — which is neither, and is the only one that matters. A
+  dependency swap replaces your accept-set with *some other implementation's*, not with the truth.
+  Measure the new one against the old on the cases you already closed, or you are trading a known
+  accept-set for an unknown one and calling it progress.
+- **Where two conforming implementations disagree, take the stricter side and say why.** Rejecting an
+  ESC byte costs an author nothing. The resolution kept `YamlLoader` for the YAML judgement and added
+  a one-sentence printable-characters rule beside it. That is *not* a relapse into a substitute
+  validator: the parser still decides YAML, and the extra rule's accept-set is one sentence long,
+  stated and tested.
+- **Do not pin a case the implementations disagree on unless you know which one the consumer
+  follows.** Unquoted TAB is left deliberately unpinned, with a comment saying so. Pinning it either
+  way would assert something unmeasured — and an unmeasured assertion inside a gate is what this
+  whole rule family is about.
+
+Generalised: **a validator's accept-set is a property you measure, not one you inherit.** Swapping in
+a library moves the set; it does not shrink it by default, and the direction of the move is an
+empirical question with a cheap answer.
 
 ---
 

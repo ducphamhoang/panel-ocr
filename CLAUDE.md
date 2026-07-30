@@ -8,7 +8,17 @@ unless the user explicitly overrides it for a given task.
 Four of these roles are **defined in `.claude/agents/`**, so use those agent types
 rather than a generic subagent with a hand-written role preamble. The reason is not
 convenience: a role's prohibitions are enforced by the harness there, and were only
-sentences in a prompt before. `fresh-reader`, `architect` and `fable-adjudicator`
+sentences in a prompt before.
+
+> **MEASURED CAVEAT, 2026-07-30: the definitions are NOT hot-reloaded.** Spawning
+> `rust-engineer` in the same session that created the files failed with *"Agent type
+> 'rust-engineer' not found"*, listing only the built-ins. So a session that adds or
+> edits a definition cannot use it, and must fall back to a generic subagent with the
+> role preamble written out by hand. **Whether a fresh session picks them up is still
+> unverified** — the frontmatter parses and the field names are the documented ones,
+> which is necessary and not sufficient. Until someone confirms a spawn works, treat
+> "the harness enforces the prohibition" as the intended design rather than an
+> established fact, and keep stating the prohibition in the brief as well. `fresh-reader`, `architect` and `fable-adjudicator`
 carry no `Edit`/`Write` tool at all, so a reviewer *cannot* edit what it reviews and
 Fable *cannot* write code, whatever either decides — the same move as replacing a
 property that held by discipline with one that holds by construction. The `model`

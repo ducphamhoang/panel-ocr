@@ -1,13 +1,10 @@
 //! Gates the `.claude/agents/` frontmatter consumed by the agent harness.
 //!
-//! These checks intentionally use plain string operations instead of a YAML parser.  The
-//! quotable-value rule is stricter than YAML: a false rejection is repaired by quoting a value,
-//! while a false acceptance recreates the historical silent loss of a role prohibition.
-
 use pc_testkit::paths;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use yaml_rust2::{Yaml, YamlLoader};
 
 const EXPECTED_AGENT_NAMES: &[&str] = &[
     "architect",
@@ -71,80 +68,82 @@ fn frontmatter_lines(path: &Path) -> Vec<(usize, String)> {
         .collect()
 }
 
-fn frontmatter_fields(path: &Path) -> BTreeMap<String, String> {
-    frontmatter_lines(path)
-        .into_iter()
-        .filter_map(|(line_number, line)| {
-            line.split_once(':').map(|(key, value)| {
-                let key = key.trim().to_owned();
-                let value = unquote(value.trim()).to_owned();
-                assert!(
-                    !key.is_empty(),
-                    "{} line {line_number} has an empty frontmatter key",
-                    path.display()
-                );
-                (key, value)
-            })
-        })
-        .collect()
+fn frontmatter_block(path: &Path) -> String {
+    let text = file_text(path);
+    assert!(
+        text.starts_with("---\n"),
+        "{} must start with `---\\n`",
+        path.display()
+    );
+
+    let lines = text.lines().collect::<Vec<_>>();
+    let closing = lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, line)| **line == "---")
+        .map(|(index, _)| index)
+        .unwrap_or_else(|| panic!("{} has no closing `---` line", path.display()));
+
+    lines[1..closing].join("\n")
 }
 
-fn unquote(value: &str) -> &str {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(value)
-}
-
-fn reject_disallowed_control_characters(value: &str, subject: &str) -> Result<(), String> {
-    if let Some((byte_offset, character)) = value.char_indices().find(|(_, character)| {
-        (*character < '\u{20}' && *character != '\t') || *character == '\u{7f}'
+// What failed before was a hand-rolled rule standing in for YAML, with an accept-set nobody
+// could enumerate. What this is: a real parser doing the YAML judgement, plus a single-sentence
+// constraint covering one axis where two real parsers measurably disagree and the spec sides with
+// the stricter one. Its accept-set is one sentence long and testable. The harness's own loader is
+// neither of these parsers, so where two real implementations disagree, the safe direction is the
+// stricter one — rejecting costs an author nothing, since no legitimate agent definition contains
+// an ESC byte.
+//
+// This gate asserts “parses under yaml-rust2 0.11.0, plus printable-characters”, which is a much
+// closer proxy for the harness's loader than the old rule but is still a proxy — and now with
+// measured evidence that two real parsers differ, so the residual risk is concrete rather than
+// theoretical.
+// The additive constraint is one sentence: reject any character below 0x20 except TAB, LF, and
+// CR, and reject DEL (0x7F).
+fn frontmatter_gate(document: &str) -> Result<Yaml, String> {
+    if let Some((byte_offset, character)) = document.char_indices().find(|(_, character)| {
+        (*character < '\u{20}' && !matches!(character, '\t' | '\n' | '\r'))
+            || *character == '\u{7f}'
     }) {
         return Err(format!(
-            "{subject} contains disallowed control character U+{:04X} at byte offset {byte_offset}",
+            "frontmatter contains non-printable character U+{:04X} at byte offset {byte_offset}",
             character as u32
         ));
     }
-    Ok(())
+
+    let documents = YamlLoader::load_from_str(document).map_err(|error| error.to_string())?;
+    documents
+        .into_iter()
+        .next()
+        .ok_or_else(|| "frontmatter has an empty YAML document".to_owned())
 }
 
-fn quotable_or_quoted(value: &str) -> Result<(), String> {
-    reject_disallowed_control_characters(value, "frontmatter value")?;
+fn parsed_frontmatter(path: &Path) -> Yaml {
+    frontmatter_gate(&frontmatter_block(path))
+        .unwrap_or_else(|error| panic!("{} has invalid YAML frontmatter: {error}", path.display()))
+}
 
-    if value.starts_with('"') {
-        if !value.ends_with('"') || value.len() < 2 {
-            return Err("quoted value never closed".to_owned());
-        }
-
-        let interior = &value[1..value.len() - 1];
-        // This is intentionally stricter than YAML: descriptions need no interior quotes, so a
-        // rephrase is cheap, while accepting malformed quoting can silently disable a role
-        // prohibition. That makes over-rejecting the sound direction for this file class.
-        if interior.contains('"') {
-            return Err("quoted value has an interior quote".to_owned());
-        }
-        if interior.contains('\\') {
-            return Err("quoted value has an interior backslash".to_owned());
-        }
-        return Ok(());
-    }
-
-    if let Some(offending) = value.find(": ").map(|index| &value[index..index + 2]) {
-        return Err(format!(
-            "frontmatter value contains offending substring `{offending}`"
-        ));
-    }
-    if let Some(offending) = value.chars().next().filter(|character| {
-        matches!(
-            character,
-            '#' | '&' | '*' | '!' | '|' | '>' | '%' | '@' | '`' | '[' | '{' | ','
-        )
-    }) {
-        return Err(format!(
-            "frontmatter value starts with offending character `{offending}`"
-        ));
-    }
-    Ok(())
+fn frontmatter_fields(path: &Path) -> BTreeMap<String, String> {
+    let Yaml::Hash(fields) = parsed_frontmatter(path) else {
+        panic!("{} frontmatter must be a YAML mapping", path.display());
+    };
+    fields
+        .into_iter()
+        .map(|(key, value)| {
+            let Yaml::String(key) = key else {
+                panic!("{} has a non-string frontmatter key", path.display());
+            };
+            let Yaml::String(value) = value else {
+                panic!(
+                    "{} has a non-string value for frontmatter key `{key}`",
+                    path.display()
+                );
+            };
+            (key, value)
+        })
+        .collect()
 }
 
 fn field<'a>(fields: &'a BTreeMap<String, String>, path: &Path, key: &str) -> &'a str {
@@ -190,53 +189,87 @@ fn agent_frontmatter_has_opening_and_closing_delimiters() {
 }
 
 #[test]
-fn frontmatter_values_are_safely_quotable_or_quoted() {
+fn frontmatter_blocks_pass_the_acceptance_gate() {
     for path in agent_paths() {
-        for (line_number, line) in frontmatter_lines(&path) {
-            let Some((raw_key, raw_value)) = line.split_once(':') else {
-                continue;
-            };
-            let key = raw_key.trim();
-            if let Err(rule) = reject_disallowed_control_characters(key, "frontmatter key") {
-                panic!("{} line {line_number}: {rule}", path.display());
-            }
-            let value = raw_value.trim();
-            if let Err(rule) = quotable_or_quoted(value) {
-                panic!("{} line {line_number}: {rule}", path.display());
-            }
-        }
+        let _ = parsed_frontmatter(&path);
     }
 }
 
 #[test]
-fn quotable_or_quoted_accepts_safe_values_and_rejects_unsafe_values() {
-    // The file-driven test can only fail by corrupting a real definition, so the pure rule needs direct coverage.
+// Drives `frontmatter_gate`, NOT `yaml-rust2` alone — the distinction is load-bearing, so the name
+// says "acceptance gate" rather than naming the parser. Two rows below (the quoted and unquoted
+// ESC cases) are rejected by the printable-characters rule while yaml-rust2 accepts them, so a name
+// crediting the parser would teach the next reader something measurably false.
+fn the_acceptance_gate_accepts_and_rejects_the_recorded_frontmatter_cases() {
     let cases = [
-        ("\"a normal quoted description.\"", true),
-        ("plain-no-colon-value", true),
-        ("'Read, Grep, Glob, Bash'", true),
-        ("opus", true),
-        ("\"quoted \u{01} value\"", false),
-        ("\"quoted \u{1b} value\"", false),
-        // This unquoted row proves the control-character check is branch-independent.
-        ("plain\u{1b}value", false),
-        ("\"quoted\tvalue\"", true),
-        ("plain\tvalue", true),
-        ("\"he said \"hi\" and left\"", false),
-        ("\"abc\" trailing junk", false),
-        ("\"unterminated", false),
-        ("'Read-only: produces a design'", false),
-        ("# comment-looking", false),
-        ("\"has \\ backslash\"", false),
+        // The bare `: ` makes this plain scalar invalid YAML.
+        (
+            "name: sample\ndescription: Read-only: produces a design\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
+            false,
+        ),
+        // An unescaped interior quote makes this double-quoted scalar invalid YAML.
+        (
+            "name: sample\ndescription: \"he said \"hi\" and left\"\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
+            false,
+        ),
+        // Content after a closing quote is trailing junk, not part of the scalar.
+        (
+            "name: sample\ndescription: \"abc\" trailing junk\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
+            false,
+        ),
+        // A double-quoted scalar that never closes must be rejected by the parser.
+        (
+            "name: sample\ndescription: \"unterminated\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
+            false,
+        ),
+        // yaml-rust2 alone accepts this, but the printable-characters rule rejects ESC.
+        (
+            "name: sample\ndescription: \"quoted \u{1b} value\"\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
+            false,
+        ),
+        // This unquoted ESC is rejected by the printable-characters rule, not the parser;
+        // yaml-rust2 alone accepts it.
+        (
+            "name: sample\ndescription: unquoted \u{1b} value\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
+            false,
+        ),
+        // A normal quoted scalar is valid YAML.
+        (
+            "name: sample\ndescription: \"a normal quoted description.\"\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
+            true,
+        ),
+        // A plain scalar with no colon is valid YAML.
+        (
+            "name: sample\ndescription: plain-no-colon-value\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
+            true,
+        ),
+        // The harness stores tools as a comma-separated string, not a YAML sequence.
+        (
+            "name: sample\ndescription: sample description\ntools: Read, Grep, Glob, Bash\nmodel: sonnet\n",
+            true,
+        ),
+        // An unquoted model name is a valid plain scalar.
+        (
+            "name: sample\ndescription: sample description\ntools: Read\nmodel: opus\n",
+            true,
+        ),
+        // TAB is legal inside a YAML quoted scalar and must not be rejected as C0 control data.
+        (
+            "name: sample\ndescription: \"quoted\tvalue\"\ntools: Read, Grep, Glob, Bash\nmodel: opus\n",
+            true,
+        ),
     ];
 
-    for (value, expected_acceptance) in cases {
+    for (document, expected_acceptance) in cases {
+        let parsed = frontmatter_gate(document).is_ok();
         assert_eq!(
-            quotable_or_quoted(value).is_ok(),
-            expected_acceptance,
-            "unexpected validation result for {value:?}"
+            parsed, expected_acceptance,
+            "unexpected parser result for {document:?}"
         );
     }
+
+    // An unquoted literal TAB is deliberately unpinned: PyYAML rejects it while yaml-rust2
+    // accepts it, and which parser the harness follows in this case is undecided.
 }
 
 #[test]

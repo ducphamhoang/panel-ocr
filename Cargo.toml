@@ -74,6 +74,7 @@ uuid  = { version = "1.11.0", features = ["v4", "serde"] }   # §4.2 CachePaths
 # --- dev only ---
 approx   = "0.5.1"
 tempfile = "3.14.0"
+yaml-rust2 = "0.11.0"
 
 [profile.test]
 opt-level = 1        # the pixel-math tests are slow at opt-level 0
