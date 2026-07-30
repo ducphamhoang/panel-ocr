@@ -238,12 +238,20 @@ fn provenance_is_current_under(workspace_root: &Path, group: &str) -> bool {
     //    13's "cardinality is not identity", and rule 14's lesson that the readers of a format
     //    each need the whole invariant, not the half that was convenient.
     let group_dir = recorded_root.join(group);
-    let declared: std::collections::BTreeSet<String> = parsed
+    let mut declared: std::collections::BTreeSet<String> = parsed
         .records
         .iter()
         .filter(|record| record.committed)
         .map(|record| record.output.clone())
         .collect();
+    // The detector group's input page is declared via `detector.input_page`/`input_page_sha256`,
+    // not the generic `records` list (§16.24 item 2 forbids double-declaring it as a record
+    // output too) — but it is still a real, legitimately-declared file inside this group
+    // directory, and condition 3 must know that or the detector group can never be recognized
+    // as current: the page would look like an undeclared orphan on every single check.
+    if let Some(detector) = &parsed.detector {
+        declared.insert(detector.input_page.clone());
+    }
     let Ok(entries) = std::fs::read_dir(&group_dir) else {
         return false;
     };
@@ -1254,6 +1262,88 @@ mod provenance_is_current_falsification {
         assert!(
             !tree.is_current(),
             "an undeclared subdirectory is unbound state too — this is why non-recursion is safe"
+        );
+    }
+
+    #[test]
+    // A real bug, caught by the stop-time review gate on the FIRST end-to-end run of the detector
+    // recorder, not by any test: condition 3's `declared` set was built only from `records`, but
+    // §16.24 item 2 forbids double-declaring `detector.input_page` as a record output too — it is
+    // declared exactly once, via `detector.input_page`/`input_page_sha256`. So the committed page
+    // sitting in the group directory looked like an undeclared orphan on EVERY check, and the
+    // detector group could never be recognized as current: every invocation re-ran the full
+    // recording (real ONNX inference, the Python subprocess) even when nothing had changed.
+    //
+    // This constructs a detector-shaped group directly (not via the nlm-only `Tree` helper above)
+    // with one `records` entry AND a page file declared only through `detector.input_page`, and
+    // asserts the whole tree is current. Revert the `declared.insert(detector.input_page...)` line
+    // in `provenance_is_current_under` and this goes red.
+    fn a_detector_groups_input_page_declared_only_via_detector_input_page_is_still_current() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path().canonicalize().expect("canonical temp root");
+        let group_dir = root.join(RECORDED_PREFIX).join("detector");
+        std::fs::create_dir_all(&group_dir).expect("create group dir");
+
+        let raw_page_bytes = b"not-really-a-page-json".to_vec();
+        std::fs::write(group_dir.join("page#raw.json"), &raw_page_bytes).expect("writable");
+        let page_bytes = b"not-really-a-jpeg".to_vec();
+        std::fs::write(group_dir.join("page.jpg"), &page_bytes).expect("writable");
+
+        let provenance = GroupProvenance {
+            schema_version: PROVENANCE_SCHEMA_VERSION,
+            group: "detector".into(),
+            tool: "PanelCleaner detector oracle recorder".into(),
+            command_line: "cargo xtask record-fixtures --only detector".into(),
+            tool_versions: BTreeMap::new(),
+            records: vec![ArtifactRecord {
+                name: "raw_page".into(),
+                output: format!("{RECORDED_PREFIX}/detector/page#raw.json"),
+                output_sha256: digest(&raw_page_bytes),
+                committed: true,
+                source: None,
+                source_sha256: None,
+                params: BTreeMap::new(),
+            }],
+            detector: Some(pc_testkit::provenance::DetectorPins {
+                input_page: format!("{RECORDED_PREFIX}/detector/page.jpg"),
+                input_page_sha256: digest(&page_bytes),
+                model: "comictextdetector.pt.onnx".into(),
+                model_digest: digest(b"model"),
+                ours: pc_testkit::provenance::OursPins {
+                    backend: pc_testkit::provenance::Backend::Ort,
+                    decoded_rgb_digest: digest(b"decoded"),
+                    decoded_from: "input_page".into(),
+                    execution_provider: "cpu".into(),
+                    intra_threads: 0,
+                    inter_threads: 0,
+                    pad_value: 0,
+                    panel_ocr_commit: "b".repeat(40),
+                    profile_non_default: BTreeMap::new(),
+                },
+                upstream: pc_testkit::provenance::UpstreamPins {
+                    backend: pc_testkit::provenance::Backend::Cv2Dnn,
+                    decoded_rgb_digest: digest(b"decoded"),
+                    decoded_from: "input_page".into(),
+                    version: "2.11.11".into(),
+                    commit: "b".repeat(40),
+                    command_line: "record_detector_oracle.py ...".into(),
+                    profile_non_default: BTreeMap::new(),
+                    dependency_versions: BTreeMap::from([("opencv".into(), "5.0.0".into())]),
+                },
+            }),
+            diagnostics: BTreeMap::new(),
+        };
+        assert!(
+            pc_testkit::provenance::validate("detector", &provenance).is_empty(),
+            "the constructed provenance itself must be structurally valid, or this test would \
+             pass for the wrong reason (condition 1 failing, not condition 3 passing)"
+        );
+        write_provenance(&group_dir.join(PROVENANCE_FILE_NAME), &provenance).expect("writable");
+
+        assert!(
+            provenance_is_current_under(&root, "detector"),
+            "the input page, declared only via `detector.input_page`, must not read as an \
+             undeclared orphan"
         );
     }
 
