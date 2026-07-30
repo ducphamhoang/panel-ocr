@@ -7,10 +7,18 @@ unless the user explicitly overrides it for a given task.
 
 Four of these roles are **defined in `.claude/agents/`**, so use those agent types
 rather than a generic subagent with a hand-written role preamble. The reason is not
-convenience: a role's prohibitions are enforced by the harness there, and were only
-sentences in a prompt before.
+convenience: a role's prohibitions live in frontmatter the harness reads, where before
+they were only sentences in a prompt. `fresh-reader`, `architect` and
+`fable-adjudicator` list no `Edit`/`Write`/`NotebookEdit`, so **those three tools** are
+unavailable to them whatever they decide; and `model` is part of the definition too, so
+a review can no longer silently run on the wrong tier because a spawn forgot to pass
+one.
 
-> **MEASURED CAVEAT, 2026-07-30: the definitions are NOT hot-reloaded.** Spawning
+**Both caveats below are load-bearing — read them before relying on any of that.** The
+first says the mechanism has never been observed working; the second says what
+"read-only" does and does not cover. Neither is a footnote.
+
+> **CAVEAT 1, MEASURED 2026-07-30: the definitions are NOT hot-reloaded.** Spawning
 > `rust-engineer` in the same session that created the files failed with *"Agent type
 > 'rust-engineer' not found"*, listing only the built-ins. So a session that adds or
 > edits a definition cannot use it, and must fall back to a generic subagent with the
@@ -20,23 +28,23 @@ sentences in a prompt before.
 > "the harness enforces the prohibition" as the intended design rather than an
 > established fact, and keep stating the prohibition in the brief as well.
 >
-> **SECOND CAVEAT: "read-only" is enforced for `Edit`/`Write`/`NotebookEdit`, NOT for
-> shell writes.** The three read-only agents carry `Bash`, so a determined one could
-> write via `>`, `sed -i`, or `git commit`. Keeping `Bash` was a deliberate decision
-> (maintainer, 2026-07-30): every high-value finding these reviewers produced came from
-> *running* something — a constructed probe against a real line, a re-implementation
-> validated against the 28 known rows — and a reviewer who cannot run the suite cannot
-> check whether a gate is capable of failing, which is the check that has mattered most
-> here. So the enforcement raises the bar from casual to deliberate rather than making
-> violation impossible. Each definition states this, and
-> `read_only_agents_disclose_the_bash_limitation` keeps the disclosure from being
-> deleted while the tool stays. That test gates the *disclosure*, not the behaviour —
-> nothing in this repo can gate the behaviour. `fresh-reader`, `architect` and `fable-adjudicator`
-carry no `Edit`/`Write` tool at all, so a reviewer *cannot* edit what it reviews and
-Fable *cannot* write code, whatever either decides — the same move as replacing a
-property that held by discipline with one that holds by construction. The `model`
-field is likewise part of the definition, so a review can no longer silently run on
-the wrong tier because a spawn forgot to pass one.
+> **CAVEAT 2: "read-only" names three withheld tools — it does NOT mean the agent
+> cannot write.** All three read-only agents carry `Bash`, so a determined one can write
+> via `>`, `sed -i`, or `git commit`. **Do not describe them as unable to edit;** the
+> accurate statement is that `Edit`/`Write`/`NotebookEdit` are unavailable and shell
+> writes are prevented by instruction alone.
+>
+> Keeping `Bash` was a deliberate decision (maintainer, 2026-07-30). Every high-value
+> finding these reviewers produced came from *running* something — a constructed probe
+> appended to a real spec line, a re-implementation validated against the 28 known rows
+> before being trusted — and a reviewer who cannot run the suite cannot check whether a
+> gate is capable of failing, which is the check that has mattered most here. So the
+> enforcement raises the bar from casual to deliberate; it does not make violation
+> impossible.
+>
+> Each definition states this, and `read_only_agents_disclose_the_bash_limitation` keeps
+> the disclosure from being deleted while the tool stays. That test gates the
+> *disclosure*, not the behaviour — nothing in this repo can gate the behaviour.
 
 The definitions carry only the boilerplate that was retyped every time. **They do not
 replace the per-invocation brief**, which is where a review's value actually comes

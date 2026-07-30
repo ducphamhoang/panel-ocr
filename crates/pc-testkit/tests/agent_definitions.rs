@@ -456,3 +456,36 @@ fn read_only_agents_disclose_the_bash_limitation() {
         );
     }
 }
+
+#[test]
+// The same disclosure, in the file a human actually reads. `CLAUDE.md` is where someone learns what
+// these roles are, and its first version of this section claimed outright that a reviewer "cannot
+// edit what it reviews" — true of `Edit`/`Write`, false once `Bash` is in the list. The sibling test
+// above guards the definitions; nothing guarded the document describing them.
+//
+// SCOPE, stated so this is not mistaken for more than it is: this asserts the caveat is PRESENT. It
+// cannot detect a contradiction elsewhere in the prose — that needs a reader, and a reader is what
+// found the original one. Do not extend this into a substring ban on "cannot edit": the caveat's own
+// wording contains that phrase inside a negation, so such a check would fail on the correct text.
+fn claude_md_discloses_the_bash_limitation() {
+    let path = paths::workspace_root().join("CLAUDE.md");
+    let text = file_text(&path);
+
+    assert!(
+        text.contains("read_only_agents_disclose_the_bash_limitation"),
+        "CLAUDE.md no longer points at the test that guards this disclosure; the two are meant to \
+         travel together so a reader can see the limit is checked rather than merely asserted."
+    );
+
+    let discloses_bash_writes = text.lines().any(|line| {
+        line.contains("Bash") && (line.contains("shell write") || line.contains("can write"))
+    });
+    assert!(
+        discloses_bash_writes,
+        "CLAUDE.md's Roles section no longer states that the read-only agents can still write via \
+         `Bash`.\n  Without it a reader concludes \"read-only\" is airtight, which is how the \
+         original claim that a reviewer \"cannot edit what it reviews\" got written.\n  Restore a \
+         line naming `Bash` together with what it permits (shell writes), or remove `Bash` from \
+         the three definitions and delete both this test and its sibling."
+    );
+}
