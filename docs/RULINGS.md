@@ -69,8 +69,10 @@ parent's `rect == rect_yolo`.
 
 *Open provenance gap, found 2026-07-30, NOT resolved.* The counts above (24+2+7+11 = 44, plus 6/6
 eng-expanded) do not describe the three recorded oracle-page candidates alone. P01/P02/P03 are now
-recovered (see R3) and byte-for-byte verified against §16.24 item 17's recorded hashes, then re-run
-through upstream's real `group_output`: **P01 = 4 blocks, P02 = 6, P03 = 4 — 14 total**, nowhere
+recovered (see R3) — P01 byte-for-byte verified against §16.24 item 17's recorded **sha256**; P02/P03
+verified only by **size** against item 17(a)'s recorded byte counts, since the spec records no hash
+for either — then re-run through upstream's real `group_output`: **P01 = 4 blocks, P02 = 6, P03 = 4 —
+14 total**, nowhere
 near 44 or 49 (R3/R7's denominator). Whatever corpus produced 44/49 therefore includes pages beyond
 P01–P03 (plausibly `demo_bubbles` and/or others not named here), and its exact composition is not
 recorded anywhere retrievable — the probe scripts that produced it lived only in the deleted
@@ -119,10 +121,12 @@ judgment. **Neither architect cited it**, which Fable flagged as how scope drift
 episode 1 pages — P01 the ratified oracle page, P02/P03 its rejected siblings (item 17(a)). None
 were actually committed to `tests/fixtures/upstream/` despite item 17 saying they would be (a
 ratified step that was never executed — separate from anything in this ratification package).
-Re-fetched from `peppercarrot.com`'s `0_sources/ep01_Potion-of-Flight/low-res/` directory and
-verified byte-for-byte: P01 is 441,914 B, sha256 `3bef9922e09cea66ab12271da0070025768ae9bc5d286f4
-1ced617468131267e` — an **exact match** to item 17's recorded hash; P02/P03 sizes (448,475 B /
-302,541 B) also match item 17(a) exactly. Running upstream's real `group_output` on all three:
+Re-fetched from `peppercarrot.com`'s `0_sources/ep01_Potion-of-Flight/low-res/` directory. P01 is
+441,914 B, sha256 `3bef9922e09cea66ab12271da0070025768ae9bc5d286f41ced617468131267e` — an **exact
+match** to item 17's recorded hash, so P01 alone is byte-for-byte verified. Item 17(a) records no
+hash for P02/P03, only sizes; those sizes (448,475 B / 302,541 B) match exactly, which is weaker
+evidence of identity than a hash match but is what the spec actually lets us check. Running
+upstream's real `group_output` on all three:
 P01 → 4 blocks, P02 → 6, P03 → 4. This confirms the pages' identity but does **not** by itself
 reconcile the 44/49 counts (see the gap noted on R1) — 14 total blocks across these three pages is
 far short of either figure, so the broader corpus R1/R7 measured against includes more than just
