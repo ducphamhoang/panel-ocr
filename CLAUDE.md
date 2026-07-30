@@ -30,8 +30,13 @@ rather than summarised because summarising it has already overstated it twice:
 
 It establishes **nothing** about whether the harness reads these files, whether it honours
 `tools` or `model`, or even whether `Read`/`Grep`/`Glob`/`Bash` are present — **no test
-asserts that a tool is present**, apart from the two `rust-engineer` rows above. Passing this
-gate means the files are well-formed and self-consistent, not that they do anything.
+asserts that a tool is present**, apart from the two `rust-engineer` rows above.
+
+Passing this gate means the files satisfy the checks listed above, and nothing beyond them.
+Resist restating that as a property of the files — "well-formed", "valid", "correct" all
+smuggle back the generality bullet four is careful to deny. A summary sentence placed under
+an enumeration re-inflates the enumeration; that has happened here three times, twice inside
+the very edits written to fix it.
 
 If the definitions do load, then `fresh-reader`, `architect` and `fable-adjudicator` list
 no `Edit`/`Write`/`NotebookEdit`, so the harness would withhold those three tools whatever
