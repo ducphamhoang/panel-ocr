@@ -96,7 +96,21 @@ fn unquote(value: &str) -> &str {
         .unwrap_or(value)
 }
 
+fn reject_disallowed_control_characters(value: &str, subject: &str) -> Result<(), String> {
+    if let Some((byte_offset, character)) = value.char_indices().find(|(_, character)| {
+        (*character < '\u{20}' && *character != '\t') || *character == '\u{7f}'
+    }) {
+        return Err(format!(
+            "{subject} contains disallowed control character U+{:04X} at byte offset {byte_offset}",
+            character as u32
+        ));
+    }
+    Ok(())
+}
+
 fn quotable_or_quoted(value: &str) -> Result<(), String> {
+    reject_disallowed_control_characters(value, "frontmatter value")?;
+
     if value.starts_with('"') {
         if !value.ends_with('"') || value.len() < 2 {
             return Err("quoted value never closed".to_owned());
@@ -179,9 +193,13 @@ fn agent_frontmatter_has_opening_and_closing_delimiters() {
 fn frontmatter_values_are_safely_quotable_or_quoted() {
     for path in agent_paths() {
         for (line_number, line) in frontmatter_lines(&path) {
-            let Some((_, raw_value)) = line.split_once(':') else {
+            let Some((raw_key, raw_value)) = line.split_once(':') else {
                 continue;
             };
+            let key = raw_key.trim();
+            if let Err(rule) = reject_disallowed_control_characters(key, "frontmatter key") {
+                panic!("{} line {line_number}: {rule}", path.display());
+            }
             let value = raw_value.trim();
             if let Err(rule) = quotable_or_quoted(value) {
                 panic!("{} line {line_number}: {rule}", path.display());
@@ -192,12 +210,18 @@ fn frontmatter_values_are_safely_quotable_or_quoted() {
 
 #[test]
 fn quotable_or_quoted_accepts_safe_values_and_rejects_unsafe_values() {
-    // The file-driven test can only fail by corrupting a real definition, so the rule needs direct coverage.
+    // The file-driven test can only fail by corrupting a real definition, so the pure rule needs direct coverage.
     let cases = [
         ("\"a normal quoted description.\"", true),
         ("plain-no-colon-value", true),
         ("'Read, Grep, Glob, Bash'", true),
         ("opus", true),
+        ("\"quoted \u{01} value\"", false),
+        ("\"quoted \u{1b} value\"", false),
+        // This unquoted row proves the control-character check is branch-independent.
+        ("plain\u{1b}value", false),
+        ("\"quoted\tvalue\"", true),
+        ("plain\tvalue", true),
         ("\"he said \"hi\" and left\"", false),
         ("\"abc\" trailing junk", false),
         ("\"unterminated", false),

@@ -829,6 +829,34 @@ This is also rule 14b recurring: the gate that records this rule failed this rul
 twice in one session, so treat it as the default expectation rather than an irony — **when you write
 a gate that encodes a principle, run the principle over the gate before committing it.**
 
+### 14c-ter. Three rounds on one hand-rolled validator is itself the finding
+
+A third round followed: neither branch rejected **C0 control characters**, so a literal `\u{01}` or
+`\u{1b}` anywhere in the frontmatter passed the gate while YAML raises a `ReaderError` — which
+happens in the *reader*, before parsing, so it is invalid in keys and values, quoted and unquoted
+alike. TAB is the exception and had to stay accepted; that was verified against `safe_load` rather
+than assumed, because over-rejecting a valid input is its own defect.
+
+Fixed branch-independently, before the quoted/unquoted split. But count the rounds: **three
+successive reviews each found a fresh class of input the hand-rolled validator accepted and the real
+parser rejected** — `": "` in a plain scalar, then interior quotes / trailing junk / unterminated
+quotes, then control bytes. Every round was a true finding. Every fix was correct. The accept-set
+shrank each time and was never *known*.
+
+The lesson is not "keep patching until the reviewer runs out of ideas". It is:
+
+- **A hand-rolled validator standing in for a real parser has an accept-set nobody can enumerate**,
+  so "stricter than the consumer" is a hope about it, not a property of it. Each round only proved
+  the previous claim wrong.
+- **When patching a substitute check becomes a series, that is the signal to use the real consumer
+  instead.** The original reason to hand-roll — "not worth a dependency for four markdown files" —
+  was a cost estimate, and three rounds of review plus three commits is the measured cost of having
+  been wrong about it. Re-price the dependency against what avoiding it actually cost, not against
+  what it looked like it would cost.
+- The cheap intermediate step, taken here, is to **extract the rule into a pure function with a
+  literal table**, so each new class costs one row instead of one probe session. That is what made
+  rounds two and three cheap; it does not make the accept-set knowable.
+
 ---
 
 ## 15. A supporting example can refute the claim it is cited for — check the sign
