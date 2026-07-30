@@ -990,6 +990,13 @@ direction a union cannot produce.** It is evidence *against* the claim, printed 
   measured in that regime. Without the split, the failure is unattributable and the natural
   overcorrection is to distrust the whole identity.
 - **Assert the entailed inequalities alongside the equality, for the message.** Equality implies
-  them, so it adds no power — it adds a diagnostic that says *"a bounding union cannot narrow an
-  edge, so this is an engine-geometry divergence, not a line-union difference."* Had that existed
-  as prose, this would have been caught when the section was written.
+  them, so it adds no power — it adds a diagnostic. Had that existed as prose, this would have been
+  caught when the section was written. **But state the diagnostic's premise in it.** This bullet
+  first read *"a bounding union cannot narrow an edge, so this is an engine-geometry divergence, not
+  a line-union difference"* — unconditionally, and the second clause only follows when the upstream
+  box was produced by a bounding union at all. Where upstream builds a block from split lines or
+  from unassigned line polygons it is `bbox(lines)` and no union is involved, so a narrowed edge is
+  the expected shape and the confident attribution names the wrong cause. The first clause is a
+  theorem and stands; the inference is derivation-conditional. Spec §16.27 item 6 corrects the same
+  sentence where it had become normative — which is this rule recurring one level up: a diagnostic
+  message is a claim, and a claim states its scope.

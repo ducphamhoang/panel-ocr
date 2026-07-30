@@ -1372,6 +1372,8 @@ Fresh, idiomatic design per decision #6 — no docopt compatibility. Verbosity m
 16. **Lazy construct-and-latch** — upstream constructs the detector before its per-image loop; v1 defers construction until the first image that needs detection and latches that attempt's success or rendered refusal for the run, so §4.4 resume can bypass a model it will never read. The implementation site will carry `DEVIATION(16)`; the concurrent implementation pass has not added that comment yet.
 17. **Coverage-filter scope and operand** — ratified by §16.20 item 9, which corrects §8.3 step 6's former claim of unconditional parity. Upstream applies its `mask_score < mask_score_thresh` false-positive filter **only to line-less blocks** (`textblock.py:485-490`, inside `if len(blk.lines) == 0:`) and computes it over the **unrefined** mask (`inference.py:203` passes `mask` to `group_output`; `refine_mask` runs at `:204`). v1 applies the filter to **every** block over the **refined** mask. Both differences are deliberate: v1 synthesizes no DBNet line polygons (§14.12 and §8.3's out-of-scope list), so every block is line-less by construction and the scope difference is vacuous *for v1* — it would become live the moment line synthesis lands, which is why it is registered rather than left as prose. The operand difference makes our coverage values roughly 2× upstream's on the same boxes; measured across two real manga pages the filter has never fired (minimum coverage 0.3025 against a 0.1 threshold). The implementation site carries `DEVIATION(17)`.
 
+18. **Rescaled-box clamp to image bounds — ratified by §16.27 item 9, which re-grounds it.** After truncating rescaled detector coordinates to `i32`, v1 clamps `x1,y1` to `>= 0` and `x2,y2` to `<= image_size`. Upstream does **not** do this: `grep -rn clip_coords` over the pinned checkout `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3` exits 1 (no hit in any file), and the only clamping in the vendored yolov5 helper is IoU arithmetic — `yolov5_utils.py:166` comments `.clamp(0)` and `:169` calls it, both inside `box_iou`'s intersection computation, and they are that file's only two occurrences of `clamp` or `clip`. So nothing upstream bounds these coordinates to the frame at any point — verified by grep, not inferred. v1 clamps because `run()` must produce a `PageDataRaw` that passes its own `validate()`, an invariant that is ours and has no upstream counterpart — which is what makes this a deliberate divergence and not the port it was previously described as. The clamp is unchanged in behaviour by that re-grounding: no relaxation, no `validate()` change, no deletion. The implementation site must carry `DEVIATION(18)` at the clamp in `crates/pc-detect/src/yolo.rs`, that file's doc comment must stop citing `clip_coords`, and so must the comment at `crates/pc-detect/tests/d5_yolo.rs:297`, which repeats the withdrawn citation at a second site. All three are **authorised by this entry** and are follow-up work at the time it lands; §16.27 item 9 enumerates them, with the reason the enumeration is explicit rather than summarised, rather than leaving them implicit.
+
 Each of these must appear as a `// DEVIATION(n): ...` comment at the implementation site referencing this section, so a future parity investigation finds them immediately.
 
 ---
@@ -1466,7 +1468,7 @@ Resolved during test-drafting for `pc-detect`/`pc-imageops` (D2, D3, D5, D6, D7,
 1. **`DetectInput` gains `pub config: TextDetectorConfig`** (§8.2's field list omitted it). Required so `pc-detect` can reject `MaskRefineMode::Annotation` per §16.5 item 3, and consistent with §3's "config by value in every stage `Input`" rule. Every stage crate therefore depends on `pc-config` (already noted in §16.5 item 1).
 2. **Naming**: §8.2's `base_image_dest` is the authoritative spelling; §4.3's diagram (`base_png_dest`) is a typo — read `base_image_dest` there.
 3. **`PageDataRaw.scale` stores exactly what `calculate_new_size_and_scale` returns**, even in the integer-inverse branch where that can differ slightly from `new_height / original_height` (e.g. `h=5001` gives `scale=0.5` but `new_h=2501`, so `new_h/h ≈ 0.50010`). This is intentional, not a bug: §11.3 already recomputes the denoiser's up-scale factor from actual image sizes rather than trusting `scale` for that purpose, so nothing downstream depends on `scale` being the exact ratio. §2.4's doc comment is amended to say "approximately `new_height / original_height`; exactly `1.0` when no resize happened" rather than claiming exactness.
-4. **Rescaled detector boxes ARE clipped to image bounds.** §8.3 step 4 is amended: after truncating to i32, clamp `x1,y1` to `>= 0` and `x2,y2` to `<= image_size`. This isn't new scope — upstream's yolov5 pipeline clips coordinates (`clip_coords`) as a normal part of the postprocess the spec already claims to port; the original §8.3 step 4 text simply omitted mentioning it. Required so `run()` can produce a `PageDataRaw` that passes its own `validate()` on real (frame-overhanging) detector output.
+4. **Rescaled detector boxes ARE clipped to image bounds.** §8.3 step 4 is amended: after truncating to i32, clamp `x1,y1` to `>= 0` and `x2,y2` to `<= image_size`. This isn't new scope — upstream's yolov5 pipeline clips coordinates (`clip_coords`) as a normal part of the postprocess the spec already claims to port; the original §8.3 step 4 text simply omitted mentioning it. Required so `run()` can produce a `PageDataRaw` that passes its own `validate()` on real (frame-overhanging) detector output. **(See §16.27 item 9 before citing this item's justification: the `clip_coords` citation in the sentence above is false — no such symbol exists in the pinned upstream checkout, `grep` exits 1 — and it is corrected there. The clamp rule itself is KEPT unchanged and re-grounded as entry 18 of the deliberate-deviations register; only the reason given for it was wrong.)**
 5. **Box rasterization is EXCLUSIVE on `x2`/`y2` everywhere, matching §2.1's `Rect` convention exactly** (confirmed: `pc-core`'s already-implemented, already-tested `Rect::to_crop` treats `x2`/`y2` as exclusive). §13's M1 row, which said "inclusive", is corrected to say **exclusive** — M1 must rasterize box masks using the same convention as every other rect operation in the codebase, so `mask_coverage` (§8.3 step 6) and the future masker (§10) agree on what region a box actually covers.
 6. **`cv2.INTER_LINEAR` (§8.3 step 5's mask resize) is pinned to the same convention OpenCV actually uses**: half-pixel-centre source mapping (`src = (dst + 0.5) * (src_len/dst_len) - 0.5`), with border clamping at both ends, axes scaled independently. Test tolerance is ±1 per pixel (OpenCV's u8 path is fixed-point); exact parity is deferred to an F1-recorded reference, mirroring how §8.3 step 2 already treats INTER_AREA.
 7. **`postprocess_mask`'s float→u8 conversion truncates (does not round), after clamping to `[0.0, 255.0]`.** Matches upstream's `(img * 255).astype(np.uint8)` exactly except for the clamp (upstream's `astype` wraps out-of-range floats, which is a real bug the clamp fixes). Consistent with the project's general stance of porting upstream's numeric behavior faithfully except where explicitly identified as a bug (§14).
@@ -3243,7 +3245,14 @@ decision; it wrote no code.
    line-less upstream block, where `bbox(upstream.lines)` is undefined and the identity
    degenerates to `upstream.xyxy == ours.rect` — v1 synthesizes no lines, and upstream's
    line-less branch is exactly where §14.17's filter divergence lives, so this case is not
-   hypothetical. And the comparator must **assert the number of pairs it compared** against a
+   hypothetical. **(ERRATUM, see §16.27 item 7 — read it before citing this clause. "This case"
+   names two different branches, and only one of them is real: upstream's line-less *filter*
+   branch fired once on the candidate page, while a line-less *output* block is impossible —
+   no path through `group_output` appends one, re-read against the pinned checkout and probed
+   directly. The degenerate identity branch is therefore a property of the artifact grammar,
+   not a reachable upstream shape. The requirement to handle it stands unchanged; its "not
+   hypothetical" weighting does not, and §16.27 item 8 corrects the same conflation at its
+   second site.)** And the comparator must **assert the number of pairs it compared** against a
    hard-coded expected count: a comparator reporting "compared 0 boxes, 0 divergences → PASS"
    is cookbook rule 1's defect, and it is the failure mode a frozen-file comparison is most
    prone to, since a renamed field silently yields an empty pairing rather than an error.
@@ -3923,6 +3932,13 @@ gating divergence; negative controls constructed in-test and never committed.
    documented split-merge citing its register entry / `Open`), and `Open` is a blocking violation,
    never a verdict.
 
+   **(AMENDED by §16.27 item 3 — read it before treating the mechanism list in the sentence above as
+   closed. A fifth alternative, `DbnetScattered`, is inserted there: an upstream block built from
+   unassigned DBNet line polygons carries no yolo box, can never be paired, and had no legal
+   mechanism under the list as written, so a page carrying one had only `Open` — a blocking
+   violation — available for a block that is not a defect. `Open` stays blocking and nothing else in
+   this item moves.)**
+
 5. **DECIDED: the `Expectations` live in the TEST SOURCE, not a committed manifest.** The
    engineer's `MANIFEST.json` is rejected. A count or pairing read from a file committed beside
    the artifacts under comparison is derived data one hop from the gate — cookbook rule 12
@@ -4059,6 +4075,13 @@ gating divergence; negative controls constructed in-test and never committed.
     sums are term-for-term identical to item 20(a)'s partition reading, so its one-gating-row
     conclusion is untouched.
 
+    **(Pointer, not a claim — read §16.27 item 3(b) before treating the upstream sum above as
+    complete. A fourth upstream mechanism term, `dbnet_scattered`, is added there. That entry's marker
+    sits at item 20 instead, because item 20(c) states in its own text that it restates these two
+    equations; no claim is declared against this item, since the ruling being transcribed names item 4
+    and item 20(c) only. Widening it to this item is a separate step, flagged there rather than
+    performed.)**
+
 12. **DECIDED — `demo_bubbles` detector artifacts: record to scratch for §10.7(B)15's non-gating
     report, commit nothing, and the four §16.13 item 8 tests stay `#[ignore]`d.** The architect
     wins; §16.20 item 12 is dispositive. Box presence on those crops is decided by rounding (0.037
@@ -4137,6 +4160,19 @@ gating divergence; negative controls constructed in-test and never committed.
     the Senior Rust Engineer while drafting the comparator's controls; verified independently by
     the Orchestrator against `:3461` and by the Technical Architect against the code. Both
     architects agree, so this is a joint ratification and needed no tie-break.
+
+    **(Partly superseded by §16.27 — read it before citing 18(b), 18(i) or 18(k). Three sub-items are
+    corrected there and the rest of this item stands. 18(b)'s leg-2 law is scoped to upstream blocks
+    that have a `rect_yolo` at all, since blocks built from unassigned DBNet line polygons have none
+    and the law is undefined for them — §16.27 item 4, which also records that the finding does not
+    bite the ratified oracle page itself. 18(i)'s diagnostic message becomes derivation-conditional,
+    because a bounding union is not what produced the upstream box on a split or scattered block —
+    §16.27 item 6. 18(k)'s "rare-but-real" conflates upstream's line-less *filter* branch, which is
+    real, with a line-less *output* block, which no path through `group_output` can emit — §16.27
+    item 8. Two things are deliberately NOT touched: 18(h) is not reopened, because §16.27 item 2
+    gates a different quantity (`ours.rect - rect_yolo`) and leaves `residual_leg1` diagnostic
+    exactly as (h) leaves it; and 18(d) is not corrected at all — §16.27 item 10 records the
+    re-verification that found its fixture attribution right as written.)**
 
     (a) **The structural fact.** `Rect::merge` (`crates/pc-core/src/geometry.rs:60-67`) is
     `x1.min, y1.min, x2.max, y2.max`, so a bounding union is monotone non-increasing in `x1,y1`
@@ -4451,6 +4487,14 @@ gating divergence; negative controls constructed in-test and never committed.
     | ours | `documented_split_merge_ours` | `DocumentedSplitMerge` |
     | ours | `open_ours` | `Open` |
 
+    **(AMENDED by §16.27 item 3(b) — read it before treating this table, or the two equations, as
+    complete. One upstream row is added there, `dbnet_scattered` for the `DbnetScattered` mechanism,
+    because §16.27 item 3(a) adds a mechanism class and this item's own partition rule allows exactly
+    one term per class. The added term is derived from the signed entry list like every other
+    mechanism term, so the authored anti-vacuity literals of (b) are untouched. Its unsuffixed
+    spelling follows the `class_duplicates` row above, the mechanism having no ours-side
+    counterpart.)**
+
     Item 11's equations are restated in the same edit, with the old→new mapping recorded there once.
     **Rename in spec, Rust type and doc together or in none of them** — the engineer's condition,
     adopted whole: a spec term differing from the identifier is cookbook rule 14's drift vector.
@@ -4532,7 +4576,13 @@ gating divergence; negative controls constructed in-test and never committed.
     write: exact whole-vector assertions only over structurally-sound tables, and structural-defect
     controls assert **containment plus gating-non-empty, never sibling-absence**.
 
-    (f) **Sign precision on item 18(h)(iii), because rule 15 is literally about signs.** The
+    (f) **Sign precision on item 18(h)(iii), because rule 15 is literally about signs.**
+    **(NARROWED by §16.27 item 5 — read it before citing the attribution below. It is true of pairs
+    whose upstream derivation is `YoloUnioned` and silent otherwise: outside that derivation the
+    upstream box is not a bounding union of a yolo box with lines, so the difference this clause reads
+    signs from carries no information about leg 1. The recorded counterexample has all four components
+    in union-impossible directions with leg 1 exact. The signs themselves are not in question, and
+    §16.27 item 2 is what replaces the attribution with an exact row.)** The
     one-directional attribution is **per edge**: the union-impossible directions are
     `residual_leg1.x1 > 0`, `y1 > 0`, `x2 < 0`, `y2 < 0` — each of those *proves* leg 1, while the
     complementary directions prove nothing, being consistent with either leg. **"A negative component
@@ -4807,7 +4857,15 @@ required a ratification before implementation.
    but "any pair whose upstream block lacks the field" — that site is the sole reason the curve-fit
    needed its `LineLess` clause, and it sharpens the diagnosis to span branches rather than states.
 
-10. **One unverified upstream fact, named rather than assumed.** Whether upstream's `group_output`
+10. **One unverified upstream fact, named rather than assumed.**
+    **(AMENDED by §16.27 item 3(c) — read it before citing this item. The check came back the other
+    way, so this item's own contingency fires rather than a fresh judgment being made: upstream does
+    construct such blocks, measured on two of the three recorded page candidates against the pinned
+    checkout. The presupposition below is therefore false, and the obligation in the closing sentence
+    becomes "one score per gated yolo-derived block". What is NOT affected: this item's `Partial`
+    conclusion stands on its own ground — item 6(a) computes coverage over the paired set, and a block
+    with no yolo box is never paired, so `Partial` still cannot arise from this shape.)**
+    Whether upstream's `group_output`
     can construct a post-filter `TextBlock` from unassigned line polygons — which would have no yolo
     box and hence legitimately no confidence — was **not** checkable in this environment (no upstream
     checkout) and the spec does not record it. §16.24 item 18(b) already presupposes the answer is
@@ -5042,6 +5100,503 @@ This entry makes the convention checkable.
    tree first, was reviewed twice, and was corrected only when a reader probed it with a constructed
    line instead of reasoning about it: **the fix for a gate's blind spot needs a control aimed at
    the blind spot, not an argument that the spot is unreachable.**
+
+## 16.27 Derivation recording, the leg-1 gating row, the `DbnetScattered` mechanism, and six errata (Fable ratification package, 2026-07-29; transcribed 2026-07-30)
+
+Fable was convened as tie-breaker on the F1 sequence after the two Opus subagents disagreed. It
+re-ran the probe itself under the pinned checkout and cross-validated against §16.20 item 9's
+independently ratified measurement of the same coverage-filter firing. **Fable wrote no code and
+edited no files**; implementation goes through the normal pipeline. This section is the
+transcription, read under `CLAUDE.md` step 1a before commit. The source record is `docs/RULINGS.md`,
+items R1 and R3 through R7 plus its sequencing section; R8 of the same package is already
+transcribed as §16.26 item 3(d) and is not restated here.
+
+**Record quality, stated once because it bounds every number below.** `docs/RULINGS.md` is the
+Orchestrator's record of what the adjudicator ruled, not a verbatim transcript: only text it carries
+in block quotes is captured as the adjudicator's own wording, and *"everything else is the
+Orchestrator's paraphrase, including the numbers"*.
+
+**What a `>` block below therefore does and does not attribute.** Every `>` block in this entry is
+verbatim from `docs/RULINGS.md`. Only **one** of them — item 1's *"not a competing design; it is a
+sentence"* — is verbatim from a `>` block *there*, so it is the only one that carries the
+adjudicator's own wording. The rest quote the **Orchestrator's record** exactly rather than
+paraphrasing it, which is what keeps a narrow scope from being widened in transit (`CLAUDE.md`'s
+"a claim's scope travels with it") — but they are not the adjudicator speaking, and no sentence below
+may attribute them to the adjudicator. Where a sentence introducing one of these blocks names a
+source, it names `docs/RULINGS.md`; "the ruling" is reserved for prose that is already labelled
+paraphrase, where no verbatim claim is being made.
+
+This entry therefore ratifies **rules**, and labels every supporting count as what it is. Where a
+count could be re-derived while transcribing it was, against the upstream checkout pinned at
+`0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`, and the re-derivation is cited beside it; where it could
+not, the count is marked unreconciled and may not be cited as reproducible.
+
+1. **Derivation is recorded, and the schema is what is ratified.** The engineer's position wins; the
+   architect's prose qualifier was refused as
+   > not a competing design; it is a sentence
+
+   The impossibility holds in its decisive form: a split-derived block is observationally
+   `xyxy == bbox(lines)` with `ours ⊄ xyxy`, which is *exactly* what a genuine leg-1 defect looks
+   like, so any pair-local predicate exempting one exempts the other. The fragility objection is
+   answered by precedent — the oracle already reaches inside upstream by ratified decision three
+   times (§16.24 items 8, 9, 18(e)); the oracle is the frozen artifact, not the recipe (§16.20
+   item 7); and an upstream bump is already a re-record plus full re-sign event.
+
+   (a) **The recorded fields.** Per upstream block:
+   `derivation: YoloUnioned | YoloSynthesizedCorners | YoloSplit | DbnetScattered` — a **CLOSED**
+   enum. The recorder fails on any unclassifiable block; **there is no `other` bucket**, and adding a
+   fifth value is a ratification, not an implementation choice. Alongside it:
+   `rect_yolo: Option<[i32;4]>`; `eng_expanded: bool`; and when `eng_expanded` is set,
+   `lines_pre_expand` is **REQUIRED** together with `expand_size`.
+
+   (b) **Binding condition on the recorder.** It MUST run **pristine and instrumented**
+   `group_output` on **deep-copied identical inputs** and **hard-fail** unless the two outputs are
+   field-by-field identical over `xyxy`, `lines`, `language`, `vertical`, `font_size`.
+   `PROVENANCE.json` records that the assertion ran — the record of the check is part of the
+   artifact, not a claim in a commit message.
+
+   (c) **One exact epsilon-free law per derivation.** Conditions are tabulated rather than summarised
+   as "the derivations are consistent", on §16.24 item 19(e)'s rule that an adaptation is justified by
+   a condition-by-condition table and not by a reassuring sentence. Every law below is exact: no
+   epsilon, no inequality, no IoU, no per-edge band. Line numbers are
+   `pcleaner/comic_text_detector/utils/textblock.py` at the pinned commit.
+
+   | `derivation` | `rect_yolo` | exact law | upstream path that produces it |
+   |---|---|---|---|
+   | `YoloUnioned` | `Some`, the parent yolo box | `xyxy == bbox(rect_yolo ∪ bbox(lines_pre_expand))` | ≥1 line assigned and no split, so `adjust_bbox(with_bbox=True)` runs (method at `:94-105`, its `True` branch at `:96-100`, called from `:509`) |
+   | `YoloSynthesizedCorners` | `Some`, and `rect_yolo == xyxy` | `xyxy == rect_yolo == bbox(lines_pre_expand)` **and** `len(lines) == 1` | line-less block survives the `mask_score` filter, then `xywh2xyxypoly` writes the four corners of its own `xyxy` as one line (`:485-492`) |
+   | `YoloSplit` | `Some`, the parent yolo box, and in general `rect_yolo != xyxy` | sub-block `xyxy == bbox(lines_pre_expand)`; **and** the unmatched ours-side parent's `rect == rect_yolo` | `split_textblk` then `adjust_bbox(with_bbox=False)` per sub-block (`:440-443`), which discards the parent box entirely |
+   | `DbnetScattered` | `None` | `xyxy == bbox(lines_pre_expand)` | constructed from a single unassigned line (`:474`), then `merge_textlines` → `adjust_bbox(with_bbox=False)` (`:399-412`) |
+
+   `YoloSplit`'s law is the one that turns `Mechanism::DocumentedSplitMerge` from an unfalsifiable
+   citation into verified evidence: all three of its conjuncts are checkable against the recorded
+   artifact.
+
+   Every one of the four laws was exercised on a synthetic input constructed to drive its branch
+   (2026-07-30, pinned checkout), and each held exactly. That is a check on the *reading* of upstream's
+   control flow, not evidence about real pages: on the three real candidate pages of (f) only three of
+   the four derivations occur at all, and `YoloSplit` occurs on none of them. The recorder's hard-fail
+   is what keeps an unexercised law from passing silently.
+
+   (d) **Why the laws are stated over `lines_pre_expand`, measured rather than argued.** The
+   English-expansion loop (`:518-532`) rewrites `blk.lines` **after** the last `adjust_bbox` and never
+   re-adjusts `xyxy`, so for an `eng`-classified horizontal block the served `lines` no longer satisfy
+   the law. Two measurements, both taken 2026-07-30 while transcribing, against the pinned checkout.
+
+   *On the ratified oracle page itself*, through the census of (f): its block 3 is the
+   `YoloSynthesizedCorners` case, `xyxy = [674,1397,740,1438]` with served
+   `bbox(lines) = [674,1393,740,1442]` — expanded by 4 px on both `y` edges, so
+   `xyxy == bbox(lines)` is **false** over the served field and true over `lines_pre_expand`. Its
+   blocks 0 and 1 are `eng` and horizontal too, and their served `bbox(lines)` overhangs their `xyxy`
+   on `y1` in the **same direction but not the same magnitude** — 2 px each (`74 → 72` and
+   `630 → 628`) against block 3's 4 px. So the loop's effect is the page's normal case rather than a
+   corner of it, while its size is per-block. Those two per-block figures are read off the recorded
+   instrumented-`group_output` output for P01 — the page byte-verified by sha256 against §16.24 item
+   17 — under the pinned checkout; an earlier draft said "both show the same outward `y1` shift",
+   which is true of the direction and false of the amount, and `lines_pre_expand` is required because
+   the direction recurs, not because the offset is a constant one could subtract back out.
+
+   *On a synthetic single-box, no-lines input* driven straight into `group_output` (`cls = 0` → `eng`,
+   mask fill 255, box `[50,60,150,200]`), which isolates the mechanism from the network: the block
+   comes back with `xyxy = [50,60,150,200]`, `bbox(lines_pre_expand) = [50,60,150,200]` — law holds —
+   and post-expansion `bbox(lines) = [50,46,150,214]` with `expand_size = 14`. The identical run with
+   `cls = 2` → `unknown` leaves the lines untouched, which pins the cause to the language branch and
+   not to something else in the path. That is the whole reason `lines_pre_expand` is required rather
+   than convenient.
+
+   (e) **Why (b)'s instrumentation is load-bearing, and not replaceable by re-derivation.** Measured
+   on the same synthetic branch runs as (c): `xyxy == bbox(lines_pre_expand)` holds for **three** of the four
+   derivations — `YoloSynthesizedCorners`, `YoloSplit` and `DbnetScattered` all satisfy it exactly —
+   so the law alone does not classify a block. The discriminator is `rect_yolo`: present and equal to
+   `xyxy` (corners), present and unequal (split), or absent (scattered). `rect_yolo` is **not
+   recoverable from upstream's output**, because `adjust_bbox` overwrites the field it was stored in;
+   it exists only inside the run. A recorder that inferred `derivation` from the artifact would
+   therefore be guessing between three shapes, which is the failure (b) exists to prevent.
+
+   (f) **The validating corpus is NOT transcribed; the census that IS reproducible is recorded
+   instead.** The source record carries per-derivation validation counts and an eng-expanded count over
+   a larger corpus. Its own annotation, added 2026-07-30, withdraws those as reproducible fact: the
+   pages that produced them are not named anywhere retrievable, and they cannot be the three recorded
+   oracle-page candidates, which yield 14 blocks between them. **Do not cite those totals from this
+   entry — this entry does not carry them.**
+
+   What is recorded here is the census that was re-run while transcribing (2026-07-30), because a
+   measured small number beats an unattributable large one. Pages: the three Pepper&Carrot candidates
+   of §16.24 item 17, P01 byte-verified against item 17's recorded sha256 and P02/P03 against item
+   17(a)'s recorded sizes. Model: `comictextdetector.pt.onnx`, sha256
+   `1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f`, which is
+   `pc_models::COMIC_TEXT_DETECTOR.sha256` character-for-character — so the census ran on this
+   project's own pinned weights, not a lookalike. Loaded through
+   `cv2.dnn.readNetFromONNX` — the backend §16.20 item 6 makes load-bearing. Derivation tagged by
+   instrumenting three module-global functions inside `textblock`, each delegating to the real one and
+   only labelling the blocks it returns, so no upstream arithmetic was reimplemented.
+
+   | page | blocks | `YoloUnioned` | `YoloSynthesizedCorners` | `YoloSplit` | `DbnetScattered` |
+   |---|---|---|---|---|---|
+   | P01 (the ratified oracle page) | 4 | 3 | 1 | 0 | **0** |
+   | P02 | 6 | 4 | 0 | 0 | **2** |
+   | P03 | 4 | 3 | 0 | 0 | **1** |
+   | total | 14 | 10 | 1 | 0 | **3** |
+
+   Read this as what it is: **three pages, not a distribution.** It is enough to settle the two
+   questions this package turns on — whether a no-yolo-box block occurs at all (item 3) and whether a
+   line-less output block occurs (item 7) — and it is not enough to characterise `YoloSplit`, which
+   these pages never produce. A future reader needing a real per-derivation distribution takes it from
+   the recording run.
+
+   (g) **NOT authorised here: the frozen struct literals in
+   `crates/pc-detect/tests/f1_oracle_comparator.rs`.** The package's sequencing note describes a
+   mechanical adaptation of those literals as already authorised. Checked while transcribing
+   (2026-07-30): **no ruling in the package grants that authorisation** — the sentence asserts it
+   without a source. Editing a frozen test needs a named exit under cookbook rule 8, and the closest
+   precedent, §16.24 item 19(d), came paired with (e)'s condition-by-condition table. So the
+   adaptation is **DEFERRED** pending a joint architect-plus-engineer or Fable ruling that authorises
+   it explicitly and states its conditions. Until that lands the file is not edited, and nothing in
+   this entry may be read as licensing it. Recorded rather than dropped, per §16.23 item 1's rule.
+
+2. **A second, new geometry gate: `ours.rect == rect_yolo` on every paired block, exact and
+   epsilon-free.** §16.20 item 3(b) alone is no longer fit as the sole geometry gate — the ruling's
+   recorded grounds, carried as paraphrase, are that 65 of 100 edges are unconstrained by it, 8 of 25
+   blocks are free on all four edges, and the `spikey` fixture tolerates a `[19,60,23,17]` px error.
+   The remedy is a row, not a tolerance.
+
+   (a) **This does not reopen §16.24 item 18(h).** Quoted rather than paraphrased, because the two
+   comparisons differ by which operand is subtracted:
+   > 18(h) is NOT reopened — its amendment made `upstream.xyxy - ours.rect` *diagnostic* precisely
+   > because that is non-zero when healthy; the new row gates `ours.rect - rect_yolo`, which is zero
+   > when healthy.
+
+   `residual_leg1` stays exactly as item 18(h) leaves it: diagnostic, and expected non-zero on a
+   healthy line-informed pair. The new row is a different quantity on a different pair of operands,
+   and it is zero on a healthy pair, which is what makes it gateable without an epsilon.
+
+   (b) **Recording-time contingency, with its exits already ratified.** A truncation straddle can fail
+   this row at recording time. The sanctioned exits are item 18(h)(ii)'s and no others;
+   classification is item 18(j)'s — a §16.x shared-sensitivity finding, **never** a §14 register
+   entry, because both sides truncate; and the evidence is the pre-truncation floats on **both**
+   sides, not on ours alone.
+
+   (c) **Structural guard, and it is what makes (a)'s row well-posed.** A pair whose upstream
+   derivation is `YoloSplit` or `DbnetScattered` is **itself a gating row**. For a split sub-block
+   `rect_yolo` is the parent, so a sub-block paired with one of ours would compare our box against a
+   box upstream itself discarded; for a scattered block there is no `rect_yolo` to compare against at
+   all. Neither shape may be paired, and the guard says so structurally instead of leaving the
+   equality row to produce a confusing failure. The gating variant's Rust name is left to F1-C and is
+   not ratified here; its message must name the derivation, since that is the fact a reader needs.
+
+3. **`DbnetScattered` becomes a mechanism, and three ratified clauses move with it.** Without it, a
+   page carrying scattered blocks has only `Open` available — a blocking violation — and stretching
+   `DocumentedSplitMerge` across the no-line-synthesis deviation would widen a register entry past its
+   recorded scope.
+
+   The ground is measured, not inferred, and the measurement is item 1(f)'s census: **P02 carries 2
+   `DbnetScattered` blocks and P03 carries 1**, with **0 on P01**. The larger no-legal-mechanism ratio
+   the source record cites inherits item 1(f)'s provenance gap and is not restated here as fact —
+   **the falsification does not need it**, because one such block is enough to refute a claim that
+   there are none, and three were counted directly.
+
+   (a) **The mechanism enters a closed enumeration, which is why this is an amendment and not an
+   addition.** §16.24 item 4 ends with a closed list: *"Every `Unmatched` entry carries a mechanism
+   (§14.13 per-class duplicate / coverage-filtered / documented split-merge citing its register entry
+   / `Open`), and `Open` is a blocking violation, never a verdict."* A fifth alternative is inserted:
+   **`DbnetScattered`, citing its register entry**. The `Open`-is-blocking half is untouched.
+
+   **SUPERSEDES: §16.24 item 4**
+
+   The mechanism is upstream-side-only **by construction**: v1 synthesizes no DBNet line polygons, so
+   we can never produce a scattered block, so one can never appear on our side and can never be
+   paired — item 2(c) makes pairing one a gating row. The mechanism carries the same name as the
+   `derivation` value of item 1(a) deliberately; the source record uses one name for both positions.
+
+   **Register anchor, recorded as an open obligation rather than invented.** The source record calls
+   this a *"mechanism/register entry"* without naming a §14 number, and the register carries no entry
+   *for* the no-line-synthesis deviation: §14.17 states the fact in passing, as a premise of the
+   coverage-filter entry, and cites §14.12 for it, whose own text is about mask refinement. Under
+   §16.20 item 3(e) a row may not close as
+   `EXPLAINED` against an entry that does not yet exist, so until such an entry lands **the anchor for
+   a `DbnetScattered` entry is this item**, which does exist and does record the mechanism. If a
+   future ratification adds a §14 register entry for the deviation, the anchor moves there in the same
+   edit as the spec, the Rust identifier and the doc — item 20(c)'s condition, applied to a citation
+   rather than to a name.
+
+   (b) **The accounting partition gains a fourth upstream term.** §16.24 item 20 ratifies that every
+   unmatched entry on a side falls under exactly one term and that each term names exactly one
+   mechanism class; a new mechanism class therefore forces a new term, or scattered blocks fall into
+   `open_upstream` and block a page that has nothing wrong with it. Item 20(c)'s table gains one row:
+
+   | side | term | mechanism |
+   |---|---|---|
+   | upstream | `dbnet_scattered` (unsuffixed — the mechanism is upstream-side-only, see (a)) | `DbnetScattered` |
+
+   **SUPERSEDES: §16.24 item 20**
+
+   The upstream equation becomes
+   `pairs + class_duplicates + documented_split_merge_upstream + dbnet_scattered + open_upstream == upstream_total`;
+   the ours-side equation is unchanged. The term is **derived** from the signed entry list, on the
+   same side of item 20(b)'s split as every other mechanism term — the authored anti-vacuity literals
+   remain `pairs`, `upstream_total`, `ours_total` and gain nothing here.
+
+   **The spelling is an application of a ratified rule, not a fresh ruling.** It is unsuffixed on item
+   20(c)'s own precedent for `class_duplicates` (*"unsuffixed — the mechanism is upstream-side-only by
+   ratified definition"*), since the mechanism has no ours-side counterpart to distinguish it from. A
+   later ratification preferring another spelling changes spec, Rust identifier and doc together or in
+   none of them, which is item 20(c)'s own condition. Item 20(c) also owns the restatement of item
+   11's two equations; item 11 carries a pointer to this entry for that reason and no claim is
+   declared against it here, because the source record names item 4 and item 20(c) only. Extending a
+   claim to item 11 is a separate, argued step and is flagged rather than performed.
+
+   (c) **§16.25 item 10's presupposition is falsified, and its own ruling decides what happens next.**
+   Item 10 named the fact unverified, presupposed the answer was no, and pre-committed the outcome:
+   *"If the check comes back the other way, the finding is NOT 'Partial should be diagnostic'"* — it is
+   that item 18(b)'s leg-2 law needs an **erratum**, which is item 10's own word and one of the
+   supersession verbs `crates/pc-testkit/tests/spec_supersession.rs` recognises, so it is used here
+   rather than a synonym. It came back the other way. What follows is that
+   ruling **firing**, not a fresh judgment; neither architect cited it, which is how scope drift
+   starts. Item 10's obligation is re-scoped, quoted from the source record (`docs/RULINGS.md`)
+   rather than restated — the Orchestrator's wording there, not the adjudicator's:
+   > Item 10's obligation is re-scoped to one score per gated yolo-derived block.
+
+   **SUPERSEDES: §16.25 item 10**
+
+   Item 10's conclusion about `Partial` is otherwise **untouched and independently sound**: `Partial`
+   does not fire on scattered blocks, because §16.25 item 6(a) computes the coverage subject over the
+   **PAIRED** set and a scattered block is never paired. So the re-scope narrows a recording-script
+   obligation; it does not reopen `Partial`'s gating status, which rests on §16.20 item 3(e).
+
+4. **Erratum 1 of 6 — item 18(b)'s leg-2 law is a law about `YoloUnioned` blocks, not about every
+   upstream block.** Leg 2 is `upstream.xyxy == bbox(upstream.rect_yolo ∪ bbox(upstream.lines))`,
+   which is undefined for a block that has no `rect_yolo`. Item 3 above measures such blocks. The
+   correction is the scope of the law, not its algebra.
+
+   **SUPERSEDES: §16.24 item 18(b)**
+
+   **The scope of the correction, quoted rather than widened, because it is narrower than it looks:**
+   > The 11/49 no-legal-mechanism ground does **not** bite p01 (zero scattered, zero split there); it
+   > blocks the *vocabulary* and the *alternative pages* (p02 has 2 scattered, p03 has 1).
+
+   Of that quote, the **per-page halves were re-measured and hold exactly** — item 1(f)'s census reads
+   0 / 2 / 1 on P01 / P02 / P03 and zero splits anywhere. The `11/49` ratio is from the corpus item
+   1(f) marks unreconciled; it is quoted here because it is the **source record's** own scope
+   sentence — `docs/RULINGS.md`'s wording, which is the Orchestrator's and not the adjudicator's —
+   and it is not asserted as a fact by this entry. Nothing in the correction depends on it.
+
+   Three consequences follow from that scope and nothing wider. **The ratified oracle page is not
+   re-selected**: under corrected recording every P01 block closes exactly — three paired with
+   **`residual_full`** at `[0,0,0,0]` over `lines_pre_expand`, one `ClassDuplicateOf`, one
+   `CoverageFilteredUpstream` — and re-selection could not dodge the finding anyway, since any page
+   with an `eng`-classified horizontal block reaches the expansion loop. **Item 18(f) is not touched**:
+   no port defect exists, because the mechanism is upstream's own post-`adjust_bbox` mutation. And the
+   vocabulary this entry adds is what the alternative pages need; on P01 it is unexercised.
+
+   Two labels on that P01 tally, per this entry's own rule that every supporting count says what it is.
+   **The residual is named, because §16.24 item 18(h) defines two and they carry opposite
+   expectations:** `residual_full` is the composite the identity requires all-zero, so `[0,0,0,0]` is a
+   claim about **it**; `residual_leg1` is diagnostic and, per item 2(a) above, is *expected* non-zero on
+   a healthy line-informed pair, so the same vector would mean the opposite there. **And the 3 / 1 / 1
+   split is carried as paraphrase** from the source record, not re-derived while transcribing. What
+   item 1(f)'s census does independently confirm is its arithmetic base — P01 yields 4 output blocks, 3
+   `YoloUnioned` plus 1 `YoloSynthesizedCorners`, and 0 `DbnetScattered` — and §16.20 item 9 already
+   ratifies the single coverage-filter firing that the fifth entry accounts for.
+
+   One correction of the engineer's own count is carried across with it: *"3 of 4 gated blocks escape"*
+   overcounts, because P01's block 1 is the §14.13 class-duplicate of block 2 and is never a gated
+   pair, so the figure is **2 of 3 paired**. The census puts a measurement behind that: P01's blocks 1
+   and 2 come back as served `xyxy` `[607,630,723,703]` classified `eng` and `[607,631,724,705]`
+   classified `ja` — the same balloon at two class indices, which is the duplicate that clause names,
+   at the indices it names. The two boxes differ on **three of the four edges, and not by a uniform
+   amount**: `x1` is identical, `y1` and `x2` differ by 1 px, and `y2` by 2 px. That is arithmetic on
+   the two vectors quoted here, so it needs no re-run to check — which is why the earlier draft's "one
+   pixel apart on two edges" was catchable by reading alone: it does not hold of the served `xyxy`
+   values it was attached to. Either way the conclusion is untouched, because §14.13's class-duplicate
+   condition is same-balloon-different-class and not an edge-distance test.
+
+5. **Erratum 2 of 6 — item 21(f)'s per-edge sign attribution is narrowed to `YoloUnioned` pairs.**
+   Item 21(f) ratifies that "the union-impossible directions are `residual_leg1.x1 > 0`, `y1 > 0`,
+   `x2 < 0`, `y2 < 0` — each of those *proves* leg 1, while the complementary directions prove nothing,
+   being consistent with either leg." That is sound where the upstream box **is** a bounding union of a
+   yolo box with lines, and silent where it is not. (The quote is carried without this entry's usual
+   outer italics on purpose: 21(f) emphasises *proves*, and wrapping the whole sentence in `*"…"*`
+   swallows that emphasis, which is what an earlier draft here did.)
+
+   **SUPERSEDES: §16.24 item 21**
+
+   **The scope, quoted:**
+   > Its per-edge attribution is true of `YoloUnioned` pairs and silent otherwise.
+
+   The counterexample recorded in the ruling — a paraphrase number, not a re-derived one — is
+   nightmare block 4: `residual_leg1 [45,74,-1,-1]`, all four components in union-impossible
+   directions, **with leg 1 EXACT**. The mechanism is that `residual_leg1` subtracts `ours.rect` from
+   `upstream.xyxy`, and outside `YoloUnioned` those two are not related by a union at all, so their
+   difference carries no information about `rect_yolo == ours.rect`. Item 2 above is what closes the
+   gap: leg 1 gets its own exact row instead of being attributed from signs.
+
+   This correction is **cookbook rule 15 applied to the clause that cites rule 15** — 21(f)'s own
+   opening sentence invokes rule 15 for sign precision, and a supporting example refuted the claim it
+   was cited for one level up. Both halves of rule 15's discipline apply here: derive the constraint
+   the evidence must satisfy, then check each data point against it.
+
+6. **Erratum 3 of 6 — item 18(i)'s diagnostic message is derivation-conditional.** Item 18(i) requires
+   that on `upstream.x2 < ours.x2` the comparator *"report that a bounding union cannot narrow an edge
+   and this is therefore a leg-1 engine-geometry divergence, not a line-union difference."* The first
+   clause is a theorem about bounding unions and stays; the inference in the second clause holds only
+   when the upstream box was produced by a union.
+
+   **SUPERSEDES: §16.24 item 18(i)**
+
+   Reworded: the message asserts a leg-1 engine-geometry divergence **only when the pair's upstream
+   derivation is `YoloUnioned`**. For `YoloSplit` and `DbnetScattered` the upstream box is
+   `bbox(lines)` and never a union with a yolo box, so a narrowed edge is the expected shape rather
+   than a divergence, and the old message would name the wrong leg with full confidence. Item 2(c)'s
+   structural guard is the other half of the fix: such a pair raises its own gating row, so in a green
+   run the reworded message is reached only where its premise holds. The additive-strengthening status
+   of 18(i) is unchanged — it is a message, it adds no gate power, and it needed no ratification to
+   exist.
+
+   `docs/COOKBOOK.md` rule 15's final bullet carries the same unconditional sentence and is corrected
+   in the same change, because a lesson stated unconditionally is how the sentence got into a
+   normative clause in the first place.
+
+7. **Erratum 4 of 6 — §16.20 item 3's "this case is not hypothetical" conflates two different
+   branches.** Item 3(b) requires the identity to handle a line-less upstream block, *"where
+   `bbox(upstream.lines)` is undefined and the identity degenerates to `upstream.xyxy == ours.rect` —
+   v1 synthesizes no lines, and upstream's line-less branch is exactly where §14.17's filter
+   divergence lives, so this case is not hypothetical."* Two distinct things are named "the line-less
+   branch" there. Upstream's line-less **filter** branch is real and fired once, on
+   `[438,1407,498,1446]` with `mask_score` 0.0359 — the figures §16.20 item 9 already ratifies, not
+   new ones. A line-less **output** block is impossible.
+
+   **SUPERSEDES: §16.20 item 3**
+
+   **The control-flow fact, re-read against the pin rather than assumed.** `group_output` lives at
+   `pcleaner/comic_text_detector/utils/textblock.py:447-534`. Every path to `final_blk_list` is
+   line-guaranteed: a yolo block either already carries assigned lines, or is `continue`d out on the
+   `mask_score` filter (`:485-492`), or has the four corners of its own `xyxy` appended as one
+   synthetic line before being kept; a scattered block (`:474`) is constructed with one line by
+   definition; and the expansion loop only rewrites lines that already exist. No branch appends a
+   line-less block.
+
+   Two measurements agree with that reading, both 2026-07-30. Driven across five synthetic branch cases
+   — line-less above and below the filter threshold, assigned-lines, scattered, and both together — the
+   pinned `group_output` returned **6** blocks and **0** with `len(lines) == 0`. Over the three real
+   candidate pages of item 1(f): **14** blocks, **0** with `len(lines) == 0`. The `0/49` census the
+   source record cites inherits item 1(f)'s provenance gap and is not restated as fact; the
+   impossibility rests on the control flow, and these two runs are what keep the reading from being an
+   argument nobody executed.
+
+   **What this changes, and what it deliberately does not.** The degenerate branch is a property of
+   the artifact **grammar**, which admits `lines: []`, and not a reachable upstream output. So the
+   frozen tests over that grammar assert correct behaviour and are **not** replaced — cookbook rule 8
+   **exit 1**, additive: replacement was refused. Four reachable-shape controls are added instead: a
+   synthesized-corners pair, a dominating-lines pair, a multi-line pair, and a split-shaped unmatched
+   structure. What the erratum removes is the *weighting* — the sentence licensed treating the
+   degenerate branch as the well-evidenced case, and it is the one shape upstream cannot emit.
+
+8. **Erratum 5 of 6 — item 18(k)'s "rare-but-real" repeats erratum 4's conflation at a second site.**
+   Item 18(k) corrects the architect's *"the common case"* to *"rare-but-real, which is what §16.20
+   item 3's 'not hypothetical' meant"*. As a statement about upstream's line-less **filter** branch
+   that is right and item 9's measurement supports it. As a statement about a line-less **output**
+   block it is the same error as erratum 4: one control-flow fact, two sites repeating it, which is
+   why they are corrected in one entry rather than one at a time.
+
+   **SUPERSEDES: §16.24 item 18(k)**
+
+   Item 18(k)'s consequence survives, re-aimed. Its point that the degenerate branch is the
+   least-evidenced part of the identity, and that item 18(e)'s per-block `len(lines)` census is the
+   first real evidence on it, still holds — and the census now has a stated expectation to be checked
+   against: **no gated upstream block carries zero lines**, with 0 of 14 on the three candidate pages
+   as the standing prior. A census whose expected result is undeclared could not have failed, which is
+   the shape cookbook rule 6 exists to catch.
+
+9. **Erratum 6 of 6 — §16.6 item 4 cites an upstream symbol that does not exist; the clamp itself is
+   KEPT and re-grounded as §14 register entry 18.** Item 4 justifies clamping rescaled detector boxes
+   with *"This isn't new scope — upstream's yolov5 pipeline clips coordinates (`clip_coords`) as a
+   normal part of the postprocess the spec already claims to port; the original §8.3 step 4 text
+   simply omitted mentioning it."* There is no such symbol upstream.
+
+   **SUPERSEDES: §16.6 item 4**
+
+   **Verified while transcribing (2026-07-30):** `grep -rn clip_coords` over the whole pinned checkout
+   **exits 1** — no hit in any file. The only clamping in the vendored yolov5 helper is IoU
+   arithmetic: `yolov5_utils.py:166` is the comment naming `.clamp(0)` and `:169` is the call itself,
+   both inside `box_iou`'s intersection computation, and they are the file's only two occurrences of
+   `clamp` or `clip`. The source record places this in *"the same family as `PAD_VALUE=114`"* — a
+   normative clause importing generic yolov5 behaviour that comic-text-detector does not have.
+
+   **What changes is the justification, and only that.** The clamp is **KEPT**: no relaxation, no
+   `validate()` change, no deletion. It is required so `run()` can produce a `PageDataRaw` that passes
+   its own `validate()` on real frame-overhanging detector output, and that invariant is ours — which
+   is precisely why the clamp is a deliberate divergence rather than a port. The outcome therefore
+   differs from §16.20 item 8's disposition of the pad value, where upstream was normative for the
+   line and the value was corrected to match; here upstream has no equivalent behaviour to match, so
+   the clamp is registered as a deviation. §14 register entry **18** is added for it in the same
+   change, and §16.6 item 4's clamp rule itself stands unaltered.
+
+   **Owed at the code sites — AUTHORISED by this item together with §14 register entry 18, and
+   carried by a separate follow-up commit rather than by this transcription.** Three sites, and they
+   are enumerated rather than summarised because `grep -rn clip_coords` over **this repo** (run
+   2026-07-30 while reviewing this transcription) found the withdrawn symbol at **two** live sites,
+   while the first draft of this enumeration named only the two inside `yolo.rs` and missed the second
+   live one entirely — an incomplete list would have left the false citation standing where nothing
+   pointed at it:
+
+   - `crates/pc-detect/src/yolo.rs` — the `DEVIATION(18)` comment at the clamp itself.
+   - `crates/pc-detect/src/yolo.rs` — that file's doc comment, whose `clip_coords` citation is
+     rewritten to name what upstream actually does: the IoU-intersection `.clamp(0)` at
+     `yolov5_utils.py:166,169`, which is unrelated to a frame-bounds clamp.
+   - `crates/pc-detect/tests/d5_yolo.rs:297` — a **comment** on
+     `rescale_clips_boxes_that_overhang_image_bounds` reading *"matching upstream's `clip_coords`"*:
+     the same withdrawn citation at a second site, and the one this entry originally missed. Only the
+     comment text changes — it is rewritten to cite `yolov5_utils.py:166,169` like the doc comment
+     above — and no assertion, test name or expected value in that file is touched, so the file's
+     `FROZEN` header and cookbook rule 8 are not engaged. The two other `§16.6 item 4` citations in
+     the suite (`crates/pc-detect/tests/d7_run.rs:309`, `crates/pc-detect/tests/d4_session.rs:163`)
+     cite the **clamp rule**, which is KEPT, and are correct as they stand.
+
+   This entry is spec-only. The follow-up commit cites *"§14 register entry 18 / §16.27 item 9"* as
+   its authority, which is what distinguishes it from item 11's list: item 11 records work that is
+   **not ratified**, whereas these three sites are ratified here and merely not yet landed.
+
+10. **Closure note — item 18(d) is NOT a seventh erratum, and nothing is corrected for it.** Recorded
+    so a future reader does not reopen it. The truncation-straddle branch was re-verified on
+    2026-07-30 against the rebuilt oracle — **that run is the source record's, re-read while
+    transcribing rather than re-executed here**, and its numbers are carried with that attribution. It
+    instrumented the exact truncation site (`inference.py:114-124`, `postprocess_yolo`'s
+    `.astype(np.int32)`, a citation checked line-for-line against the pinned checkout while
+    transcribing) on both fixtures with the real weights: `darkrays` box 0 gives a
+    pre-truncation `x2` of `110.9987564086914`, which truncates to `110` and matches the disputed line
+    to four decimals, while `nightmare`'s sole YOLO box is nowhere near 110/111. **The fixture
+    attribution is correct as written, and §16.20 item 12's transcription was correct as written.**
+
+    Item 18(d)(2)'s own prose is not wrong either: its `ratio_x = 219/654` and `111.02 / 110.98`
+    figures are `nightmare`'s geometry, used as an illustrative computation of the `r ≈ 3.0–3.8` regime
+    both fixtures sit in (`darkrays` is 208×320, `r = 3.2`). The two were never the same measurement,
+    and reading them as one shared worked example is the only thing that looked like a contradiction.
+    No marker is declared for item 18(d) because nothing there is being replaced.
+
+11. **Carried in the source ruling but deliberately NOT transcribed here, recorded rather than
+    dropped (§16.23 item 1's rule).** **Three** items. Each needs its own transcription or its own
+    ratification, and **none of these three may be read as ratified by this entry**:
+
+    - **`UpstreamBoxOutsideFrame` as a gating row** (reported as 0/38 today). Part of the same
+      disposition as item 9 above, but it is a new gating row rather than a correction of a cited
+      fact, and this transcription's scope was the citation and the register entry. It needs its own
+      entry before F1-C asserts it.
+    - **The frozen-literal adaptation in `f1_oracle_comparator.rs`** — deferred, see item 1(g). It is
+      unauthorised, not merely unscheduled.
+    - **A worked discriminator example** in the source record naming a fixture that could not be
+      located in this repo, in upstream's asset tree, or on any recovered page. It is recorded there
+      as unverifiable and is not transcribed at all; the ruling it supported — that the discriminator
+      is rejected in favour of item 2's gating row — does not rest on it.
+
+    **Not a member of that list, and stated separately because the two statuses are opposite: item
+    9's three code sites are AUTHORISED — they are simply not landed by this transcription.** The
+    `DEVIATION(18)` comment, the doc-comment rewrite in `crates/pc-detect/src/yolo.rs`, and the
+    corrected `clip_coords` citation in `crates/pc-detect/tests/d5_yolo.rs:297` are ratified by item 9
+    together with §14 register entry **18**, which lands in the same change as this entry; the code
+    itself cites *"§14 register entry 18 / §16.27 item 9"* as its authority. They are an
+    authorised-but-not-yet-landed follow-up commit, **not** an open ratification question. An earlier
+    draft listed them as a fourth bullet above, which read them as unratified — the exact opposite of
+    item 9's disposition, and the reason the split is spelled out here rather than left to the reader.
 
 ## 16. Summary of what v1 is NOT
 

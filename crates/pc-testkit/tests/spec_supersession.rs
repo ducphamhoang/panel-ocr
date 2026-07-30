@@ -14,7 +14,7 @@
 //! never carry enforcement. A gate that cries wolf half the time gets allowlisted into uselessness.
 
 use pc_testkit::paths;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The exact marker a claim uses to declare its targets. Fixed syntax so the parser needs no verb
 /// list, no distance heuristic and no `regex` dependency.
@@ -23,14 +23,44 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 3;
+const EXPECTED_PARSED_CLAIMS: usize = 12;
 
-/// The three claims the maintainer's diagnosis named, listed individually so deleting any one
-/// marker fails with THAT site in the message rather than a bare count mismatch.
+/// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
+/// target label plus whatever sub-item letter the marker's own anchor text declares (see
+/// `marker_sub_item`). One row per marker, not one row per resolved span.
+///
+/// **Why the identity carries the letter.** §16.27 declares three separate markers against §16.24
+/// item 18, one per sub-item erratum: 18(b) (leg-2 scope), 18(i) (derivation-conditional message),
+/// 18(k) ("rare-but-real" conflation). Span resolution deliberately collapses all three to item
+/// 18's whole span — ratified §16.26 item 3(a) leniency, and correct, because the real
+/// back-pointers sit inside the parent item. But collapsing the *span* is not a reason to collapse
+/// the *row*: while all three read `§16.24 item 18` with no letter, the three markers were
+/// indistinguishable at this level, so the marker backing 18(i) could be deleted and a duplicate
+/// `item 18` marker added back — total count still 3, the multiset row for
+/// `("16.27", "16.24 item 18")` still "3 found, 3 expected", suite still green, and 18(i)'s
+/// coverage silently gone. The three markers now declare their letters, so each has its own row
+/// below and losing any one names *which* erratum lost its marker.
+///
+/// `("16.25", "16.20 item 3(d)")` carries a letter for the same reason and by the same parse; that
+/// marker has declared `item 3(d)` since it was written.
+///
+/// This stays a `Vec` compared as a MULTISET (`tally`/`tally_diff`) even though every row below
+/// happens to be distinct today: nothing forbids a future entry from legitimately carrying two
+/// markers with the same identity, and a `BTreeSet` would silently absorb the second. Uniqueness of
+/// today's rows is a fact about today's spec, not a property the comparison may assume.
 const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
-    ("16.25", "16.20 item 3"),
+    ("16.25", "16.20 item 3(d)"),
     ("16.25", "16.24 item 6"),
     ("16.25", "16.24 item 9"),
+    ("16.27", "16.20 item 3"),
+    ("16.27", "16.24 item 18(b)"),
+    ("16.27", "16.24 item 18(i)"),
+    ("16.27", "16.24 item 18(k)"),
+    ("16.27", "16.24 item 20"),
+    ("16.27", "16.24 item 4"),
+    ("16.27", "16.25 item 10"),
+    ("16.27", "16.6 item 4"),
+    ("16.27", "16.24 item 21"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
@@ -109,6 +139,15 @@ struct Claim {
     host: String,
     line: usize,
     target: Anchor,
+    /// LAYER A ONLY. The marker's declared target *identity*: `target.label` without the sigil, plus
+    /// the sub-item letter the marker's own anchor text spells out, when it spells one
+    /// (`16.24 item 18(b)`). Constructed by `marker_claims` alone — `Claim` has no other
+    /// constructor — so nothing in Layer B or in `target_span` can see it.
+    ///
+    /// This is an IDENTITY, not a span: `target` and therefore `target_span` are untouched by the
+    /// letter, so `item 18(b)` still resolves to item 18's whole span per §16.26 item 3(a). Only
+    /// counting/matching in `the_ratified_supersessions_are_each_covered` gains the granularity.
+    identity: String,
 }
 
 /// `(start, end)` line indices of every numbered section, and of every `^N. ` item within one.
@@ -219,6 +258,43 @@ fn parse_anchor(text: &str) -> Option<Anchor> {
     })
 }
 
+/// LAYER A ONLY. The sub-item letter(s) an anchor's text spells out immediately after the item
+/// digits: `§16.24 item 18(b)` → `Some("b")`; `§16.24 item 18` → `None`; `§8.3 step 4` → `None`.
+///
+/// **Deliberately NOT folded into `parse_anchor`, and the cost of doing so was MEASURED, not
+/// assumed.** `parse_anchor` is also called by `prose_claims` (Layer B's scanner over the whole
+/// ~5 500-line file), by `target_span`, and by
+/// `every_pinned_pre_convention_target_still_resolves`. Layer B's pinned 28-row set was measured
+/// with every lettered prose citation collapsed to a bare `item N`. Teaching the same letter rule to
+/// `parse_anchor`'s `label` and re-running this suite (2026-07-30, on this spec) turns
+/// `prose_form_claims_match_the_recorded_pre_convention_set` red with **4** rows relabelled:
+/// `("16.21", "16.20 item 3")`, `("16.22", "16.20 item 3")`, `("16.24", "16.20 item 3")` and
+/// `("16.26", "16.20 item 3")` become `... item 3(a)` / `... item 3(e)`, so all four pin nothing and
+/// four NEW claims appear in their place. That is the audit the narrow scoping avoids. The letter is
+/// therefore read here, by a function only `marker_claims` calls.
+fn marker_sub_item(text: &str) -> Option<String> {
+    let rest = text.strip_prefix('§')?;
+    let section_len = rest
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .count();
+    // ASCII-only prefix, so char count is the byte offset.
+    let tail = rest[section_len..].strip_prefix(" item ")?;
+    let digits = tail.chars().take_while(char::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    let inner = tail[digits..].strip_prefix('(')?;
+    let letters: String = inner
+        .chars()
+        .take_while(char::is_ascii_alphabetic)
+        .collect();
+    if letters.is_empty() {
+        return None;
+    }
+    inner[letters.len()..].starts_with(')').then_some(letters)
+}
+
 /// Layer A: every `**SUPERSEDES: ...**` marker, with its declared targets.
 fn marker_claims(lines: &[&str], outline: &Outline) -> Vec<Claim> {
     let mut claims = Vec::new();
@@ -230,16 +306,61 @@ fn marker_claims(lines: &[&str], outline: &Outline) -> Vec<Claim> {
         let declaration = after.split("**").next().unwrap_or(after);
         let host = section_of(outline, index);
         for (offset, _) in declaration.match_indices('§') {
-            if let Some(target) = parse_anchor(&declaration[offset..]) {
+            let anchor_text = &declaration[offset..];
+            if let Some(target) = parse_anchor(anchor_text) {
+                let bare = target.label.trim_start_matches('§').to_owned();
+                let identity = match marker_sub_item(anchor_text) {
+                    Some(letters) => format!("{bare}({letters})"),
+                    None => bare,
+                };
                 claims.push(Claim {
                     host: host.clone(),
                     line: index + 1,
                     target,
+                    identity,
                 });
             }
         }
     }
     claims
+}
+
+/// Multiset tally of `(host, target)` pairs, keyed by count rather than mere presence. Used by
+/// `the_ratified_supersessions_are_each_covered` (and its synthetic control) so that a target with
+/// N real markers is distinguished from one with N-1 markers plus an unrelated duplicate elsewhere
+/// — a distinction a `BTreeSet` cannot make.
+fn tally(items: impl Iterator<Item = (String, String)>) -> BTreeMap<(String, String), usize> {
+    let mut counts = BTreeMap::new();
+    for item in items {
+        *counts.entry(item).or_insert(0usize) += 1;
+    }
+    counts
+}
+
+/// Diff two multiset tallies. Returns `(missing, extra)` messages: `missing` for a key whose
+/// expected count exceeds its found count (a marker disappeared, even if some other marker for the
+/// same target remains), `extra` for the reverse (an unrecorded or duplicated marker).
+fn tally_diff(
+    found: &BTreeMap<(String, String), usize>,
+    expected: &BTreeMap<(String, String), usize>,
+) -> (Vec<String>, Vec<String>) {
+    let mut missing = Vec::new();
+    let mut extra = Vec::new();
+    let keys: BTreeSet<&(String, String)> = found.keys().chain(expected.keys()).collect();
+    for key in keys {
+        let found_count = found.get(key).copied().unwrap_or(0);
+        let expected_count = expected.get(key).copied().unwrap_or(0);
+        if expected_count > found_count {
+            missing.push(format!(
+                "{key:?}: expected {expected_count} marker(s), found {found_count}"
+            ));
+        } else if found_count > expected_count {
+            extra.push(format!(
+                "{key:?}: expected {expected_count} marker(s), found {found_count}"
+            ));
+        }
+    }
+    (missing, extra)
 }
 
 fn section_of(outline: &Outline, line: usize) -> String {
@@ -469,34 +590,48 @@ fn the_parsed_supersession_claim_count_is_pinned() {
 }
 
 #[test]
-// The three sites the maintainer's diagnosis named, asserted INDIVIDUALLY rather than by count, so
-// deleting any one marker fails with that site in the message. Both directions: the set must match
-// exactly, so an extra unrecorded marker also fails.
-fn the_three_ratified_supersessions_are_covered() {
+// Every ratified supersession site, asserted INDIVIDUALLY rather than by count, so deleting any one
+// marker fails with that site in the message. Both directions: the multiset must match exactly, so
+// an extra unrecorded marker also fails.
+//
+// Keyed on `claim.identity` — the label PLUS the sub-item letter the marker declares — not on the
+// resolved span label. §16.27's three markers against §16.24 item 18 back three different errata
+// (18(b), 18(i), 18(k)); all three resolve to item 18's whole span by ratified §16.26 item 3(a),
+// so keying on the span label made them one indistinguishable row and let a deleted marker be
+// replaced by a duplicate of a sibling. See RATIFIED_SUPERSESSIONS' comment.
+//
+// Still compared as a MULTISET (via `tally`/`tally_diff`) rather than a `BTreeSet`, so two markers
+// that legitimately share one identity in future cannot silently become one row.
+//
+// Renamed from `the_three_ratified_supersessions_are_covered` when §16.27 took the constant from 3
+// rows to 12: a name pinning a cardinality the constant no longer has is cookbook rule 1's dominant
+// defect class, and this is the file whose job is to prevent it.
+fn the_ratified_supersessions_are_each_covered() {
     let text = spec();
     let lines: Vec<&str> = text.lines().collect();
     let outline = outline(&lines);
 
-    let found: BTreeSet<(String, String)> = marker_claims(&lines, &outline)
-        .into_iter()
-        .map(|claim| {
-            (
-                claim.host,
-                claim.target.label.trim_start_matches('§').to_owned(),
-            )
-        })
-        .collect();
-    let expected: BTreeSet<(String, String)> = RATIFIED_SUPERSESSIONS
-        .iter()
-        .map(|(host, target)| ((*host).to_owned(), (*target).to_owned()))
-        .collect();
+    let found = tally(
+        marker_claims(&lines, &outline)
+            .into_iter()
+            .map(|claim| (claim.host, claim.identity)),
+    );
+    let expected = tally(
+        RATIFIED_SUPERSESSIONS
+            .iter()
+            .map(|(host, target)| ((*host).to_owned(), (*target).to_owned())),
+    );
 
-    let absent: Vec<_> = expected.difference(&found).collect();
-    let extra: Vec<_> = found.difference(&expected).collect();
+    let (missing, extra) = tally_diff(&found, &expected);
     assert!(
-        absent.is_empty() && extra.is_empty(),
-        "the marker set changed.\n  missing (a ratified supersession lost its marker): {absent:?}\n  \
-         unrecorded (add it to RATIFIED_SUPERSESSIONS deliberately): {extra:?}"
+        missing.is_empty() && extra.is_empty(),
+        "the marker multiset changed. Rows are keyed by declared identity, so a sub-item letter is \
+         part of the key: losing §16.27's 18(i) marker is reported as `16.24 item 18(i)` missing \
+         even while 18(b) and 18(k) remain.\n  \
+         missing (a ratified supersession lost a marker, even if other markers for a neighbouring \
+         sub-item remain): {missing:?}\n  \
+         extra (an unrecorded or duplicated marker — add it to RATIFIED_SUPERSESSIONS \
+         deliberately): {extra:?}"
     );
 }
 
@@ -661,4 +796,238 @@ fn a_numeric_prefix_does_not_satisfy_a_back_pointer() {
     assert!(contains_back_pointer(&lines, (1, 2), "16.25"));
     // And the reverse direction: §16.2 IS matched by its own number.
     assert!(contains_back_pointer(&lines, (0, 1), "16.2"));
+}
+
+#[test]
+// Regression control for the multiset fix in `the_ratified_supersessions_are_each_covered`: proves
+// that a `BTreeSet` comparison of ratified markers can miss "delete the marker backing one erratum
+// on a multi-marker target, and separately add an unrelated duplicate marker re-targeting a target
+// already in the set" — while a multiset (`tally`/`tally_diff`) comparison catches it. This is the
+// exact class of gap fixed by comparing RATIFIED_SUPERSESSIONS as a multiset instead of a set.
+fn a_multiset_diff_catches_a_moved_marker_that_a_set_diff_would_miss() {
+    // "Before": three markers target §16.24 item 18 (standing in for 18(b)/18(i)/18(k)), one
+    // targets §16.24 item 20.
+    let before = "\
+## 16.24 Older section
+
+1. First item.
+
+18. Eighteenth item, three sub-errata correct it.
+
+20. Twentieth item.
+
+## 16.27 Newer section
+
+1. **SUPERSEDES: §16.24 item 18** -- erratum for 18(b).
+
+2. **SUPERSEDES: §16.24 item 18** -- erratum for 18(i).
+
+3. **SUPERSEDES: §16.24 item 18** -- erratum for 18(k).
+
+4. **SUPERSEDES: §16.24 item 20** -- an unrelated erratum.
+";
+    // "After": 18(i)'s marker was deleted (only 2 of the 3 markers on item 18 remain), and a
+    // duplicate marker was added re-targeting item 20 (already in the set) instead. The set of
+    // DISTINCT `(host, target)` pairs is unchanged either way (`{item 18, item 20}`), but the true
+    // per-target count moved -- exactly the swap a `BTreeSet` comparison cannot see.
+    let after = "\
+## 16.24 Older section
+
+1. First item.
+
+18. Eighteenth item, three sub-errata correct it.
+
+20. Twentieth item.
+
+## 16.27 Newer section
+
+1. **SUPERSEDES: §16.24 item 18** -- erratum for 18(b).
+
+2. **SUPERSEDES: §16.24 item 18** -- erratum for 18(k).
+
+3. **SUPERSEDES: §16.24 item 20** -- an unrelated erratum.
+
+4. **SUPERSEDES: §16.24 item 20** -- a duplicate, standing in for 18(i)'s deleted marker.
+";
+
+    fn tally_of(text: &str) -> BTreeMap<(String, String), usize> {
+        let lines: Vec<&str> = text.lines().collect();
+        let outline = outline(&lines);
+        tally(marker_claims(&lines, &outline).into_iter().map(|claim| {
+            (
+                claim.host,
+                claim.target.label.trim_start_matches('§').to_owned(),
+            )
+        }))
+    }
+
+    let expected_targets = [
+        ("16.27".to_owned(), "16.24 item 18".to_owned()),
+        ("16.27".to_owned(), "16.24 item 18".to_owned()),
+        ("16.27".to_owned(), "16.24 item 18".to_owned()),
+        ("16.27".to_owned(), "16.24 item 20".to_owned()),
+    ];
+    let expected_tally = tally(expected_targets.iter().cloned());
+    let expected_set: BTreeSet<(String, String)> = expected_targets.iter().cloned().collect();
+
+    let before_found = tally_of(before);
+    let after_found = tally_of(after);
+
+    // The bug this test guards against: a SET comparison cannot distinguish "before" from "after"
+    // -- both have the exact same distinct pairs -- so it would silently pass on both.
+    let before_set: BTreeSet<(String, String)> = before_found.keys().cloned().collect();
+    let after_set: BTreeSet<(String, String)> = after_found.keys().cloned().collect();
+    assert_eq!(
+        before_set, expected_set,
+        "sanity: 'before' matches on distinct pairs"
+    );
+    assert_eq!(
+        after_set, expected_set,
+        "sanity: the set of distinct pairs is unchanged by the move -- this is precisely why a \
+         BTreeSet comparison would miss it"
+    );
+
+    // The multiset comparison, however, must tell them apart.
+    let (before_missing, before_extra) = tally_diff(&before_found, &expected_tally);
+    assert!(
+        before_missing.is_empty() && before_extra.is_empty(),
+        "'before' has the exact expected multiset and must pass: missing={before_missing:?} \
+         extra={before_extra:?}"
+    );
+
+    let (after_missing, after_extra) = tally_diff(&after_found, &expected_tally);
+    assert!(
+        !after_missing.is_empty() || !after_extra.is_empty(),
+        "'after' deleted 18(i)'s marker and added an unrelated duplicate elsewhere; the multiset \
+         diff must catch this even though the set of distinct pairs did not change"
+    );
+}
+
+#[test]
+// The gap one level deeper than the test above, and the reason `Claim::identity` exists. The
+// multiset fix catches "3 markers became 2". It does NOT catch "delete the marker backing 18(i) and
+// add back a DUPLICATE marker declaring the same target as 18(b)'s" — because while all three
+// markers read `§16.24 item 18` with no letter, they were the same key: raw count still 3, multiset
+// row still `3 found / 3 expected`, suite still green, 18(i)'s coverage gone.
+//
+// Driven on synthetic text, so it tests the keying rule rather than today's spec, and the expected
+// identities are typed out as literals — never read back from the parser, which would be cookbook
+// rule 13's vacuous gate. All three assertion blocks are needed: block 2 shows the two pre-existing
+// checks are blind to this swap, block 3 shows the identity-keyed diff is not, and block 1 shows the
+// unmutated text passes (so block 3's failure is caused by the mutation, not by the fixture).
+fn a_deleted_sub_item_marker_padded_by_a_duplicate_sibling_fails_the_identity_diff() {
+    // Three markers, one per erratum, each declaring its own sub-item letter.
+    let honest = "\
+## 16.24 Older section
+
+18. Eighteenth item; three of its sub-items are corrected separately.
+
+20. Twentieth item.
+
+## 16.27 Newer section
+
+4. **SUPERSEDES: §16.24 item 18(b)** -- erratum 1 of 6, leg-2 scope.
+
+6. **SUPERSEDES: §16.24 item 18(i)** -- erratum 3 of 6, derivation-conditional message.
+
+8. **SUPERSEDES: §16.24 item 18(k)** -- erratum 5 of 6, the rare-but-real conflation.
+";
+    // The attack: 18(i)'s marker is gone, and a second 18(b) marker pads the count back to three.
+    // Nothing new is corrected; the letter is the only thing that distinguishes this from `honest`.
+    let padded = "\
+## 16.24 Older section
+
+18. Eighteenth item; three of its sub-items are corrected separately.
+
+20. Twentieth item.
+
+## 16.27 Newer section
+
+4. **SUPERSEDES: §16.24 item 18(b)** -- erratum 1 of 6, leg-2 scope.
+
+6. **SUPERSEDES: §16.24 item 18(b)** -- padding, declaring a target already covered.
+
+8. **SUPERSEDES: §16.24 item 18(k)** -- erratum 5 of 6, the rare-but-real conflation.
+";
+
+    fn claims_of(text: &str) -> Vec<Claim> {
+        let lines: Vec<&str> = text.lines().collect();
+        let outline = outline(&lines);
+        marker_claims(&lines, &outline)
+    }
+    /// Keyed the way the gate is keyed now: identity, letter included.
+    fn identities(text: &str) -> BTreeMap<(String, String), usize> {
+        tally(
+            claims_of(text)
+                .into_iter()
+                .map(|claim| (claim.host, claim.identity)),
+        )
+    }
+    /// Keyed the way the gate was keyed before: the resolved span label, letter discarded.
+    fn labels(text: &str) -> BTreeMap<(String, String), usize> {
+        tally(claims_of(text).into_iter().map(|claim| {
+            (
+                claim.host,
+                claim.target.label.trim_start_matches('§').to_owned(),
+            )
+        }))
+    }
+
+    // Hard-coded oracle. These three strings are written here, not computed from either fixture.
+    let expected = tally(
+        [
+            ("16.27".to_owned(), "16.24 item 18(b)".to_owned()),
+            ("16.27".to_owned(), "16.24 item 18(i)".to_owned()),
+            ("16.27".to_owned(), "16.24 item 18(k)".to_owned()),
+        ]
+        .into_iter(),
+    );
+
+    // 1. The honest text matches the ratified identities exactly, both directions.
+    let (missing, extra) = tally_diff(&identities(honest), &expected);
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "the three lettered markers must match the recorded identities exactly: \
+         missing={missing:?} extra={extra:?}"
+    );
+
+    // 2. Both pre-existing checks are blind to the swap — which is why point 3 is not redundant.
+    assert_eq!(
+        claims_of(honest).len(),
+        3,
+        "fixture sanity: three markers parsed"
+    );
+    assert_eq!(
+        claims_of(padded).len(),
+        3,
+        "the raw marker count is unchanged by the swap, so the pinned-count test cannot catch it"
+    );
+    assert_eq!(
+        labels(honest),
+        labels(padded),
+        "keyed on the resolved span label, the two fixtures are IDENTICAL (both are \
+         `16.24 item 18` x3) — this is precisely the multiset gap the identity keying closes"
+    );
+
+    // 3. The identity-keyed diff catches it, and names which sub-item lost its marker and which
+    //    gained a duplicate. Naming the erratum is the point: "some marker moved" is not actionable.
+    let (missing, extra) = tally_diff(&identities(padded), &expected);
+    assert_eq!(
+        missing.len(),
+        1,
+        "exactly one identity should be missing, got {missing:?}"
+    );
+    assert!(
+        missing[0].contains("16.24 item 18(i)"),
+        "the failure must name 18(i) as the erratum whose marker vanished, got {missing:?}"
+    );
+    assert_eq!(
+        extra.len(),
+        1,
+        "exactly one identity should be over-represented, got {extra:?}"
+    );
+    assert!(
+        extra[0].contains("16.24 item 18(b)"),
+        "the failure must name 18(b) as the duplicated identity, got {extra:?}"
+    );
 }
