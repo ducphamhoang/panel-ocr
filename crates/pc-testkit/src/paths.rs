@@ -136,10 +136,6 @@ impl DemoBubble {
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
     }
-    /// The §7.2 recorded artifact for this fixture, e.g. `<name>_raw_mask.png`.
-    pub fn recorded(&self, suffix: &str) -> Option<PathBuf> {
-        recorded_opt(format!("{}_{suffix}", self.name))
-    }
 }
 
 /// Look up a demo bubble by short name (`"black"`, not `"black_bubble_raw"`).

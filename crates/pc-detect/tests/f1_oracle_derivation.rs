@@ -1,3 +1,5 @@
+//! F1 oracle derivation tests. FROZEN per CLAUDE.md.
+
 //! spec §16.27 items 1(a), 2, 2(c) and 3 + §16.28 items 2, 4, 5 and 6 — the derivation axis's own
 //! controls. Kept separate from f1_oracle_comparator.rs (which is frozen and only receives the
 //! exact null-completion edits §16.28 authorizes) so a reviewer diffing that file sees only those

@@ -1,3 +1,5 @@
+//! F1 oracle comparator tests. FROZEN per CLAUDE.md.
+
 //! spec §16.20 item 3(b) + item 10, as ratified by §16.24 items 4–8 — the comparator's own
 //! negative controls.
 //!
@@ -1836,6 +1838,7 @@ fn the_oracle_artifact_shape_round_trips_and_rejects_unknown_fields() {
     // string is the canonical example the script must match, and the only Rust-side gate on the
     // Python writer until the script exists. Every optional field is populated here on purpose: a
     // *dropped* optional field is the quiet direction of drift, since it defaults silently.
+    // The other spellings (`yolo_synthesized_corners`, `yolo_split`, `dbnet_scattered`) are pinned in `crates/pc-detect/tests/f1_oracle_derivation.rs`.
     let full: UpstreamOracle = serde_json::from_str(
         r#"{
           "scale": 0.617,

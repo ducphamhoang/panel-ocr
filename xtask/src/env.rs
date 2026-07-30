@@ -183,11 +183,11 @@ const ONNX_FEATURE_DISABLED_EXPLANATION: &str = concat!(
     "xtask --features onnx -- ...`) and retry the detector recording command.\n\n",
     "\
 These §7.2 artifacts cannot be produced yet:
-  tests/fixtures/recorded/<stem>_detector_mask.png     (§7.2.1, raw RawDetection.mask)
-  tests/fixtures/recorded/<stem>_detector_blocks.json  (§7.2.1, Vec<RawBlock>)
-  tests/fixtures/recorded/<stem>_base.png              (§7.2)
-  tests/fixtures/recorded/<stem>_raw_mask.png          (§7.2)
-  tests/fixtures/recorded/<stem>#raw.json              (§7.2, PageDataRaw)
+  tests/fixtures/recorded/detector/<stem>_detector_mask.png     (§7.2.1, raw RawDetection.mask)
+  tests/fixtures/recorded/detector/<stem>_detector_blocks.json  (§7.2.1, Vec<RawBlock>)
+  tests/fixtures/recorded/detector/<stem>_base.png              (§7.2)
+  tests/fixtures/recorded/detector/<stem>_raw_mask.png          (§7.2)
+  tests/fixtures/recorded/detector/<stem>#raw.json              (§7.2, PageDataRaw)
 
 and these tests must stay `#[ignore]`d:
   pc-detect     d7_run.rs::a6_pending_recorded_page_equality_and_determinism (§8.7(A)6)
@@ -203,11 +203,11 @@ const MODEL_WEIGHTS_MISSING_EXPLANATION: &str = concat!(
     "then retry the detector recording command.\n\n",
     "\
 These §7.2 artifacts cannot be produced yet:
-  tests/fixtures/recorded/<stem>_detector_mask.png     (§7.2.1, raw RawDetection.mask)
-  tests/fixtures/recorded/<stem>_detector_blocks.json  (§7.2.1, Vec<RawBlock>)
-  tests/fixtures/recorded/<stem>_base.png              (§7.2)
-  tests/fixtures/recorded/<stem>_raw_mask.png          (§7.2)
-  tests/fixtures/recorded/<stem>#raw.json              (§7.2, PageDataRaw)
+  tests/fixtures/recorded/detector/<stem>_detector_mask.png     (§7.2.1, raw RawDetection.mask)
+  tests/fixtures/recorded/detector/<stem>_detector_blocks.json  (§7.2.1, Vec<RawBlock>)
+  tests/fixtures/recorded/detector/<stem>_base.png              (§7.2)
+  tests/fixtures/recorded/detector/<stem>_raw_mask.png          (§7.2)
+  tests/fixtures/recorded/detector/<stem>#raw.json              (§7.2, PageDataRaw)
 
 and these tests must stay `#[ignore]`d:
   pc-detect     d7_run.rs::a6_pending_recorded_page_equality_and_determinism (§8.7(A)6)
@@ -222,11 +222,11 @@ const MANGA_PAGES_MISSING_EXPLANATION: &str = concat!(
     "those pages, then retry the detector recording command.\n\n",
     "\
 These §7.2 artifacts cannot be produced yet:
-  tests/fixtures/recorded/<stem>_detector_mask.png     (§7.2.1, raw RawDetection.mask)
-  tests/fixtures/recorded/<stem>_detector_blocks.json  (§7.2.1, Vec<RawBlock>)
-  tests/fixtures/recorded/<stem>_base.png              (§7.2)
-  tests/fixtures/recorded/<stem>_raw_mask.png          (§7.2)
-  tests/fixtures/recorded/<stem>#raw.json              (§7.2, PageDataRaw)
+  tests/fixtures/recorded/detector/<stem>_detector_mask.png     (§7.2.1, raw RawDetection.mask)
+  tests/fixtures/recorded/detector/<stem>_detector_blocks.json  (§7.2.1, Vec<RawBlock>)
+  tests/fixtures/recorded/detector/<stem>_base.png              (§7.2)
+  tests/fixtures/recorded/detector/<stem>_raw_mask.png          (§7.2)
+  tests/fixtures/recorded/detector/<stem>#raw.json              (§7.2, PageDataRaw)
 
 and these tests must stay `#[ignore]`d:
   pc-detect     d7_run.rs::a6_pending_recorded_page_equality_and_determinism (§8.7(A)6)

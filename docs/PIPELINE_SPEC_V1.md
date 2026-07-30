@@ -1376,6 +1376,18 @@ Fresh, idiomatic design per decision #6 — no docopt compatibility. Verbosity m
 
 Each of these must appear as a `// DEVIATION(n): ...` comment at the implementation site referencing this section, so a future parity investigation finds them immediately.
 
+**Not registered here: `UpstreamBoxOutsideFrame`.** §16.27 item 11 ratifies this as a decision
+("adopted as a GATING row, 0/38 today") but explicitly leaves it **untranscribed** and states that
+landing it "needs its own ruling" and "makes it a 20th variant by its own ratification, not a
+consequence of this one." No `Divergence::UpstreamBoxOutsideFrame` variant, logic, or test exists
+anywhere in `crates/pc-detect/` — `grep -rn UpstreamBoxOutsideFrame --include=*.rs .` returns zero
+hits. A prior edit here registered a §14 entry describing it as live comparator behavior ("is
+reported as a named GATING divergence"), which was false — this list is for *implemented*
+deviations, each with a real `DEVIATION(n)` site comment, and §14's own text says so. Reverted.
+`docs/COOKBOOK.md`'s "still owed" bullet asking for this registration was itself the source of the
+confusion (its parenthetical read as "already adopted" without stating "not yet implemented");
+that entry needs the same correction before anyone acts on it again.
+
 ---
 
 ## 15. Decisions needing reviewer sign-off before tests are frozen

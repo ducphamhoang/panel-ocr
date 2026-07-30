@@ -143,7 +143,7 @@ pub fn run(
 /// work (re-record and rewrite the provenance), never less. The conservative answer is the safe one
 /// here, which is exactly why the polarity is worth stating.
 ///
-/// **Four conditions, arrived at by three rounds of patching the reported case — which is itself
+/// **Three conditions, arrived at by three rounds of patching the reported case — which is itself
 /// the lesson.** The first version compared only `schema_version`, so a provenance parsing at v1
 /// while *misdescribing its own artifacts* satisfied the skip (the "actively misdescribes itself"
 /// state `crates/pc-testkit/tests/model_signature.rs` exists to catch, reached here by the recorder
@@ -151,15 +151,15 @@ pub fn run(
 /// provenance→disk direction, so **unbound fixture state** — a stray or renamed artifact declared by
 /// nothing and verified by nothing — still passed.
 ///
-/// The conditions are therefore enumerated here rather than left implicit, because each round of
+/// The checks are therefore enumerated here rather than left implicit, because each round of
 /// "fix the case that was reported" produced a helper that looked finished and was not:
 ///
-/// 1. `PROVENANCE.json` reads and parses at `PROVENANCE_SCHEMA_VERSION`.
-/// 2. `provenance::validate` returns no violations — every rule the checker owns, not one field.
-/// 3. **provenance → disk:** every committed declaration's digest matches the bytes.
-/// 4. **disk → provenance:** every file in the group directory is declared.
+/// 1. `PROVENANCE.json` reads and parses, and `provenance::validate` returns no violations —
+///    including the current schema version and every other rule the checker owns.
+/// 2. **provenance → disk:** every committed declaration's digest matches the bytes.
+/// 3. **disk → provenance:** every file in the group directory is declared.
 ///
-/// 3 and 4 are the same bidirectional rule `recorded_provenance.rs` needed five iterations to get
+/// 2 and 3 are the same bidirectional rule `recorded_provenance.rs` needed five iterations to get
 /// right (cookbook rule 13: cardinality is not identity; rule 14: each reader of a format needs the
 /// whole invariant, not the convenient half). Having helped harden that gate and then written this
 /// one half-way is the recurrence worth naming.
@@ -170,7 +170,7 @@ fn provenance_is_current(group: &str) -> bool {
 /// [`provenance_is_current`] against an explicit workspace root.
 ///
 /// Extracted for exactly one reason: with the root hard-wired to `paths::workspace_root()`, the
-/// only way to make any of the four conditions FAIL is to mutate the committed fixture tree — and
+/// only way to make any of the three conditions FAIL is to mutate the committed fixture tree — and
 /// a leaked probe is precisely the corruption the recorded-fixture gates exist to detect (cookbook
 /// rule 13's closing note). Every condition was therefore asserted only in its passing case, so
 /// any one of them could be deleted with the suite still green. `provenance_is_current` is this
@@ -187,15 +187,11 @@ fn provenance_is_current_under(workspace_root: &Path, group: &str) -> bool {
         return false;
     };
 
-    // 1. The schema this binary writes.
-    if parsed.schema_version != pc_testkit::provenance::PROVENANCE_SCHEMA_VERSION {
-        return false;
-    }
-    // 2. Structurally valid — every rule the checker enforces, not just the version field.
+    // 1. Structurally valid — every rule the checker enforces, including the schema version.
     if !pc_testkit::provenance::validate(group, &parsed).is_empty() {
         return false;
     }
-    // 3. PROVENANCE -> DISK. Every committed declaration matches the bytes on disk: an output
+    // 2. PROVENANCE -> DISK. Every committed declaration matches the bytes on disk: an output
     //    edited or truncated after recording leaves a provenance that parses and validates while
     //    describing different bytes, and re-recording is exactly the fix.
     let declared_matches = parsed
@@ -211,7 +207,7 @@ fn provenance_is_current_under(workspace_root: &Path, group: &str) -> bool {
         return false;
     }
 
-    // 4. DISK -> PROVENANCE, the other direction. Every file in the group directory must be
+    // 3. DISK -> PROVENANCE, the other direction. Every file in the group directory must be
     //    declared. Without this the skip accepts *unbound fixture state*: a stray, renamed or
     //    left-behind artifact sitting beside the declared ones, describing nothing and verified by
     //    nothing, while the recorder reports the group complete.
@@ -542,7 +538,7 @@ fn inter_area_provenance(reference: &Value, diagnostic: &Value) -> Result<GroupP
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// spec §16.13 item 6 + §16.24 item 1 — `provenance_is_current`'s four conditions, falsified.
+// spec §16.13 item 6 + §16.24 item 1 — `provenance_is_current`'s three conditions, falsified.
 //
 // The helper took three rounds to get right and every round was accepted on the PASSING case
 // alone: nothing anywhere asserted that a stale, invalid, tampered or unbound group reads as NOT
@@ -711,15 +707,13 @@ mod provenance_is_current_falsification {
     }
 
     #[test]
-    // CONDITION 2 — "`schema_version` matches the schema this binary writes".
+    // The schema-version part of CONDITION 1 — "`schema_version` matches the schema this binary
+    // writes".
     //
     // **This test does NOT falsify the deletion of condition 2**, and saying so is the point:
-    // `validate`'s R1 tests the identical predicate, so condition 3 subsumes condition 2 and the
-    // boolean result is unchanged by removing it. What this test binds is the *behaviour* the
-    // docstring promises — a provenance at any other version is not current — which fails only if
-    // BOTH the version check and the `validate` call are removed. The docstring enumerates four
-    // independent conditions; on the evidence here there are three and a fast path. That
-    // redundancy is flagged, not resolved.
+    // `validate`'s R1 tests the identical predicate, so the explicit version check was redundant.
+    // What this test binds is the *behaviour* the docstring promises — a provenance at any other
+    // version is not current — which fails if schema validation is removed.
     //
     // Does NOT cover: a version that parses at v1 while meaning something else (no second version
     // exists yet, so nothing here can distinguish "rejects non-v1" from "rejects != the constant").
@@ -739,8 +733,9 @@ mod provenance_is_current_falsification {
     }
 
     #[test]
-    // CONDITION 3 — "`validate` returns no violations". Both perturbations are invisible to the
-    // other three conditions: no digest changes, no filename changes, nothing on disk moves. So
+    // The remaining structural part of CONDITION 1 — "`validate` returns no violations". Both
+    // perturbations are invisible to the other two conditions: no digest changes, no filename
+    // changes, nothing on disk moves. So
     // deleting the `validate` call turns this red and nothing else.
     //
     // R2 (group name vs directory) and R3 (the group must name its tool) are chosen deliberately:
@@ -770,7 +765,7 @@ mod provenance_is_current_falsification {
     }
 
     #[test]
-    // CONDITION 4, PROVENANCE → DISK — "every committed declaration's digest matches the bytes".
+    // CONDITION 2, PROVENANCE → DISK — "every committed declaration's digest matches the bytes".
     //
     // Isolated from the disk → provenance half: in (a) and (b) the file keeps its name and stays
     // declared, so the reverse direction is satisfied throughout and only this half can see the
@@ -813,7 +808,7 @@ mod provenance_is_current_falsification {
     }
 
     #[test]
-    // CONDITION 4, DISK → PROVENANCE — "every file in the group directory is declared". The
+    // CONDITION 3, DISK → PROVENANCE — "every file in the group directory is declared". The
     // orphan probe is cookbook rule 13's own: copying a fixture to `nlm/undeclared_orphan.png`
     // passed the recorded-fixture gate for four iterations. Unbound fixture state is trusted by
     // every consuming golden test while being verified by nothing.
@@ -863,7 +858,7 @@ mod provenance_is_current_falsification {
     // RESIDUAL HOLE 1 — **parameter drift is NOT detected.** A known gap, pinned rather than
     // closed.
     //
-    // `params` is a claim about how the bytes were produced, and the four conditions never read
+    // `params` is a claim about how the bytes were produced, and the three conditions never read
     // it: 1 and 2 look at the header, 3 sweeps `params` for digest shapes but never for agreement
     // with anything, and 4 compares bytes against a digest the same document supplies. So a
     // provenance may declare `h = 999` beside an artifact whose own filename says `_h10_`, and the

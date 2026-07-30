@@ -548,11 +548,19 @@ a claim, not a verification.** Re-run the suite yourself; read the diff.
 - **The `codex:rescue` wrapper often returns `completed` in ~40s having launched a background
   job and written nothing.** Six times in one session. Treat its completion as "dispatched",
   not "done": check the artifact, and re-dispatch a **fresh** task rather than resuming.
-- **Still owed, as of 2026-07-30, carried here since there is no persistent task tracker across
-  sessions:** either delete `provenance_is_current`'s redundant condition 2 or amend its
-  "four conditions" docstring to match; write the R1–R23 numbering into `provenance.rs` as a doc
-  comment; add `UpstreamBoxOutsideFrame`'s own §14 register entry (it is adopted as a gating row
-  per §16.27 item 4 but has no register number yet).
+- **Closed, 2026-07-30 (F1 Phase 2 T6):** `provenance_is_current`'s redundant condition 2 and the
+  R1–R23 doc comment in `provenance.rs`, both done.
+- **`UpstreamBoxOutsideFrame` has NO register entry, and this is correct — do not add one without
+  a fresh ruling.** §16.27 item 11 ratifies it as a *decision* ("adopted as a GATING row, 0/38
+  today") but explicitly leaves it **untranscribed**: landing it "needs its own ruling" and would
+  be "a 20th variant by its own ratification, not a consequence of this one." No
+  `Divergence::UpstreamBoxOutsideFrame` variant, logic, or test exists anywhere in
+  `crates/pc-detect/`. This bullet previously read "it is adopted as a gating row … but has no
+  register number yet," which one agent read as "already implemented, just needs a §14 entry" —
+  it isn't, and it caused exactly that: a §14 entry describing it as live comparator behavior,
+  caught by the stop-time review gate and reverted (§14's "not registered here" note). **Adopted
+  as a decision ≠ implemented** — say so plainly next time this comes up, rather than repeating
+  the parenthetical that caused the defect.
 - **Still owed, as of 2026-07-30, from Phase 1's post-implementation review (§16.28's
   derivation-schema landing) — none blocking, all cheap now and expensive after freeze:**
   - A genuine spec ambiguity, escalated rather than resolved unilaterally: does §16.28 item 4's

@@ -101,10 +101,17 @@ pub struct OracleBlock {
     pub derivation: Option<Derivation>,
     #[serde(default)]
     pub rect_yolo: Option<[i32; 4]>,
+    /// §16.28 item 1(e)'s "REQUIRED together" condition binds the recorder, not this Rust
+    /// representation, so the three expansion fields remain plain fields rather than a grouped
+    /// type that would make a malformed recording unrepresentable here.
     #[serde(default)]
     pub eng_expanded: bool,
+    /// Required together with [`Self::expand_size`] when [`Self::eng_expanded`] is true by
+    /// §16.28 item 1(e); the requirement is recorded-data validation, not a Rust type invariant.
     #[serde(default)]
     pub lines_pre_expand: Option<Vec<Vec<[i32; 2]>>>,
+    /// Required together with [`Self::lines_pre_expand`] when [`Self::eng_expanded`] is true by
+    /// §16.28 item 1(e); it stays an `Option` because that condition binds the recorder.
     #[serde(default)]
     pub expand_size: Option<i32>,
 }
@@ -500,6 +507,33 @@ impl Divergence {
             _ => DivergenceClass::Gating,
         }
     }
+
+    /// Return the Rust variant name using an exhaustive match, so adding a variant requires this
+    /// maintenance point to be updated even though [`Self::class`] deliberately remains wildcarded.
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::GeometryIdentity { .. } => "GeometryIdentity",
+            Self::UnionMonotonicity { .. } => "UnionMonotonicity",
+            Self::IdentityBranchMismatch { .. } => "IdentityBranchMismatch",
+            Self::EmptyPairing => "EmptyPairing",
+            Self::PairingIndexOutOfRange { .. } => "PairingIndexOutOfRange",
+            Self::PairedTwice { .. } => "PairedTwice",
+            Self::NotAccountedFor { .. } => "NotAccountedFor",
+            Self::PhantomUnmatched { .. } => "PhantomUnmatched",
+            Self::OpenMechanism { .. } => "OpenMechanism",
+            Self::UnverifiableMechanism { .. } => "UnverifiableMechanism",
+            Self::AccountingMismatch { .. } => "AccountingMismatch",
+            Self::ScaleMismatch { .. } => "ScaleMismatch",
+            Self::InconsistentOracleCoverage { .. } => "InconsistentOracleCoverage",
+            Self::ImageSizeMismatch { .. } => "ImageSizeMismatch",
+            Self::Leg1YoloGeometry { .. } => "Leg1YoloGeometry",
+            Self::UnpairableDerivation { .. } => "UnpairableDerivation",
+            Self::DerivationSignatureMismatch { .. } => "DerivationSignatureMismatch",
+            Self::ConfidenceDelta { .. } => "ConfidenceDelta",
+            Self::LanguageDelta { .. } => "LanguageDelta",
+        }
+    }
+
     pub fn is_gating(&self) -> bool {
         self.class() == DivergenceClass::Gating
     }

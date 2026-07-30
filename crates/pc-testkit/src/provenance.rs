@@ -202,6 +202,35 @@ fn looks_like_digest_key(key: &str) -> bool {
     normalised.ends_with("sha256") || normalised.ends_with("digest") || normalised.ends_with("hash")
 }
 
+/// Validator rule register. Each line names the check implemented below; the numbering is kept
+/// here so readers do not have to reconstruct it from the scattered test and implementation notes.
+///
+/// R1 — schema version is the current supported version.
+/// R2 — the declared group name matches the directory name supplied by the caller.
+/// R3 — the group names the tool that produced it.
+/// R4 — the group records the command line that produced it.
+/// R5 — the group has records with unique names and unique output paths.
+/// R6 — every structural digest is a canonical lowercase 64-hex value.
+/// R7 — a `source_sha256` digest is not present without its `source` path.
+/// R8 — recorded paths are relative and contain no parent-directory component.
+/// R9 — committed record outputs stay inside the declaring recorded group.
+/// R10 — uncommitted record outputs stay under the scratch prefix.
+/// R11 — digest-like keys do not occur outside structural digest slots.
+/// R12 — digest-shaped values do not occur outside structural digest slots.
+/// R13 — the detector block is present exactly for the `detector` group.
+/// R14 — the detector input page is inside the detector recorded group.
+/// R15 — the detector input page is not also declared as a record output.
+/// R16 — the detector model is a bare filename.
+/// R17 — each `decoded_from` reference names `input_page` or a declared record.
+/// R18 — our-side pins use the ORT backend.
+/// R19 — upstream-side pins identify the cv2.dnn run, version, commit, and command line.
+/// R20 — our-side provenance records the panel-ocr commit and resolved execution settings.
+/// R21 — upstream dependency versions are present.
+/// R22 — the execution provider is CPU and both thread counts are recorded.
+/// R23 — both detector sides declare the same decoded RGB buffer digest.
+///
+/// The rule register records the existing checks only; it does not add validation behavior.
+///
 /// Validate the structure and invariants of a parsed provenance document.
 ///
 /// The result is sorted and deduplicated. This function deliberately does not inspect files or
