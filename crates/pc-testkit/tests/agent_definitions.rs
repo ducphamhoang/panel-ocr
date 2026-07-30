@@ -401,3 +401,58 @@ fn agent_models_are_allowed_and_pinned_by_role() {
         assert_eq!(model, expected, "{name} has the wrong pinned model");
     }
 }
+
+#[test]
+// GATES THE DISCLOSURE, NOT THE BEHAVIOUR. Nothing in this repo can stop a read-only agent from
+// shelling out: the three of them carry `Bash` on purpose, because every high-value finding these
+// reviewers produced came from RUNNING something, and a reviewer who cannot run the suite cannot
+// check whether a gate is capable of failing. So `Edit`/`Write`/`NotebookEdit` are mechanically
+// blocked (see `pinned_read_only_agents_have_no_mutating_tools`) while shell writes are prevented
+// by instruction alone.
+//
+// What this test does prevent is that partial enforcement quietly becoming INVISIBLE — someone
+// deleting the caveat from a definition while `Bash` stays in its tool list, leaving a reader to
+// believe "read-only" is airtight. A known limit is acceptable; a hidden one is not.
+fn read_only_agents_disclose_the_bash_limitation() {
+    // Any one of these, on the same line as `Bash`, counts as the caveat. A set of markers rather
+    // than an exact sentence, so improving the wording does not break the test — a test that fails
+    // on a rewrite gets deleted rather than fixed, which loses the coverage entirely.
+    const PROHIBITION_MARKERS: &[&str] = &[
+        "prohibition",
+        "same applies",
+        "do not edit",
+        "do not write",
+        "never write",
+        "blocks",
+    ];
+
+    for agent in READ_ONLY_AGENTS {
+        let path = paths::workspace_root()
+            .join(".claude/agents")
+            .join(format!("{agent}.md"));
+        let text = file_text(&path);
+        // Body only: the frontmatter's `tools:` line also contains `Bash`, and matching it would
+        // make this test pass on the tool list rather than on the caveat.
+        let body = text
+            .split_once("\n---\n")
+            .map(|(_, body)| body)
+            .unwrap_or_else(|| panic!("{} has no frontmatter/body split", path.display()));
+
+        let disclosed = body.lines().any(|line| {
+            line.contains("Bash")
+                && PROHIBITION_MARKERS
+                    .iter()
+                    .any(|marker| line.contains(marker))
+        });
+
+        assert!(
+            disclosed,
+            "{agent}'s body no longer states that the no-write prohibition also covers `Bash`.\n  \
+             `Bash` is in its tool list DELIBERATELY — these reviewers need to run the suite — so \
+             the ban on shell writes is instruction-only and cannot be enforced by the harness.\n  \
+             Do not delete the caveat while the tool remains: that turns a known limitation into a \
+             hidden one. Either restore a line mentioning `Bash` alongside one of \
+             {PROHIBITION_MARKERS:?}, or remove `Bash` from the tool list and delete this test."
+        );
+    }
+}

@@ -18,7 +18,20 @@ sentences in a prompt before.
 > unverified** — the frontmatter parses and the field names are the documented ones,
 > which is necessary and not sufficient. Until someone confirms a spawn works, treat
 > "the harness enforces the prohibition" as the intended design rather than an
-> established fact, and keep stating the prohibition in the brief as well. `fresh-reader`, `architect` and `fable-adjudicator`
+> established fact, and keep stating the prohibition in the brief as well.
+>
+> **SECOND CAVEAT: "read-only" is enforced for `Edit`/`Write`/`NotebookEdit`, NOT for
+> shell writes.** The three read-only agents carry `Bash`, so a determined one could
+> write via `>`, `sed -i`, or `git commit`. Keeping `Bash` was a deliberate decision
+> (maintainer, 2026-07-30): every high-value finding these reviewers produced came from
+> *running* something — a constructed probe against a real line, a re-implementation
+> validated against the 28 known rows — and a reviewer who cannot run the suite cannot
+> check whether a gate is capable of failing, which is the check that has mattered most
+> here. So the enforcement raises the bar from casual to deliberate rather than making
+> violation impossible. Each definition states this, and
+> `read_only_agents_disclose_the_bash_limitation` keeps the disclosure from being
+> deleted while the tool stays. That test gates the *disclosure*, not the behaviour —
+> nothing in this repo can gate the behaviour. `fresh-reader`, `architect` and `fable-adjudicator`
 carry no `Edit`/`Write` tool at all, so a reviewer *cannot* edit what it reviews and
 Fable *cannot* write code, whatever either decides — the same move as replacing a
 property that held by discipline with one that holds by construction. The `model`
