@@ -908,10 +908,23 @@ more rigour, and it would have read as a hardening in the commit message.
   a one-sentence printable-characters rule beside it. That is *not* a relapse into a substitute
   validator: the parser still decides YAML, and the extra rule's accept-set is one sentence long,
   stated and tested.
-- **Do not pin a case the implementations disagree on unless you know which one the consumer
-  follows.** Unquoted TAB is left deliberately unpinned, with a comment saying so. Pinning it either
-  way would assert something unmeasured — and an unmeasured assertion inside a gate is what this
-  whole rule family is about.
+- **~~Do not pin a case the implementations disagree on unless you know which one the consumer
+  follows.~~ WITHDRAWN 2026-07-30, superseded by the bullet below.** As originally written this read:
+  *"Unquoted TAB is left deliberately unpinned, with a comment saying so. Pinning it either way would
+  assert something unmeasured."* The code reversed that in `d60b737` — TAB is now rejected throughout
+  and both cases are pinned — while this text was left standing, so for one commit the cookbook
+  asserted the opposite of the gate. That gap is the defect rule 2 records: **a superseded clause is
+  never silently deleted, and it is never silently left in place either.** Caught by a stop-time
+  review, not by the author, in the entry whose own subject is unmeasured assertions.
+- **Pin what the GATE does. Do not pin a claim about which implementation is right.** The withdrawn
+  bullet conflated the two, and the conflation is the whole lesson. Whether PyYAML or `yaml-rust2` is
+  correct about an unquoted TAB is genuinely unknown and genuinely unpinnable — the harness's loader
+  is neither of them. But **our gate's own behaviour is our decision**, always knowable and always
+  testable; leaving it unpinned means a later edit can flip it silently, which is the one thing a gate
+  exists to prevent. So: reject TAB throughout, pin both cases as rejected rows, and leave the
+  unmeasured question unasserted **by not claiming which parser is right** — not by declining to test
+  our own behaviour. "I have not measured X" licenses silence about X; it never licenses silence about
+  what our own code does.
 
 Generalised: **a validator's accept-set is a property you measure, not one you inherit.** Swapping in
 a library moves the set; it does not shrink it by default, and the direction of the move is an

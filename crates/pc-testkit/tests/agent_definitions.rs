@@ -1,6 +1,9 @@
 //! Gates the `.claude/agents/` frontmatter consumed by the agent harness.
-//! Two of these four agent definitions once shipped unable to load because of invalid YAML, so the
-//! prohibitions they encode silently did not exist.
+//!
+//! Two of these four definitions once shipped unable to load because of invalid YAML, so the
+//! prohibitions they encode silently did not exist. That is what this gate is for: the role
+//! restrictions are only real if the frontmatter parses.
+
 use pc_testkit::paths;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
