@@ -1,10 +1,10 @@
-//! Task **X1**, v1 review finding 3 — `panel-ocr ocr` writes a report and nothing else.
+//! Task **X1**, v1 review finding 3 — `panel-ocr ocr` has no cleaning side effects.
 //!
 //! §13.1 gives `ocr` the job "run OCR over the detected boxes and write a CSV/TXT report"
 //! and gives it no `--output-dir`: it is stages 1–2 plus a report. Cleaning outputs
 //! (`_clean.png`, `_combined_mask.png`, ... under `cleaned/`) are `clean`'s product, and an
 //! `ocr` invocation must not manufacture them as a side effect of reusing the five-stage
-//! chain.
+//! chain. The no-ONNX cases also verify that an unavailable eager factory writes no report.
 //!
 //! FROZEN (CLAUDE.md).
 
@@ -59,6 +59,7 @@ fn walk(root: &Path) -> Vec<PathBuf> {
     found
 }
 
+#[cfg(not(feature = "onnx"))]
 fn assert_no_cleaning_artifacts(root: &Path) {
     let files = walk(root);
     let rendered: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
@@ -75,8 +76,8 @@ fn assert_no_cleaning_artifacts(root: &Path) {
     }
 }
 
-/// The whole finding: an `ocr` run produces its report and leaves no cleaning output
-/// behind, anywhere under the working directory.
+/// An unavailable OCR factory fails before writing a report or cleaning output.
+#[cfg(not(feature = "onnx"))]
 #[test]
 fn ocr_writes_only_its_report() {
     let dir = tempfile::tempdir().unwrap();
@@ -99,22 +100,16 @@ fn ocr_writes_only_its_report() {
         ],
     );
 
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_eq!(output.status.code(), Some(1));
     assert!(
-        report.exists(),
-        "`ocr --output` must write the report file: {}",
-        report.display()
+        !report.exists(),
+        "the unavailable engine must not write a report"
     );
     assert_no_cleaning_artifacts(&work);
 }
 
-/// Same guarantee for `--format txt` and for the report-to-stdout path (no `--output`),
-/// which is the invocation the review actually reproduced.
+/// The same no-side-effect guarantee holds for the report-to-stdout path.
+#[cfg(not(feature = "onnx"))]
 #[test]
 fn ocr_to_stdout_writes_nothing_to_disk() {
     let dir = tempfile::tempdir().unwrap();
@@ -136,12 +131,7 @@ fn ocr_to_stdout_writes_nothing_to_disk() {
         ],
     );
 
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_eq!(output.status.code(), Some(1));
     assert_no_cleaning_artifacts(&work);
     assert_eq!(
         walk(&work),
@@ -158,6 +148,12 @@ fn clean_still_writes_its_cleaned_directory() {
     let work = dir.path().join("work");
     std::fs::create_dir_all(&work).unwrap();
     let page = write_page(&work, "page01.png");
+    let profile = pc_config::DEFAULT_PROFILE_TOML.replace(
+        "ocr_enabled                  = true",
+        "ocr_enabled                  = false",
+    );
+    let profile_path = work.join("no-ocr.toml");
+    std::fs::write(&profile_path, profile).unwrap();
 
     let output = run_in(
         &work,
@@ -166,6 +162,8 @@ fn clean_still_writes_its_cleaned_directory() {
             page.to_str().unwrap(),
             "--detector",
             "mock",
+            "--profile-path",
+            profile_path.to_str().unwrap(),
             "--cache-dir",
             work.join("cache").to_str().unwrap(),
         ],

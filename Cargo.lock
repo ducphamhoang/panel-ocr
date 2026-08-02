@@ -1050,6 +1050,7 @@ dependencies = [
  "pc-detect",
  "pc-export",
  "pc-models",
+ "pc-ocr",
  "pc-pipeline",
  "pc-testkit",
  "tempfile",

@@ -30,6 +30,16 @@ fn write_page(dir: &Path, name: &str) -> PathBuf {
     path
 }
 
+fn write_no_ocr_profile(dir: &Path) -> PathBuf {
+    let path = dir.join("no-ocr.toml");
+    let profile = pc_config::DEFAULT_PROFILE_TOML.replace(
+        "ocr_enabled                  = true",
+        "ocr_enabled                  = false",
+    );
+    std::fs::write(&path, profile).unwrap();
+    path
+}
+
 /// A `.xyz` file named alongside a real page: exit code 0, the summary says SKIPPED with
 /// the reason, and the real page is still exported.
 #[test]
@@ -39,6 +49,7 @@ fn a_stray_unsupported_file_does_not_fail_the_batch() {
     let stray = dir.path().join("notes.xyz");
     std::fs::write(&stray, b"not an image").unwrap();
     let out = dir.path().join("out");
+    let profile = write_no_ocr_profile(dir.path());
 
     let output = run(&[
         "clean",
@@ -46,6 +57,8 @@ fn a_stray_unsupported_file_does_not_fail_the_batch() {
         stray.to_str().unwrap(),
         "--detector",
         "mock",
+        "--profile-path",
+        profile.to_str().unwrap(),
         "--cache-dir",
         dir.path().join("cache").to_str().unwrap(),
         "--output-dir",
@@ -82,12 +95,15 @@ fn only_unsupported_files_is_still_success() {
     let stray = dir.path().join("notes.xyz");
     std::fs::write(&stray, b"not an image").unwrap();
     let out = dir.path().join("out");
+    let profile = write_no_ocr_profile(dir.path());
 
     let output = run(&[
         "clean",
         stray.to_str().unwrap(),
         "--detector",
         "mock",
+        "--profile-path",
+        profile.to_str().unwrap(),
         "--cache-dir",
         dir.path().join("cache").to_str().unwrap(),
         "--output-dir",

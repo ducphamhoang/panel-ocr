@@ -32,7 +32,7 @@ pub fn write_page(dir: &Path, name: &str, size: (u32, u32)) -> PathBuf {
 /// item 4).
 pub fn options(cache_dir: &Path, output_dir: &Path) -> PipelineOptions {
     let mut profile = Profile::default();
-    // v1 has no OCR engine (§16.12 item 4); keep the warning out of every test log.
+    // These helpers do not construct an OCR engine, so `ctx.ocr` remains `None` in these tests.
     profile.preprocessor.ocr_enabled = false;
     PipelineOptions {
         profile,

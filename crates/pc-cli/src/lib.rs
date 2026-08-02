@@ -11,6 +11,7 @@ pub mod args;
 pub mod detector;
 pub mod logging;
 pub mod models;
+pub mod ocr;
 pub mod paths;
 pub mod setup;
 
@@ -84,13 +85,23 @@ pub fn run_clean(args: CleanArgs) -> Result<i32> {
         &cache_root,
         &profile.text_detector,
     )?;
+    let ocr_factory = if profile.preprocessor.ocr_enabled {
+        Some(ocr::build_factory(&cache_root)?)
+    } else {
+        None
+    };
     let options = setup::build_clean_options(&args, profile, images.len(), &cache_root);
-    run_pipeline(&images, options, provider.as_ref(), !args.hide_analytics)
+    run_pipeline(
+        &images,
+        options,
+        provider.as_ref(),
+        ocr_factory.as_deref(),
+        !args.hide_analytics,
+    )
 }
 
 /// spec §13.1's `ocr` (task X1). Runs stages 1–2 with `performing_ocr = true` and
-/// renders `pc_export::render_ocr_report`. §16.12 item 4: with no engine in v1 the
-/// report is empty and a `WARN` says so.
+/// renders `pc_export::render_ocr_report` using one eagerly constructed OCR factory.
 ///
 /// `performing_ocr` stops the chain after preprocessing (see
 /// `pc_pipeline::process_image`), so the report — stdout or `--output FILE` — is the run's
@@ -100,18 +111,14 @@ pub fn run_ocr(args: OcrArgs) -> Result<i32> {
     ensure_inputs(&images)?;
 
     let config = setup::load_app_config()?;
-    let profile = setup::load_profile(
+    let mut profile = setup::load_profile(
         args.profile.as_deref(),
         args.profile_path.as_deref(),
         &config,
     )?;
-    if profile.preprocessor.ocr_enabled {
-        tracing::warn!(
-            "ocr_enabled is true but v1 ships no OCR engine (task P7); \
-             the OCR report will be empty (spec §16.12 item 4)"
-        );
-    }
+    ocr::apply_report_overrides(&mut profile);
     let cache_root = paths::resolve_cache_root(args.cache_dir.as_deref(), &config);
+    let ocr_factory = ocr::build_factory(&cache_root)?;
     let provider = detector::build_provider(
         &args.detector,
         None,
@@ -127,7 +134,7 @@ pub fn run_ocr(args: OcrArgs) -> Result<i32> {
         performing_ocr: true,
         ..PipelineOptions::default()
     };
-    let ctx = PipelineCtx::new(provider.as_ref());
+    let ctx = PipelineCtx::new(provider.as_ref()).with_ocr(ocr_factory.as_ref());
     let summary = pc_pipeline::run_batch(&images, &options, &ctx);
     if let Some(message) = summary.fatal_model_message() {
         cleanup_cache(&options)?;
@@ -337,6 +344,7 @@ fn run_pipeline(
     images: &[PathBuf],
     options: PipelineOptions,
     provider: &dyn pc_pipeline::DetectorProvider,
+    ocr: Option<&dyn pc_ocr::OcrEngineFactory>,
     show_analytics: bool,
 ) -> Result<i32> {
     if options.checkpointing == Checkpointing::Disk {
@@ -352,7 +360,10 @@ fn run_pipeline(
         bar.set_message("cleaning pages");
         bar
     });
-    let ctx = PipelineCtx::new(provider);
+    let mut ctx = PipelineCtx::new(provider);
+    if let Some(ocr) = ocr {
+        ctx = ctx.with_ocr(ocr);
+    }
     let summary = pc_pipeline::run_batch(images, &options, &ctx);
     if let Some(bar) = progress {
         bar.finish_with_message("cleaning complete");

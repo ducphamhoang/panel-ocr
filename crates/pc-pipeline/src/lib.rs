@@ -21,8 +21,8 @@
 //!   * **there is no working default detector yet** (D1/D4 deferred) — the pipeline is
 //!     detector-agnostic via `DetectorProvider`, and `pc-cli` is where `--detector`
 //!     turns that into a fatal, well-explained error for `onnx`;
-//!   * **there is no OCR engine yet** (P7) — `PipelineCtx.ocr` is `Option`, and `None`
-//!     is a supported, warned-about configuration.
+//!   * **OCR is caller-provided** (P7/P8) — `PipelineCtx.ocr` is still `Option` because a
+//!     caller may choose not to construct one, and `None` remains a supported configuration.
 
 pub mod batch;
 pub mod cache;

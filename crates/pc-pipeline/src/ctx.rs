@@ -41,8 +41,8 @@ impl DetectorProvider for SharedDetector {
     }
 }
 
-/// The resources a run injects into the stages. `ocr` is `None` in v1 (§16.12 item 4:
-/// P7 is unstarted), which `pc_preprocess::run` already handles as "no OCR pass".
+/// The resources a run injects into the stages. `ocr` remains optional because callers may
+/// choose not to construct an engine; `pc_preprocess::run` handles `None` as "no OCR pass".
 #[derive(Clone, Copy)]
 pub struct PipelineCtx<'a> {
     pub detectors: &'a dyn DetectorProvider,

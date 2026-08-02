@@ -34,6 +34,16 @@ fn write_page(dir: &Path, name: &str) -> PathBuf {
     path
 }
 
+fn write_no_ocr_profile(dir: &Path) -> PathBuf {
+    let path = dir.join("no-ocr.toml");
+    let profile = pc_config::DEFAULT_PROFILE_TOML.replace(
+        "ocr_enabled                  = true",
+        "ocr_enabled                  = false",
+    );
+    std::fs::write(&path, profile).unwrap();
+    path
+}
+
 /// The first cache entry in `dir` ending in `suffix` (§4.2 names them
 /// `{uuid}_{stem}{suffix}`, so the uuid is not predictable from the test).
 #[cfg(feature = "onnx")]
@@ -115,8 +125,7 @@ fn clean_never_provisions_and_names_the_command_that_does() {
     let page = write_page(dir.path(), "page01.png");
     let cache_root = dir.path().join("cache");
     let models_dir = pc_cli::paths::models_dir(&cache_root);
-    let profile = dir.path().join("default.toml");
-    std::fs::write(&profile, pc_config::DEFAULT_PROFILE_TOML).unwrap();
+    let profile = write_no_ocr_profile(dir.path());
 
     let output = run(&[
         "clean",
@@ -181,8 +190,7 @@ fn a_batch_refuses_once_when_the_model_is_missing() {
     write_page(&inputs, "page01.png");
     write_page(&inputs, "page02.png");
     let cache_root = dir.path().join("cache");
-    let profile = dir.path().join("default.toml");
-    std::fs::write(&profile, pc_config::DEFAULT_PROFILE_TOML).unwrap();
+    let profile = write_no_ocr_profile(dir.path());
 
     let output = run(&[
         "clean",
@@ -237,12 +245,15 @@ fn a_missing_replay_fixture_does_not_abort_the_batch() {
     let replay_spec = format!("replay:{}", replay_dir.display());
     let cache_dir = dir.path().join("cache");
     let output_dir = dir.path().join("out");
+    let profile = write_no_ocr_profile(dir.path());
 
     let output = run(&[
         "clean",
         inputs.to_str().unwrap(),
         "--detector",
         &replay_spec,
+        "--profile-path",
+        profile.to_str().unwrap(),
         "--cache-dir",
         cache_dir.to_str().unwrap(),
         "--output-dir",
@@ -290,8 +301,7 @@ fn a_resumed_run_needs_no_model_when_detection_is_skipped() {
     let page = write_page(dir.path(), "page01.png");
     let cache_root = dir.path().join("cache");
     let models_dir = pc_cli::paths::models_dir(&cache_root);
-    let profile = dir.path().join("default.toml");
-    std::fs::write(&profile, pc_config::DEFAULT_PROFILE_TOML).unwrap();
+    let profile = write_no_ocr_profile(dir.path());
 
     // Pass 1 — seed the cache. `--keep-cache` is what makes the entry survive the run
     // (`clean` deletes its cache dir otherwise), and `--detector mock` keeps it model-free.
@@ -367,12 +377,15 @@ fn a_mock_run_exports_the_page_and_exits_zero() {
     let dir = tempfile::tempdir().unwrap();
     let page = write_page(dir.path(), "page01.png");
     let out = dir.path().join("out");
+    let profile = write_no_ocr_profile(dir.path());
 
     let output = run(&[
         "clean",
         page.to_str().unwrap(),
         "--detector",
         "mock",
+        "--profile-path",
+        profile.to_str().unwrap(),
         "--cache-dir",
         dir.path().join("cache").to_str().unwrap(),
         "--output-dir",
@@ -459,12 +472,15 @@ fn a_partly_failing_batch_exits_two() {
     std::fs::create_dir_all(&inputs).unwrap();
     write_page(&inputs, "good.png");
     std::fs::write(inputs.join("broken.png"), b"not an image at all").unwrap();
+    let profile = write_no_ocr_profile(dir.path());
 
     let output = run(&[
         "clean",
         inputs.to_str().unwrap(),
         "--detector",
         "mock",
+        "--profile-path",
+        profile.to_str().unwrap(),
         "--cache-dir",
         dir.path().join("cache").to_str().unwrap(),
         "--output-dir",

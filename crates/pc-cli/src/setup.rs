@@ -74,8 +74,8 @@ pub fn load_profile(
 
 /// Translate parsed arguments + a loaded profile into [`PipelineOptions`].
 ///
-/// Emits §16.12 item 6's normalisation `WARN` and §16.12 item 4's "no OCR engine in v1"
-/// `WARN`; both are the CLI's job, since the pipeline receives already-resolved options.
+/// Emits §16.12 item 6's normalisation `WARN`; this is the CLI's job, since the pipeline
+/// receives already-resolved options.
 pub fn build_clean_options(
     args: &CleanArgs,
     profile: Profile,
@@ -89,13 +89,6 @@ pub fn build_clean_options(
              loading every stage up to the requested one from the cache (spec §16.12 item 6)"
         );
     }
-    if profile.preprocessor.ocr_enabled {
-        tracing::warn!(
-            "ocr_enabled is true but v1 ships no OCR engine (task P7); \
-             OCR-based box discarding is inactive (spec §16.12 item 4)"
-        );
-    }
-
     let debug_outputs = args.cache_masks || profile.general.always_cache_masks;
     let checkpointing = select_checkpointing(image_count, debug_outputs, args.no_cache);
     let configured_threads = args.threads.unwrap_or(profile.general.max_threads);
