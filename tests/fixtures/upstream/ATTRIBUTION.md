@@ -134,7 +134,7 @@ crate embeds (`include_str!`), not a test fixture read at test time.
 | Author | Maciej Budyś (`kha-white`) |
 | Repository | https://huggingface.co/kha-white/manga-ocr-base |
 | Commit | `aa6573bd10b0d446cbf622e29c3e084914df9741` |
-| License | Apache License 2.0 |
+| License | Apache License 2.0 — full text at `crates/pc-ocr/assets/LICENSE-APACHE-2.0.txt` |
 | Vendored file | `crates/pc-ocr/assets/vocab.txt` |
 | Upstream path | `vocab.txt` (repository root) |
 | Size | 24,072 bytes |
@@ -142,6 +142,17 @@ crate embeds (`include_str!`), not a test fixture read at test time.
 | Retrieved | 2026-08-02 |
 | Modified | No — byte-for-byte as served (LF line endings in the original; a `.gitattributes`
   entry marks the vendored copy `-text` so eol normalization cannot alter it on checkout) |
+
+**Note on the license file's own provenance.** `kha-white/manga-ocr-base`'s HuggingFace repo
+declares `license: apache-2.0` in its README front matter but does not itself vendor a
+`LICENSE` file (confirmed via the HF API's file listing at the pinned commit — the repo
+holds only `.gitattributes`, `README.md`, `config.json`, `preprocessor_config.json`,
+`pytorch_model.bin`, `special_tokens_map.json`, `tokenizer_config.json`, `vocab.txt`). So
+`crates/pc-ocr/assets/LICENSE-APACHE-2.0.txt` is the canonical Apache License 2.0 text
+fetched from `https://www.apache.org/licenses/LICENSE-2.0.txt` (sha256
+`cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`, 11,358 bytes) — the
+standard, project-independent text the license declaration refers to — not a file copied
+from upstream's own repository, because no such file exists there to copy.
 
 Chosen over `mayocream/manga-ocr-onnx`'s copy of the same file (30,216 bytes, CRLF-terminated)
 per Fable's ruling — see `docs/PIPELINE_SPEC_V1.md` §16.30 item 2 and `docs/RULINGS.md`'s
