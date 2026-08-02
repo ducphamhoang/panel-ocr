@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "model_file_name": "decoder_model.onnx",
+  "sha256": "ef7765261e9d1cdc34d89356986c2bbc2a082897f753a89605ae80fdfa61f5e8",
+  "size_bytes": 117480262,
+  "opset": 14,
+  "inputs": [
+    {
+      "name": "input_ids",
+      "element_type": "i64",
+      "shape": [
+        "batch_size",
+        "decoder_sequence_length"
+      ]
+    },
+    {
+      "name": "encoder_hidden_states",
+      "element_type": "f32",
+      "shape": [
+        "batch_size",
+        "encoder_sequence_length",
+        768
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "logits",
+      "element_type": "f32",
+      "shape": [
+        "batch_size",
+        "decoder_sequence_length",
+        6144
+      ]
+    }
+  ]
+}

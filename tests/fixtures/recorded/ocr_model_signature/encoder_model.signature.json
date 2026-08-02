@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "model_file_name": "encoder_model.onnx",
+  "sha256": "15fa8155fe9bc1a7d25d9bb353debaa4def033d0174e907dbd2dd6d995def85f",
+  "size_bytes": 343454249,
+  "opset": 14,
+  "inputs": [
+    {
+      "name": "pixel_values",
+      "element_type": "f32",
+      "shape": [
+        "batch_size",
+        "num_channels",
+        "height",
+        "width"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "last_hidden_state",
+      "element_type": "f32",
+      "shape": [
+        "batch_size",
+        "Addlast_hidden_state_dim_1",
+        "Addlast_hidden_state_dim_2"
+      ]
+    }
+  ]
+}

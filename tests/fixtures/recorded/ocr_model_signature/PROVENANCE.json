@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "group": "ocr_model_signature",
+  "tool": "cargo xtask record-fixtures --only ocr-model-signature",
+  "command_line": "cargo xtask record-fixtures --only ocr-model-signature",
+  "records": [
+    {
+      "name": "encoder",
+      "output": "tests/fixtures/recorded/ocr_model_signature/encoder_model.signature.json",
+      "output_sha256": "e1719152476b9fe33da86369b934c2ea59ad8043b9519fa7bf8373a840650327",
+      "committed": true,
+      "source": "encoder_model.onnx",
+      "source_sha256": "15fa8155fe9bc1a7d25d9bb353debaa4def033d0174e907dbd2dd6d995def85f",
+      "params": {
+        "opset": 14,
+        "size_bytes": 343454249
+      }
+    },
+    {
+      "name": "decoder",
+      "output": "tests/fixtures/recorded/ocr_model_signature/decoder_model.signature.json",
+      "output_sha256": "d6a98ab7ffece4d4d80b405d4326ab5a349ad57c506b02fa2b82e52352349ed5",
+      "committed": true,
+      "source": "decoder_model.onnx",
+      "source_sha256": "ef7765261e9d1cdc34d89356986c2bbc2a082897f753a89605ae80fdfa61f5e8",
+      "params": {
+        "opset": 14,
+        "size_bytes": 117480262
+      }
+    }
+  ]
+}

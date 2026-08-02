@@ -12,6 +12,7 @@
 mod calibrate;
 mod env;
 mod model_signature;
+mod ocr_model_signature;
 mod paths;
 mod record;
 
@@ -51,6 +52,12 @@ enum Command {
         /// Verified ONNX model path for the dependency-free `model-signature` group.
         #[arg(long)]
         model_signature: Option<PathBuf>,
+        /// Verified manga-ocr encoder ONNX path for the dependency-free OCR signature group.
+        #[arg(long)]
+        ocr_encoder: Option<PathBuf>,
+        /// Verified manga-ocr decoder ONNX path for the dependency-free OCR signature group.
+        #[arg(long)]
+        ocr_decoder: Option<PathBuf>,
         /// Re-record even when the output already exists.
         #[arg(long)]
         force: bool,
@@ -72,6 +79,8 @@ fn main() -> Result<()> {
             detector,
             detector_upstream,
             model_signature,
+            ocr_encoder,
+            ocr_decoder,
             force,
         } => {
             let groups = if only.is_empty() {
@@ -90,6 +99,7 @@ fn main() -> Result<()> {
                 detector.as_deref(),
                 detector_upstream.as_deref(),
                 model_signature.as_deref(),
+                (ocr_encoder.as_deref(), ocr_decoder.as_deref()),
                 force,
             )?;
             summarize(&results);
@@ -119,6 +129,10 @@ fn probe() -> Result<()> {
     println!(
         "\nmodel-signature: {}",
         model_signature::capability_status(None)
+    );
+    println!(
+        "ocr-model-signature: {}",
+        ocr_model_signature::capability_status(None, None)
     );
     Ok(())
 }

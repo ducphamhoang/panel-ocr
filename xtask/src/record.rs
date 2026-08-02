@@ -5,6 +5,7 @@
 
 use crate::env::{detector_backend_status, DetectorStatus, PythonTooling, NO_PYTHON_HELP};
 use crate::model_signature;
+use crate::ocr_model_signature;
 use crate::paths;
 use anyhow::{bail, Context, Result};
 use pc_testkit::provenance::{
@@ -33,6 +34,8 @@ pub enum Group {
     Detector,
     /// §16.16 — declared graph metadata from the sha256-verified ONNX artifact. Needs weights.
     ModelSignature,
+    /// §16.31 — declared graph metadata from the two sha256-verified manga-ocr artifacts. Needs weights.
+    OcrModelSignature,
 }
 
 impl Group {
@@ -42,6 +45,7 @@ impl Group {
         Group::FindEdges,
         Group::Detector,
         Group::ModelSignature,
+        Group::OcrModelSignature,
     ];
 
     fn label(self) -> &'static str {
@@ -51,6 +55,7 @@ impl Group {
             Self::FindEdges => "find-edges",
             Self::Detector => "detector",
             Self::ModelSignature => "model-signature",
+            Self::OcrModelSignature => "ocr-model-signature",
         }
     }
 }
@@ -77,6 +82,7 @@ pub fn run(
     detector: Option<&str>,
     detector_upstream: Option<&Path>,
     model_signature_path: Option<&Path>,
+    ocr_model_paths: (Option<&Path>, Option<&Path>),
     force: bool,
 ) -> Result<Vec<(Group, Outcome)>> {
     let needs_python = groups.iter().any(|group| {
@@ -130,6 +136,9 @@ pub fn run(
                 }),
             },
             Group::ModelSignature => model_signature::record(model_signature_path, force),
+            Group::OcrModelSignature => {
+                ocr_model_signature::record(ocr_model_paths.0, ocr_model_paths.1, force)
+            }
         };
         let outcome = match attempt {
             Ok(outcome) => outcome,

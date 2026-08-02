@@ -9,7 +9,7 @@ use pc_testkit::provenance::BARE_MODEL_SOURCES;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-const EXPECTED_GROUPS: usize = 3;
+const EXPECTED_GROUPS: usize = 4;
 const RECORDED_PREFIX: &str = "tests/fixtures/recorded";
 const SCRATCH_PREFIX: &str = "target/xtask-scratch/";
 const EXPECTED_DECLARED_PATHS: &[&str] = &[
@@ -17,14 +17,20 @@ const EXPECTED_DECLARED_PATHS: &[&str] = &[
     "tests/fixtures/recorded/nlm/ray_h10_t7_s21.png",
     "tests/fixtures/recorded/inter_area/long_strip_inter_area_500x4000.png",
     "tests/fixtures/recorded/model_signature/comictextdetector.signature.json",
+    "tests/fixtures/recorded/ocr_model_signature/encoder_model.signature.json",
+    "tests/fixtures/recorded/ocr_model_signature/decoder_model.signature.json",
     "target/xtask-scratch/long_strip_inter_area_500x4000_cv2jpeg.png",
     "comictextdetector.pt.onnx",
+    "encoder_model.onnx",
+    "decoder_model.onnx",
 ];
 const EXPECTED_COMMITTED_PATHS: &[&str] = &[
     "tests/fixtures/recorded/nlm/nightmare_h10_t7_s21.png",
     "tests/fixtures/recorded/nlm/ray_h10_t7_s21.png",
     "tests/fixtures/recorded/inter_area/long_strip_inter_area_500x4000.png",
     "tests/fixtures/recorded/model_signature/comictextdetector.signature.json",
+    "tests/fixtures/recorded/ocr_model_signature/encoder_model.signature.json",
+    "tests/fixtures/recorded/ocr_model_signature/decoder_model.signature.json",
 ];
 
 #[derive(Debug)]
