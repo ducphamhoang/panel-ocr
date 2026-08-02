@@ -12,6 +12,7 @@
 
 pub mod engine;
 pub mod post;
+pub mod preprocess;
 pub mod vocab;
 
 #[cfg(any(test, feature = "testkit"))]
