@@ -10,6 +10,7 @@
 //! injected as the stage's `Ctx` (§3). The manga-ocr ONNX backend is task **P7**, behind
 //! the (declared, unimplemented) `onnx` feature — see spec §16.8 item 1.
 
+pub mod decode;
 pub mod engine;
 pub mod onnx;
 pub mod post;
