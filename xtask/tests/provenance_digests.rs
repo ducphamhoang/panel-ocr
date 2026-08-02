@@ -23,8 +23,9 @@
 //!     together, exactly as §16.16 item 5 describes for the model-identity pair.
 
 use pc_models::COMIC_TEXT_DETECTOR;
+use pc_testkit::ocr_model_signature::{MANGA_OCR_DECODER, MANGA_OCR_ENCODER};
 use pc_testkit::paths;
-use pc_testkit::provenance::{self, GroupProvenance};
+use pc_testkit::provenance::{self, GroupProvenance, BARE_MODEL_SOURCES};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
@@ -148,6 +149,92 @@ fn the_model_signature_source_digest_equals_the_pc_models_constant() {
         Some(COMIC_TEXT_DETECTOR.sha256),
         "the recorded model source digest must equal `pc_models::COMIC_TEXT_DETECTOR.sha256`"
     );
+}
+
+#[test]
+// spec §16.31 item 3: the frozen non-committed-form predicate's three-name allow-list is
+// closed, and every bare model source that is actually declared is bound to its owning pin.
+fn every_bare_model_source_is_pinned_to_a_known_digest() {
+    // `BARE_MODEL_SOURCES` is imported from `pc_testkit::provenance` — the SAME constant
+    // `crates/pc-testkit/tests/recorded_provenance.rs`'s `assert_known_non_committed_form`
+    // enforces, not an independent copy. Comparing it below to the ratified literal names is
+    // therefore a real check on the one shared source, not a self-comparison.
+    let mut expected_names = BARE_MODEL_SOURCES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    expected_names.sort();
+    expected_names.dedup();
+    assert_eq!(
+        expected_names,
+        vec![
+            "comictextdetector.pt.onnx".to_owned(),
+            "decoder_model.onnx".to_owned(),
+            "encoder_model.onnx".to_owned(),
+        ],
+        "the enumerated bare-model allow-list must contain exactly the three ratified names"
+    );
+
+    let mut records = Vec::new();
+    let mut groups = std::fs::read_dir(paths::recorded_root())
+        .expect("readable recorded root")
+        .map(|entry| entry.expect("readable recorded entry"))
+        .filter(|entry| {
+            entry
+                .file_type()
+                .expect("stat-able recorded entry")
+                .is_dir()
+        })
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    groups.sort();
+
+    for group in groups {
+        records.extend(read_group(&group).records);
+    }
+
+    let mut declared_names = records
+        .iter()
+        .filter_map(|record| record.source.as_deref())
+        .filter(|source| {
+            let path = std::path::Path::new(source);
+            path.components().count() == 1
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".onnx"))
+        })
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    declared_names.sort();
+    declared_names.dedup();
+    let unexpected_names = declared_names
+        .iter()
+        .filter(|source| !BARE_MODEL_SOURCES.contains(&source.as_str()))
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected_names.is_empty(),
+        "bare model sources must be members of the closed allow-list: {unexpected_names:?}"
+    );
+
+    for record in records {
+        let Some(source) = record.source.as_deref() else {
+            continue;
+        };
+        let Some(expected_digest) = (match source {
+            "comictextdetector.pt.onnx" => Some(COMIC_TEXT_DETECTOR.sha256),
+            "encoder_model.onnx" => Some(MANGA_OCR_ENCODER.sha256),
+            "decoder_model.onnx" => Some(MANGA_OCR_DECODER.sha256),
+            _ => None,
+        }) else {
+            continue;
+        };
+        assert_eq!(
+            record.source_sha256.as_deref(),
+            Some(expected_digest),
+            "source digest for `{source}` must equal its pinned artifact digest"
+        );
+    }
 }
 
 #[test]

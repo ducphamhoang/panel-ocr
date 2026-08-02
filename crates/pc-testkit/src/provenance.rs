@@ -16,6 +16,19 @@ pub const SCRATCH_PREFIX: &str = "target/xtask-scratch/";
 pub const DETECTOR_GROUP: &str = "detector";
 pub const REQUIRED_EXECUTION_PROVIDER: &str = "cpu";
 
+/// Bare model filenames a record may name as `source` with no committed artifact to hash
+/// (spec §16.31 item 3). ENUMERATED, not pattern-matched: a broad suffix exemption would
+/// silently admit any future `*.onnx`/`*.pt.onnx` name. This is the single copy both
+/// `crates/pc-testkit/tests/recorded_provenance.rs` (the enforcing predicate) and
+/// `xtask/tests/provenance_digests.rs` (the compensating digest-binding gate) import — two
+/// independently-typed-out copies with no comparator between them is exactly the failure
+/// mode §16.31 item 2's ruling rejected for the pin constants, and it applies here too.
+pub const BARE_MODEL_SOURCES: &[&str] = &[
+    "comictextdetector.pt.onnx",
+    "encoder_model.onnx",
+    "decoder_model.onnx",
+];
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GroupProvenance {

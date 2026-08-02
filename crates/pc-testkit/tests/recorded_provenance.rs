@@ -5,6 +5,7 @@
 //! unless it has one of the known deliberately-unverifiable forms.
 
 use pc_testkit::paths;
+use pc_testkit::provenance::BARE_MODEL_SOURCES;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -182,13 +183,19 @@ fn verify_committed_artifact(declaration: &DigestDeclaration, relative: &Path) {
 }
 
 fn assert_known_non_committed_form(declared_path: &str) {
+    // ENUMERATED, not pattern-matched (spec §16.31 item 3): a broad suffix exemption would
+    // silently admit any future `*.onnx`/`*.pt.onnx` name. `BARE_MODEL_SOURCES` is imported
+    // from `pc_testkit::provenance` rather than declared locally, so this predicate and
+    // `xtask/tests/provenance_digests.rs`'s compensating digest-binding gate share exactly
+    // one copy of the allow-list — two independent literals with no comparator between them
+    // is the failure mode §16.31 item 2 rejected for the pin constants, and it applies here.
     let path = Path::new(declared_path);
     let is_generated_scratch = declared_path.starts_with(SCRATCH_PREFIX);
     let is_bare_model_filename = path.components().count() == 1
         && path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".pt.onnx"));
+            .is_some_and(|name| BARE_MODEL_SOURCES.contains(&name));
 
     assert!(
         is_generated_scratch || is_bare_model_filename,

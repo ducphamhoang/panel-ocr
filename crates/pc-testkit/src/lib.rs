@@ -22,6 +22,7 @@ pub mod golden;
 pub mod images;
 pub mod metrics;
 pub mod model_signature;
+pub mod ocr_model_signature;
 pub mod paths;
 pub mod provenance;
 

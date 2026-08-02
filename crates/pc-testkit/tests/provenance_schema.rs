@@ -585,8 +585,8 @@ fn the_input_page_may_not_also_be_a_record_output() {
 
 #[test]
 // spec §16.24 item 2: the model must be a BARE filename, because the frozen gate's
-// deliberately-unverifiable exemption (`:187-191`) is keyed on a single path component ending
-// `.pt.onnx`. A path-shaped value would fall through to the committed branch and fail
+// deliberately-unverifiable exemption (`:187-191`) is an enumerated allow-list of three bare
+// model filenames. A path-shaped value would fall through to the committed branch and fail
 // locality. Also pins that the digest slot stays canonical (its VALUE is bound in
 // `xtask/tests/provenance_digests.rs`, §16.24 item 2's condition on the walker dodge).
 fn the_model_must_be_a_bare_filename_with_a_canonical_digest() {
