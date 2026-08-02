@@ -1,7 +1,6 @@
 //! Dependency-free recorder for the two pinned manga-ocr ONNX graph signatures.
 
 use anyhow::{bail, Context, Result};
-use pc_models::{sha256_hex, verify_sha256};
 use pc_testkit::model_signature::{
     Dim, SymbolicModelSignature, SymbolicTensorSignature, ELEMENT_TYPE_F32,
 };
@@ -92,12 +91,24 @@ pub fn record(
     let encoder = encoder.expect("encoder source checked above");
     let decoder = decoder.expect("decoder source checked above");
 
-    // Verify both real artifacts before parsing either protobuf. This is deliberately a pair:
-    // a one-file recording is not a valid OCR group.
-    verify_source(&encoder, &MANGA_OCR_ENCODER)?;
-    verify_source(&decoder, &MANGA_OCR_DECODER)?;
-    let encoder_signature = parse_signature(&encoder, &MANGA_OCR_ENCODER)?;
-    let decoder_signature = parse_signature(&decoder, &MANGA_OCR_DECODER)?;
+    // Read and verify both real artifacts (once each, in memory) before parsing either
+    // protobuf. This is deliberately a pair: a one-file recording is not a valid OCR
+    // group. `read_and_verify_source` returns the exact bytes it hashed, and
+    // `parse_signature` parses those same bytes rather than re-reading the path.
+    let (encoder_bytes, encoder_sha256) = read_and_verify_source(&encoder, &MANGA_OCR_ENCODER)?;
+    let (decoder_bytes, decoder_sha256) = read_and_verify_source(&decoder, &MANGA_OCR_DECODER)?;
+    let encoder_signature = parse_signature(
+        &encoder,
+        &encoder_bytes,
+        &encoder_sha256,
+        &MANGA_OCR_ENCODER,
+    )?;
+    let decoder_signature = parse_signature(
+        &decoder,
+        &decoder_bytes,
+        &decoder_sha256,
+        &MANGA_OCR_DECODER,
+    )?;
     println!("parsed OCR encoder signature:\n{encoder_signature:#?}");
     println!("parsed OCR decoder signature:\n{decoder_signature:#?}");
 
@@ -208,20 +219,33 @@ fn missing_sources_reason(encoder: Option<&Path>, decoder: Option<&Path>) -> Str
     missing.join("; ")
 }
 
-fn verify_source(path: &Path, pin: &OcrModelPin) -> Result<()> {
-    verify_sha256(path, pin.sha256)
-        .with_context(|| format!("verifying the OCR model source {}", path.display()))?;
-    let size = std::fs::metadata(path)
-        .with_context(|| format!("statting the OCR model source {}", path.display()))?
-        .len();
-    if size != pin.size_bytes {
+/// Reads the source file ONCE and verifies the exact bytes returned, rather than
+/// verifying a path's contents (`verify_sha256`/`std::fs::metadata`) and then having a
+/// separate later read (`parse_signature`'s old `std::fs::read` + a second
+/// `sha256_hex(path)`) re-open the same path — a real TOCTOU gap on a path that could
+/// change between the two reads (a symlink swap, a concurrent write, a network mount).
+/// Everything downstream parses these returned bytes and records the returned digest;
+/// nothing re-reads `path` or re-derives the digest from the pin.
+fn read_and_verify_source(path: &Path, pin: &OcrModelPin) -> Result<(Vec<u8>, String)> {
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("reading the OCR model source {}", path.display()))?;
+    if bytes.len() as u64 != pin.size_bytes {
         bail!(
-            "verified `{}` has size {size} bytes, expected pinned size {}",
+            "`{}` has size {} bytes, expected pinned size {}",
             path.display(),
+            bytes.len(),
             pin.size_bytes
         );
     }
-    Ok(())
+    let sha256 = sha256_hex_bytes(&bytes);
+    if !sha256.eq_ignore_ascii_case(pin.sha256) {
+        bail!(
+            "`{}` hashes to {sha256}, expected pinned sha256 {}",
+            path.display(),
+            pin.sha256
+        );
+    }
+    Ok((bytes, sha256))
 }
 
 fn artifact_record(
@@ -357,9 +381,15 @@ fn sha256_hex_bytes(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn parse_signature(path: &Path, pin: &OcrModelPin) -> Result<SymbolicModelSignature> {
-    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    let sha256 = sha256_hex(path).context("hashing the verified OCR model")?;
+/// Parses already-verified bytes (from `read_and_verify_source`) — never re-reads `path`,
+/// so the signature this emits describes exactly the bytes whose hash was checked, not
+/// whatever a second, later `std::fs::read` of the same path happens to return.
+fn parse_signature(
+    path: &Path,
+    bytes: &[u8],
+    sha256: &str,
+    pin: &OcrModelPin,
+) -> Result<SymbolicModelSignature> {
     let model_file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -375,7 +405,7 @@ fn parse_signature(path: &Path, pin: &OcrModelPin) -> Result<SymbolicModelSignat
             pin.file_name
         );
     }
-    parse_symbolic_bytes(&bytes, model_file_name, sha256)
+    parse_symbolic_bytes(bytes, model_file_name, sha256.to_owned())
 }
 
 fn parse_symbolic_bytes(
