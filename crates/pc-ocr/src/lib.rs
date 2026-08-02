@@ -17,10 +17,16 @@ pub mod post;
 pub mod preprocess;
 pub mod vocab;
 
+#[cfg(feature = "onnx")]
+pub mod manga;
+
 #[cfg(any(test, feature = "testkit"))]
 pub mod mock;
 
 pub use engine::{OcrEngine, OcrEngineFactory};
+
+#[cfg(feature = "onnx")]
+pub use manga::{MangaOcrEngine, MangaOcrFactory};
 
 #[cfg(any(test, feature = "testkit"))]
 pub use mock::{MockOcrEngine, MockOcrFactory};
