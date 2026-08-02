@@ -1,0 +1,3 @@
+# crates/pc-ocr/assets/vocab.txt is a hash-pinned vendored file (§16.30 item 2, Fable ruling).
+# -text prevents eol normalization from silently rewriting the pinned bytes on checkout/commit.
+crates/pc-ocr/assets/vocab.txt -text

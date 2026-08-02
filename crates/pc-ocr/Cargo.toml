@@ -28,3 +28,4 @@ ort     = { workspace = true, optional = true }
 # Self dev-dependency so integration tests (which link this crate as an external lib,
 # without `cfg(test)`) can see the `testkit`-gated mocks. Same trick as `pc-detect`.
 pc-ocr = { path = ".", features = ["testkit"] }
+sha2 = { workspace = true }

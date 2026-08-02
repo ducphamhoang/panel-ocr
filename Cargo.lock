@@ -1176,6 +1176,7 @@ dependencies = [
  "ort",
  "pc-core",
  "pc-ocr",
+ "sha2",
  "tracing",
 ]
 

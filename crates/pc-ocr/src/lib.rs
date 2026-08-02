@@ -11,6 +11,8 @@
 //! the (declared, unimplemented) `onnx` feature — see spec §16.8 item 1.
 
 pub mod engine;
+pub mod post;
+pub mod vocab;
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod mock;
