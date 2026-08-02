@@ -16,6 +16,35 @@ pub fn expected_size(spec: &pc_models::ModelSpec) -> Option<u64> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expected_size_matches_the_recorded_detector_signature_and_ocr_pins() {
+        // A third, previously unbound literal copy of these byte counts (found during the
+        // P7/P8 post-implementation review) — nothing compared them to the recorded
+        // signature (detector) or the pc-testkit pins (OCR), so a typo here would only
+        // surface as a spurious "size mismatch" on an otherwise-correct file, since the
+        // sha256 check that follows in `resolve_managed_model`/`resolve_detector_model`
+        // would still catch a genuinely wrong artifact.
+        let detector_signature = pc_testkit::model_signature::comic_text_detector_signature();
+        assert_eq!(
+            expected_size(&pc_models::COMIC_TEXT_DETECTOR),
+            Some(detector_signature.size_bytes)
+        );
+
+        assert_eq!(
+            expected_size(&pc_models::MANGA_OCR_ENCODER),
+            Some(pc_testkit::ocr_model_signature::MANGA_OCR_ENCODER.size_bytes)
+        );
+        assert_eq!(
+            expected_size(&pc_models::MANGA_OCR_DECODER),
+            Some(pc_testkit::ocr_model_signature::MANGA_OCR_DECODER.size_bytes)
+        );
+    }
+}
+
 /// Resolve the managed model cache using the app-level cache precedence.
 pub fn resolve_managed_models_dir(cli_override: Option<&Path>) -> Result<PathBuf> {
     let config = crate::setup::load_app_config()?;

@@ -22,6 +22,16 @@ fn post_process_removes_every_whitespace_character_including_u3000() {
 }
 
 #[test]
+fn post_process_strips_the_c0_control_chars_python_str_split_treats_as_whitespace() {
+    // Additive strengthening (cookbook rule 8): U+001C-U+001F are real Python `str.split()`
+    // whitespace (verified: `("a\x1cb").split() == ['a', 'b']`) but were unasserted here —
+    // found during the P7/P8 post-implementation review. Unreachable from real model
+    // output (the vocabulary contains no C0 controls), same status as the horizontal-
+    // ellipsis and half-width-katakana branches above, but ported for upstream parity.
+    assert_eq!(post_process("a\u{1c}b\u{1d}c\u{1e}d\u{1f}e"), "ａｂｃｄｅ");
+}
+
+#[test]
 fn post_process_maps_printable_ascii_to_the_fullwidth_block() {
     for code_point in 0x21_u32..=0x7E {
         let source = char::from_u32(code_point).unwrap().to_string();

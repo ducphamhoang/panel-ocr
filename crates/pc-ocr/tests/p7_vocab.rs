@@ -79,9 +79,13 @@ fn the_printable_ascii_block_is_contiguous_from_id_15() {
 
 #[test]
 fn decode_skip_special_omits_the_five_bracket_tokens_wherever_they_appear() {
+    // Additive strengthening (cookbook rule 8): the original array omitted UNK_ID, so
+    // deleting it from the skip-set kept every test green (found during the P7/P8
+    // post-implementation review). All five special ids are now exercised.
     let vocab = Vocab::embedded();
 
-    let decoded = vocab.decode_skip_special(&[CLS_ID, CLS_ID, 47, MASK_ID, 30, SEP_ID, PAD_ID]);
+    let decoded =
+        vocab.decode_skip_special(&[CLS_ID, CLS_ID, 47, MASK_ID, 30, UNK_ID, SEP_ID, PAD_ID]);
 
     assert_eq!(decoded, "A0");
 }
