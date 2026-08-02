@@ -116,3 +116,34 @@ P02/P03's identity rests on the (weaker) size match recorded at item 17(a) — t
 not claim their sha256 values are ratified, only that they are what this session fetched and
 hashed on 2026-07-30, recorded here per this file's own convention of hash-verifiable
 vendored fixtures. P04 (a 1200x24 footer strip, not a page — item 17(a)) is not vendored.
+
+---
+
+## `crates/pc-ocr/assets/vocab.txt` (manga-ocr vocabulary, §16.30 item 2)
+
+Not from PanelCleaner or this directory — recorded here anyway per §16.30 item 2's own
+instruction: "Whatever path is used, it should follow the existing
+`tests/fixtures/upstream/ATTRIBUTION.md` convention... attribution is owed regardless of
+which directory the file lands in." This entry is that attribution; the file itself lives
+under `crates/pc-ocr/assets/`, not under this directory, because it is source the `pc-ocr`
+crate embeds (`include_str!`), not a test fixture read at test time.
+
+| | |
+|---|---|
+| Project | manga-ocr |
+| Author | Maciej Budyś (`kha-white`) |
+| Repository | https://huggingface.co/kha-white/manga-ocr-base |
+| Commit | `aa6573bd10b0d446cbf622e29c3e084914df9741` |
+| License | Apache License 2.0 |
+| Vendored file | `crates/pc-ocr/assets/vocab.txt` |
+| Upstream path | `vocab.txt` (repository root) |
+| Size | 24,072 bytes |
+| sha256 | `344fbb6b8bf18c57839e924e2c9365434697e0227fac00b88bb4899b78aa594d` |
+| Retrieved | 2026-08-02 |
+| Modified | No — byte-for-byte as served (LF line endings in the original; a `.gitattributes`
+  entry marks the vendored copy `-text` so eol normalization cannot alter it on checkout) |
+
+Chosen over `mayocream/manga-ocr-onnx`'s copy of the same file (30,216 bytes, CRLF-terminated)
+per Fable's ruling — see `docs/PIPELINE_SPEC_V1.md` §16.30 item 2 and `docs/RULINGS.md`'s
+"P7 manga-ocr artifact, vocab, task split" entry for the full reasoning and the CRLF-hazard
+arithmetic (30,216 = 24,072 + 6,144 line endings).
