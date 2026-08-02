@@ -9,7 +9,7 @@ use pc_testkit::provenance::BARE_MODEL_SOURCES;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-const EXPECTED_GROUPS: usize = 4;
+const EXPECTED_GROUPS: usize = 5;
 const RECORDED_PREFIX: &str = "tests/fixtures/recorded";
 const SCRATCH_PREFIX: &str = "target/xtask-scratch/";
 const EXPECTED_DECLARED_PATHS: &[&str] = &[
@@ -23,6 +23,14 @@ const EXPECTED_DECLARED_PATHS: &[&str] = &[
     "comictextdetector.pt.onnx",
     "encoder_model.onnx",
     "decoder_model.onnx",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_detector_mask.png",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_detector_blocks.json",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_base.png",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_raw_mask.png",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01#raw.json",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upstream_oracle.json",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upstream_group_output_equality.json",
 ];
 const EXPECTED_COMMITTED_PATHS: &[&str] = &[
     "tests/fixtures/recorded/nlm/nightmare_h10_t7_s21.png",
@@ -31,6 +39,14 @@ const EXPECTED_COMMITTED_PATHS: &[&str] = &[
     "tests/fixtures/recorded/model_signature/comictextdetector.signature.json",
     "tests/fixtures/recorded/ocr_model_signature/encoder_model.signature.json",
     "tests/fixtures/recorded/ocr_model_signature/decoder_model.signature.json",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_detector_mask.png",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_detector_blocks.json",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_base.png",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_raw_mask.png",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01#raw.json",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upstream_oracle.json",
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upstream_group_output_equality.json",
 ];
 
 #[derive(Debug)]

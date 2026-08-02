@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "original_path": "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg",
+  "base_image": {
+    "path": "recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_base.png"
+  },
+  "raw_mask": {
+    "path": "recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_raw_mask.png"
+  },
+  "scale": 1.0,
+  "image_size": [
+    1200,
+    1660
+  ],
+  "blocks": [
+    {
+      "rect": {
+        "x1": 674,
+        "y1": 1397,
+        "x2": 740,
+        "y2": 1438
+      },
+      "language": "english",
+      "confidence": 0.713,
+      "mask_coverage": 0.7812269
+    },
+    {
+      "rect": {
+        "x1": 567,
+        "y1": 74,
+        "x2": 663,
+        "y2": 123
+      },
+      "language": "english",
+      "confidence": 0.704,
+      "mask_coverage": 0.7731718
+    },
+    {
+      "rect": {
+        "x1": 607,
+        "y1": 631,
+        "x2": 724,
+        "y2": 703
+      },
+      "language": "japanese",
+      "confidence": 0.643,
+      "mask_coverage": 0.5636277
+    }
+  ]
+}

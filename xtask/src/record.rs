@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const DETECTOR_STEM: &str = "ja_Pepper-and-Carrot_by-David-Revoy_E01P01";
-const DETECTOR_PAGE_SOURCE: &str = "oracle_pages/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg";
 const DETECTOR_EXECUTION_PROVIDER: &str = "cpu";
 const DETECTOR_PAGE_RECORDED: &str =
     "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg";
@@ -628,7 +627,13 @@ fn record_detector(
             reason: "detector recording needs --detector-upstream PATH pointing at the pinned PanelCleaner checkout; no fixture was emitted.".into(),
         });
     };
-    let page = paths::upstream_root().join(DETECTOR_PAGE_SOURCE);
+    // §16.29 item 2: the atomic recording commit moved P01 into this recorded group (no second
+    // copy is kept), so a re-record's source is the file this group already names.
+    let page = out_dir.join(
+        Path::new(DETECTOR_PAGE_RECORDED)
+            .file_name()
+            .expect("DETECTOR_PAGE_RECORDED names a file"),
+    );
     if !page.is_file() {
         bail!("detector input page is missing: {}", page.display());
     }
@@ -644,18 +649,9 @@ fn record_detector(
             .with_context(|| format!("creating {}", out_dir.display()))?;
         // §16.29 item 2: `detector.input_page` must resolve to a file inside this recorded group
         // (the shipped provenance validator forces this, and the frozen whole-tree walker later
-        // hashes whatever `input_page` names), so the page is copied here, byte-preserving,
-        // rather than only referenced by path. This is a plain file copy, not a git operation —
-        // nothing is staged or committed by this recorder; the eventual `git add` of this
-        // directory, including this copy, is the separate atomic-commit step §16.24 item 6 gates.
-        let recorded_page = out_dir.join(
-            Path::new(DETECTOR_PAGE_RECORDED)
-                .file_name()
-                .expect("DETECTOR_PAGE_RECORDED names a file"),
-        );
-        std::fs::copy(&page, &recorded_page).with_context(|| {
-            format!("copying {} to {}", page.display(), recorded_page.display())
-        })?;
+        // hashes whatever `input_page` names). Since the atomic recording commit moved the page
+        // in here rather than keeping a second copy, `page` above already IS that file — no copy
+        // needed, and copying a file onto itself would risk truncating it via the same inode.
 
         ensure_cpu_execution_provider(DETECTOR_EXECUTION_PROVIDER)?;
 

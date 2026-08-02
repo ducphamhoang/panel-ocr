@@ -32,6 +32,10 @@ ort         = { workspace = true, optional = true }
 [dev-dependencies]
 pc-testkit = { path = "../pc-testkit" }
 tempfile   = { workspace = true }
+# Test-only: §8.7(A)6 requires the recorded-page determinism check to run "across 1 vs 8
+# rayon threads", so the test needs a sized `rayon::ThreadPoolBuilder`. The crate itself
+# has no rayon dependency -- parallelism lives in `pc-pipeline` (§4.5).
+rayon      = { workspace = true }
 # Self dev-dependency so integration tests (which link the crate as an external lib,
 # without `cfg(test)`) can see the `testkit`-gated mock backends.
 pc-detect  = { path = ".", features = ["testkit"] }

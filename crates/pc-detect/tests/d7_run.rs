@@ -528,10 +528,54 @@ fn a6_replay_image_content_is_byte_identical_across_ten_runs_and_eight_threads()
     );
 }
 
-// ------------------------------------------------------------ pending F1
+// ------------------------------------------------------------ recorded page (F1)
+//
+// The `_pending_` in the two test names below is kept verbatim: spec §16.24 item 8 names both
+// by that exact identifier, and renaming them here would desync the spec from the suite. The
+// `#[ignore]`d `unimplemented!()` bodies are what F1 lifts, not the names.
+
+/// The recorded detector page (§7.2), and the four `DetectInput` knobs the recorder used
+/// (`xtask/src/record.rs`) — so a test reproducing its output reproduces its inputs too.
+const RECORDED_STEM: &str = "ja_Pepper-and-Carrot_by-David-Revoy_E01P01";
+const RECORDED_ORIGINAL_PATH: &str =
+    "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg";
+const RECORDED_HEIGHT_LOWER: u32 = 1000;
+const RECORDED_HEIGHT_UPPER: u32 = 4000;
+
+fn recorded_replay_detector() -> ReplayDetector {
+    ReplayDetector::new(
+        &pc_testkit::paths::recorded_root().join("detector"),
+        RECORDED_STEM,
+    )
+}
+
+/// `DetectInput` over the recorded page. `dests` is `None` for memory mode (§4.1), or the
+/// directory the two PNGs should be written into.
+fn recorded_input(dests: Option<&Path>) -> pc_detect::DetectInput {
+    let page = pc_testkit::paths::recorded(format!("detector/{RECORDED_STEM}.jpg"));
+    pc_detect::DetectInput {
+        schema_version: pc_core::SCHEMA_VERSION,
+        source: pc_core::ImageHandle::from_path(&page),
+        original_path: PathBuf::from(RECORDED_ORIGINAL_PATH),
+        target_height_lower: RECORDED_HEIGHT_LOWER,
+        target_height_upper: RECORDED_HEIGHT_UPPER,
+        base_image_dest: dests.map(|dir| dir.join(format!("{RECORDED_STEM}_base.png"))),
+        raw_mask_dest: dests.map(|dir| dir.join(format!("{RECORDED_STEM}_raw_mask.png"))),
+        min_mask_coverage: pc_detect::DEFAULT_MIN_MASK_COVERAGE,
+        config: TextDetectorConfig::default(),
+    }
+}
+
+/// The committed `#raw.json`, deserialized WITHOUT rebasing — its two handle paths stay relative
+/// to the fixtures root, which is the form §7.2 requires them to be committed in and therefore
+/// the form the reproduction below has to match.
+fn committed_recorded_page() -> pc_core::PageDataRaw {
+    let path = pc_testkit::paths::recorded(format!("detector/{RECORDED_STEM}#raw.json"));
+    let bytes = std::fs::read(&path).expect("committed #raw.json is readable");
+    serde_json::from_slice(&bytes).expect("committed #raw.json parses as PageDataRaw")
+}
 
 #[test]
-#[ignore = "pending task F1: needs the recorded page fixture"]
 fn a6_pending_recorded_page_equality_and_determinism() {
     // spec §8.7(A)6 / §16.20 item 1(b): this test is TWO hand-written parts: (i) the
     // `PageDataRaw` JSON is byte-identical across 10 runs and across 1 vs 8 rayon
@@ -546,14 +590,162 @@ fn a6_pending_recorded_page_equality_and_determinism() {
     // `mask_coverage`, the survivor set, `scale` and `image_size`. The fixture's own
     // correctness is gated separately by §16.20 item 3's committed-oracle review,
     // NOT here.
-    unimplemented!("blocked on F1");
+    //
+    // §16.7 item 4 amends part (i)'s mechanism: identity is checked STRUCTURALLY on
+    // `PageDataRaw` in memory mode, because a memory-mode page has path-less handles that
+    // §2.3 refuses to serialize. Part (ii) needs the handles, so it runs in disk mode into a
+    // temp tree shaped like the fixtures root, and `relativize_page_data_raw` — the recorder's
+    // own inverse (§16.24 item 13) — puts the paths back into committed form.
+    let detector = recorded_replay_detector();
+
+    // ── part (i): determinism ────────────────────────────────────────────────
+    let first = pc_detect::run(recorded_input(None), &detector).expect("detection succeeds");
+    let expected = page_of(&first);
+
+    for run in 1..10 {
+        let page = page_of(&pc_detect::run(recorded_input(None), &detector).expect("run"));
+        assert_eq!(page, expected, "run {run} diverged");
+    }
+
+    let shared: &dyn TextDetector = &detector;
+    for threads in [1usize, 8] {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .expect("rayon pool");
+        let pages: Vec<pc_core::PageDataRaw> = pool.install(|| {
+            use rayon::prelude::*;
+            (0..8)
+                .into_par_iter()
+                .map(|_| page_of(&pc_detect::run(recorded_input(None), shared).expect("run")))
+                .collect()
+        });
+        assert_eq!(pages.len(), 8);
+        assert!(
+            pages.iter().all(|page| *page == expected),
+            "diverged under {threads} rayon threads"
+        );
+    }
+    // Memory mode is what makes the comparison above structural rather than textual; assert it,
+    // because `PageDataRaw`'s `PartialEq` compares handles by `path` and two `None`s comparing
+    // equal is only meaningful once it is known both sides are path-less by construction.
+    assert_eq!(expected.base_image.path, None);
+    assert_eq!(expected.raw_mask.path, None);
+
+    // ── part (ii): equality with the committed fixture ───────────────────────
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let out_dir = temp.path().join("recorded/detector");
+    std::fs::create_dir_all(&out_dir).expect("temp fixture tree");
+
+    let output = pc_detect::run(recorded_input(Some(&out_dir)), &detector).expect("run");
+    let mut produced = output.page.clone();
+    let residue = pc_testkit::paths::relativize_page_data_raw(&mut produced, temp.path());
+    assert_eq!(
+        residue,
+        Vec::<PathBuf>::new(),
+        "paths outside the temp root"
+    );
+
+    assert_eq!(produced, committed_recorded_page());
+
+    // `ImageHandle`'s `PartialEq` compares `path` only (§2.3), so the equality above says
+    // nothing about the two PNGs. Compare their bytes directly — they are the artifacts a
+    // wrong `PAD_VALUE`, a mis-cropped mask or a changed encoder would corrupt, and the
+    // committed copies are what every downstream golden reads.
+    for suffix in ["_base.png", "_raw_mask.png"] {
+        let produced_bytes =
+            std::fs::read(out_dir.join(format!("{RECORDED_STEM}{suffix}"))).expect("written png");
+        let committed_bytes = std::fs::read(pc_testkit::paths::recorded(format!(
+            "detector/{RECORDED_STEM}{suffix}"
+        )))
+        .expect("committed png");
+        assert!(
+            produced_bytes == committed_bytes,
+            "{suffix} differs from the committed fixture ({} vs {} bytes)",
+            produced_bytes.len(),
+            committed_bytes.len()
+        );
+    }
 }
 
 #[test]
-#[ignore = "pending task F1: needs the recorded page fixture"]
 fn b9_pending_recorded_page_regression_lock() {
     // spec §8.7(B)9: box count and each box's coordinates must match the recorded
     // `#raw.json` exactly. A regression lock against our own recorded output, NOT a
     // Python-parity claim (§15.1).
-    unimplemented!("blocked on F1");
+    //
+    // The expected coordinates are written out as literals rather than read from the fixture:
+    // a comparison against the file it is meant to lock would pass for any file (cookbook rule
+    // 7). The fixture is then asserted to agree with the same literals, so the lock binds BOTH
+    // the freshly produced page and the committed one — if they ever disagree, the two
+    // assertions name which side moved.
+    const EXPECTED_RECTS: [Rect; 3] = [
+        Rect {
+            x1: 674,
+            y1: 1397,
+            x2: 740,
+            y2: 1438,
+        },
+        Rect {
+            x1: 567,
+            y1: 74,
+            x2: 663,
+            y2: 123,
+        },
+        Rect {
+            x1: 607,
+            y1: 631,
+            x2: 724,
+            y2: 703,
+        },
+    ];
+    // §8.3 step 4's class -> language mapping, per surviving box, in the same order.
+    const EXPECTED_LANGUAGES: [Option<Language>; 3] = [
+        Some(Language::English),
+        Some(Language::English),
+        Some(Language::Japanese),
+    ];
+
+    let detector = recorded_replay_detector();
+    let output = pc_detect::run(recorded_input(None), &detector).expect("detection succeeds");
+
+    // The pre-filter fixture has 4 blocks and exactly one is dropped by §8.3 step 6, so both
+    // counts are real assertions and not the length of whatever came back. `blocks_detected` is
+    // the replayed pre-filter list; `blocks_kept` is the survivor set this stage computes.
+    assert_eq!(output.analytics.blocks_detected, 4);
+    assert_eq!(output.analytics.blocks_kept, 3);
+    assert_eq!(output.page.blocks.len(), 3);
+
+    assert_eq!(
+        output
+            .page
+            .blocks
+            .iter()
+            .map(|block| block.rect)
+            .collect::<Vec<_>>(),
+        EXPECTED_RECTS.to_vec()
+    );
+    assert_eq!(
+        output
+            .page
+            .blocks
+            .iter()
+            .map(|block| block.language)
+            .collect::<Vec<_>>(),
+        EXPECTED_LANGUAGES.to_vec()
+    );
+
+    let committed = committed_recorded_page();
+    assert_eq!(
+        committed
+            .blocks
+            .iter()
+            .map(|block| block.rect)
+            .collect::<Vec<_>>(),
+        EXPECTED_RECTS.to_vec(),
+        "the committed #raw.json no longer carries the locked boxes"
+    );
+    assert_eq!(committed.blocks.len(), 3);
+    assert_eq!(committed.image_size, (1200, 1660));
+    assert_eq!(committed.scale, 1.0);
 }

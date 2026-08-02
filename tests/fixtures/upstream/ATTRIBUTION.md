@@ -105,7 +105,7 @@ per §7.2's "one or two full manga pages the maintainer supplies, license-clean"
 
 | Vendored file | Size | sha256 | Status |
 |---|---|---|---|
-| `oracle_pages/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg` | 441,914 B | `3bef9922e09cea66ab12271da0070025768ae9bc5d286f41ced617468131267e` | **P01 — the ratified oracle page** (§16.24 item 17; exact hash match) |
+| `recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg` | 441,914 B | `3bef9922e09cea66ab12271da0070025768ae9bc5d286f41ced617468131267e` | **P01 — the ratified oracle page** (§16.24 item 17; exact hash match). Moved into the recorded detector group by the F1 atomic recording commit (§16.29 item 2); no second copy exists. |
 | `oracle_pages/ja_Pepper-and-Carrot_by-David-Revoy_E01P02.jpg` | 448,475 B | `d7ba528d2ab96c7fb0723197d2349d2981a0b0dd853b16179e1a06cbdd5064d3` | P02 — rejected sibling (item 17(a)); size matches the recorded figure, no sha256 was ever ratified for it |
 | `oracle_pages/ja_Pepper-and-Carrot_by-David-Revoy_E01P03.jpg` | 302,541 B | `c62ff81bdac3c979959c55d4cd4dea01659a35097d7cc5723c57c54531694e23` | P03 — rejected sibling (item 17(a)); size matches the recorded figure, no sha256 was ever ratified for it |
 

@@ -1111,6 +1111,7 @@ dependencies = [
  "pc-detect",
  "pc-imageops",
  "pc-testkit",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",

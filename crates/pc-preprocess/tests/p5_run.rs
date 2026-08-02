@@ -399,8 +399,9 @@ fn a10_run_is_byte_identical_across_one_hundred_iterations() {
 
 // ------------------------------------------------------------ pending F1 (§9.7(B)11)
 
+// The `_pending_` in the name below is kept verbatim: spec §16.24 item 8 names this test by
+// that exact identifier. F1 lifts the `#[ignore]` and the `unimplemented!()` body, not the name.
 #[test]
-#[ignore = "pending task F1: needs `cargo xtask record-fixtures` output under tests/fixtures/recorded/"]
 fn b11_pending_recorded_page_tier_arithmetic() {
     // spec §9.7(B)11 / §16.20 item 1(a): use hand-written integer assertions. The
     // tiers are pure integer arithmetic over the fixture rects and the committed
@@ -421,5 +422,112 @@ fn b11_pending_recorded_page_tier_arithmetic() {
     // §14.2 (`resolve_overlaps` set-ordering), §14.3 (box/language desync) and
     // §14.13 (differing box sets) all sit between upstream and this stage's input,
     // so upstream disagreement here is noise, not signal.
-    unimplemented!("blocked on F1");
+    //
+    // ── the recorded page, and the full hand-trace ───────────────────────────────────────
+    // `ja_Pepper-and-Carrot_by-David-Revoy_E01P01#raw.json` is 1200x1660 at scale 1.0 with
+    // three surviving detector blocks, in detector (NMS) order:
+    //   [0] (674,1397,740,1438)  english   area 66*41 = 2706
+    //   [1] (567, 74,663, 123)   english   area 96*49 = 4704
+    //   [2] (607, 631,724, 703)  japanese  area 117*72 = 8424
+    //
+    // §9.3 step 1: `ocr_language` defaults to `detect_box`, so each box keeps its detected
+    // language and `apply_page_language` is a no-op.
+    // §9.3 step 2: `box_min_size = 400` — all three areas clear it; the
+    // `suspicious_box_min_size = 40_000` rule applies only to unknown-language boxes and
+    // none is unknown. All three survive.
+    // §9.3 step 3: mode of {english, english, japanese} = english, so
+    // `page_language == Some(English)`.
+    // §9.3 step 4: no box contains another's centre — the three are pairwise disjoint — so
+    // `resolve_total_overlaps` is the identity.
+    // §9.3 step 5 (tight = pad(2) then right_pad(3)):
+    //   [0] (674-2, 1397-2, 740+2+3, 1438+2) = (672,1395,745,1440)
+    //   [1] (567-2,   74-2, 663+2+3,  123+2) = (565,  72,668, 125)
+    //   [2] (607-2,  631-2, 724+2+3,  703+2) = (605, 629,729, 705)
+    //   Nothing clamps: every edge is inside 1200x1660.
+    // §9.3 step 6: `reading_order` defaults to `auto`, and English is NOT in
+    // `RTL_BOX_ORDER_LANGUAGES`, so the page reads left-to-right and the key is
+    // `+0.4*x1 + 1.0*y1` over the TIGHT rects:
+    //   [0] 0.4*672 + 1395 = 268.8 + 1395 = 1663.8
+    //   [1] 0.4*565 +   72 = 226.0 +   72 =  298.0
+    //   [2] 0.4*605 +  629 = 242.0 +  629 =  871.0
+    //   Ascending ⇒ detector indices [1, 2, 0], which is the permutation asserted below.
+    //   HONEST LIMIT of that assertion: this page does NOT discriminate the two directions.
+    //   The right-to-left key `-0.4*x1 + y1` gives 1126.2 / -154.0 / 387.0, whose ascending
+    //   order is also [1, 2, 0]. The three boxes are separated far enough in y that the
+    //   ±0.4*x1 term never decides anything, so what this permutation catches is a sort that
+    //   is absent, unstable, or keyed on something other than the tight rect's top-left — not
+    //   a flipped reading direction. Direction is covered by the P4 suite's own tests.
+    // §9.3 step 8 (extended = pad(5) then right_pad(5)), in the sorted order above:
+    //   (565, 72,668, 125) → (560,  67, 678,  130)
+    //   (605,629,729, 705) → (600, 624, 739,  710)
+    //   (672,1395,745,1440) → (667,1390, 755, 1445)
+    // §9.3 step 9: the three extended rects are pairwise disjoint (y-spans 67..130,
+    // 624..710, 1390..1445 do not meet), so `resolve_overlaps` emits three regions in the
+    // same order — the 20% threshold is never consulted.
+    // §9.3 step 10 (reference = pad(20) of each masking rect):
+    //   (560,  67, 678, 130)  → (540,  47, 698,  150)
+    //   (600, 624, 739, 710)  → (580, 604, 759,  730)
+    //   (667,1390, 755,1445)  → (647,1370, 775, 1465)
+    let page = pc_testkit::paths::load_recorded_page_raw(
+        "detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01#raw.json",
+    );
+
+    // The trace above depends on these three facts about the fixture; assert them rather than
+    // assume them, so a re-recorded page fails HERE with the reason instead of failing on an
+    // arithmetic assertion that would look like a padding regression.
+    assert_eq!(page.image_size, (1200, 1660));
+    assert_eq!(page.scale, 1.0);
+    assert_eq!(
+        page.blocks
+            .iter()
+            .map(|block| (block.rect, block.language))
+            .collect::<Vec<_>>(),
+        vec![
+            (Rect::new(674, 1397, 740, 1438), Some(Language::English)),
+            (Rect::new(567, 74, 663, 123), Some(Language::English)),
+            (Rect::new(607, 631, 724, 703), Some(Language::Japanese)),
+        ]
+    );
+
+    let output = pc_preprocess::run(input(page, PreprocessorConfig::default()), no_ocr())
+        .expect("preprocessing succeeds");
+
+    assert_eq!(output.page.page_language, Some(Language::English));
+
+    // Tight tier, in reading order — the permutation [1, 2, 0] of the detector order.
+    assert_eq!(
+        output.page.text_boxes,
+        vec![
+            text_box(Rect::new(565, 72, 668, 125), Some(Language::English)),
+            text_box(Rect::new(605, 629, 729, 705), Some(Language::Japanese)),
+            text_box(Rect::new(672, 1395, 745, 1440), Some(Language::English)),
+        ]
+    );
+
+    assert_eq!(
+        output.page.extended_boxes,
+        vec![
+            Rect::new(560, 67, 678, 130),
+            Rect::new(600, 624, 739, 710),
+            Rect::new(667, 1390, 755, 1445),
+        ]
+    );
+
+    assert_eq!(output.page.masking_regions.len(), 3);
+    assert_eq!(
+        output
+            .page
+            .masking_regions
+            .iter()
+            .map(|region| (region.masking, region.reference))
+            .collect::<Vec<_>>(),
+        vec![
+            (Rect::new(560, 67, 678, 130), Rect::new(540, 47, 698, 150)),
+            (Rect::new(600, 624, 739, 710), Rect::new(580, 604, 759, 730)),
+            (
+                Rect::new(667, 1390, 755, 1445),
+                Rect::new(647, 1370, 775, 1465)
+            ),
+        ]
+    );
 }

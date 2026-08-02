@@ -131,8 +131,10 @@ pub fn detector_backend_status(configured_detector: Option<&str>) -> Result<Dete
             model_source,
         });
     }
-    let page = crate::paths::upstream_root()
-        .join("oracle_pages/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg");
+    // §16.29 item 2: the atomic recording commit moved P01 out of `oracle_pages/` into the
+    // recorded group it belongs to; a fresh `--force` re-record must find it there.
+    let page = crate::paths::recorded_root()
+        .join("detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg");
     if !page.is_file() {
         return Ok(DetectorStatus::MangaPagesMissing);
     }

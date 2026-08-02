@@ -1,0 +1,470 @@
+{
+  "scale": 1.0,
+  "image_size": [
+    1200,
+    1660
+  ],
+  "blocks": [
+    {
+      "xyxy": [
+        567,
+        74,
+        663,
+        123
+      ],
+      "lines": [
+        [
+          [
+            577,
+            72
+          ],
+          [
+            651,
+            72
+          ],
+          [
+            651,
+            99
+          ],
+          [
+            577,
+            99
+          ]
+        ],
+        [
+          [
+            569,
+            96
+          ],
+          [
+            660,
+            96
+          ],
+          [
+            660,
+            123
+          ],
+          [
+            569,
+            123
+          ]
+        ]
+      ],
+      "confidence": 0.7739999890327454,
+      "language": "english",
+      "base_xyxy_pretruncation": [
+        567.109375,
+        74.40827941894531,
+        663.7955932617188,
+        123.6535873413086
+      ],
+      "derivation": "yolo_unioned",
+      "rect_yolo": [
+        567,
+        74,
+        663,
+        123
+      ],
+      "eng_expanded": true,
+      "lines_pre_expand": [
+        [
+          [
+            577,
+            74
+          ],
+          [
+            651,
+            74
+          ],
+          [
+            651,
+            97
+          ],
+          [
+            577,
+            97
+          ]
+        ],
+        [
+          [
+            569,
+            98
+          ],
+          [
+            660,
+            98
+          ],
+          [
+            660,
+            121
+          ],
+          [
+            569,
+            121
+          ]
+        ]
+      ],
+      "expand_size": 2
+    },
+    {
+      "xyxy": [
+        607,
+        630,
+        723,
+        705
+      ],
+      "lines": [
+        [
+          [
+            629,
+            628
+          ],
+          [
+            702,
+            628
+          ],
+          [
+            702,
+            656
+          ],
+          [
+            629,
+            656
+          ]
+        ],
+        [
+          [
+            611,
+            656
+          ],
+          [
+            718,
+            656
+          ],
+          [
+            718,
+            677
+          ],
+          [
+            611,
+            677
+          ]
+        ],
+        [
+          [
+            643,
+            678
+          ],
+          [
+            684,
+            678
+          ],
+          [
+            684,
+            707
+          ],
+          [
+            643,
+            707
+          ]
+        ]
+      ],
+      "confidence": 0.640999972820282,
+      "language": "english",
+      "base_xyxy_pretruncation": [
+        607.62451171875,
+        630.8037109375,
+        723.84375,
+        703.6285400390625
+      ],
+      "derivation": "yolo_unioned",
+      "rect_yolo": [
+        607,
+        630,
+        723,
+        703
+      ],
+      "eng_expanded": true,
+      "lines_pre_expand": [
+        [
+          [
+            629,
+            630
+          ],
+          [
+            702,
+            630
+          ],
+          [
+            702,
+            654
+          ],
+          [
+            629,
+            654
+          ]
+        ],
+        [
+          [
+            611,
+            658
+          ],
+          [
+            718,
+            658
+          ],
+          [
+            718,
+            675
+          ],
+          [
+            611,
+            675
+          ]
+        ],
+        [
+          [
+            643,
+            680
+          ],
+          [
+            684,
+            680
+          ],
+          [
+            684,
+            705
+          ],
+          [
+            643,
+            705
+          ]
+        ]
+      ],
+      "expand_size": 2
+    },
+    {
+      "xyxy": [
+        607,
+        631,
+        724,
+        703
+      ],
+      "lines": [
+        [
+          [
+            607,
+            631
+          ],
+          [
+            724,
+            631
+          ],
+          [
+            724,
+            703
+          ],
+          [
+            607,
+            703
+          ]
+        ]
+      ],
+      "confidence": 0.6240000128746033,
+      "language": "japanese",
+      "base_xyxy_pretruncation": [
+        607.2233276367188,
+        631.926025390625,
+        724.68408203125,
+        703.7631225585938
+      ],
+      "derivation": "yolo_synthesized_corners",
+      "rect_yolo": [
+        607,
+        631,
+        724,
+        703
+      ],
+      "eng_expanded": false,
+      "lines_pre_expand": null,
+      "expand_size": null
+    },
+    {
+      "xyxy": [
+        674,
+        1397,
+        740,
+        1438
+      ],
+      "lines": [
+        [
+          [
+            674,
+            1393
+          ],
+          [
+            740,
+            1393
+          ],
+          [
+            740,
+            1442
+          ],
+          [
+            674,
+            1442
+          ]
+        ]
+      ],
+      "confidence": 0.7149999737739563,
+      "language": "english",
+      "base_xyxy_pretruncation": [
+        674.5721435546875,
+        1397.5679931640625,
+        740.8538208007812,
+        1438.76953125
+      ],
+      "derivation": "yolo_synthesized_corners",
+      "rect_yolo": [
+        674,
+        1397,
+        740,
+        1438
+      ],
+      "eng_expanded": true,
+      "lines_pre_expand": [
+        [
+          [
+            674,
+            1397
+          ],
+          [
+            740,
+            1397
+          ],
+          [
+            740,
+            1438
+          ],
+          [
+            674,
+            1438
+          ]
+        ]
+      ],
+      "expand_size": 4
+    }
+  ],
+  "pre_filter_blocks": [
+    {
+      "xyxy": [
+        567,
+        74,
+        663,
+        123
+      ],
+      "lines": [],
+      "confidence": 0.7739999890327454,
+      "language": "english",
+      "base_xyxy_pretruncation": [
+        567.109375,
+        74.40827941894531,
+        663.7955932617188,
+        123.6535873413086
+      ],
+      "derivation": null,
+      "rect_yolo": null,
+      "eng_expanded": false,
+      "lines_pre_expand": null,
+      "expand_size": null
+    },
+    {
+      "xyxy": [
+        674,
+        1397,
+        740,
+        1438
+      ],
+      "lines": [],
+      "confidence": 0.7149999737739563,
+      "language": "english",
+      "base_xyxy_pretruncation": [
+        674.5721435546875,
+        1397.5679931640625,
+        740.8538208007812,
+        1438.76953125
+      ],
+      "derivation": null,
+      "rect_yolo": null,
+      "eng_expanded": false,
+      "lines_pre_expand": null,
+      "expand_size": null
+    },
+    {
+      "xyxy": [
+        607,
+        630,
+        723,
+        703
+      ],
+      "lines": [],
+      "confidence": 0.640999972820282,
+      "language": "english",
+      "base_xyxy_pretruncation": [
+        607.62451171875,
+        630.8037109375,
+        723.84375,
+        703.6285400390625
+      ],
+      "derivation": null,
+      "rect_yolo": null,
+      "eng_expanded": false,
+      "lines_pre_expand": null,
+      "expand_size": null
+    },
+    {
+      "xyxy": [
+        607,
+        631,
+        724,
+        703
+      ],
+      "lines": [],
+      "confidence": 0.6240000128746033,
+      "language": "japanese",
+      "base_xyxy_pretruncation": [
+        607.2233276367188,
+        631.926025390625,
+        724.68408203125,
+        703.7631225585938
+      ],
+      "derivation": null,
+      "rect_yolo": null,
+      "eng_expanded": false,
+      "lines_pre_expand": null,
+      "expand_size": null
+    },
+    {
+      "xyxy": [
+        438,
+        1407,
+        498,
+        1446
+      ],
+      "lines": [],
+      "confidence": 0.6190000176429749,
+      "language": "english",
+      "base_xyxy_pretruncation": [
+        438.6632385253906,
+        1407.469482421875,
+        498.7310485839844,
+        1446.1497802734375
+      ],
+      "derivation": null,
+      "rect_yolo": null,
+      "eng_expanded": false,
+      "lines_pre_expand": null,
+      "expand_size": null
+    }
+  ]
+}

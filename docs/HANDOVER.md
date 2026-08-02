@@ -41,10 +41,12 @@ item 6 and the sequencing `docs/RULINGS.md`/the architect's plan laid out:
    new session. (A full rehearsal run's output currently sits in
    `/tmp/claude-1000/.../scratchpad/detector_recording_run/detector/` from this session, but that
    scratchpad won't survive either — treat it as a reference, not a source, for the real run.)
-2. Run `cargo xtask record-fixtures --only detector` for real, then `git mv` the oracle page from
-   `tests/fixtures/upstream/oracle_pages/...E01P01.jpg` into the recorded output directory (§16.29
-   item 2 — the recorder already copies it there as a plain file write; the atomic commit is where
-   that becomes a tracked move) and update `tests/fixtures/upstream/ATTRIBUTION.md`'s row.
+2. **DONE.** Ran `cargo xtask record-fixtures --only detector` for real, `git mv`'d the oracle page
+   from `tests/fixtures/upstream/oracle_pages/...E01P01.jpg` into
+   `tests/fixtures/recorded/detector/...E01P01.jpg` (§16.29 item 2), updated
+   `tests/fixtures/upstream/ATTRIBUTION.md`'s row, and fixed the two now-stale
+   `oracle_pages/`-pointing constants in `xtask/src/env.rs` and `xtask/src/record.rs` that this
+   move would otherwise have broken for any future `--force` re-record.
 3. Hand-derive and author `leg1_rows_checked`'s real value and the real-page gate's literal
    `Expectations` — never from the artifact or a re-run (§16.28 Amendment 2 / §16.24 item 20(b)).
 4. Write `docs/DETECTOR_ORACLE.md`'s verdicts (its skeleton + item 11's four doc-shape gates may

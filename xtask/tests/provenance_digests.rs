@@ -62,7 +62,7 @@ fn read_group(name: &str) -> GroupProvenance {
 /// **recording the detector group without activating these legs would keep the suite green.**
 /// Raising this to 1 is the edit that cannot be skipped: record the group and leave it at 0, and
 /// `detector_pins()` fails with "found 1, expected 0" instead of three tests quietly returning.
-const EXPECTED_DETECTOR_PIN_GROUPS: usize = 0;
+const EXPECTED_DETECTOR_PIN_GROUPS: usize = 1;
 
 /// Every committed detector pin block in the tree, discovered by walking the recorded root, with
 /// the count checked against the literal above **before** anything is returned.
