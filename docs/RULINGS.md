@@ -512,3 +512,80 @@ oracle_pages` and `grep -n "one commit or none"` over the tree/spec. **Not settl
 Ruling 2's reading of "once the fixture is present" as contemplating the pre-fixture doc state is
 interpretation of ratified prose, not measurement — Fable flagged this itself, while calling it
 forced by the conditional's grammar.
+
+---
+
+## P7 manga-ocr artifact, vocab, task split — Fable tie-break, 2026-08-02 (record quality: MIXED — see the scope note immediately below; do not read the "VERBATIM" claim as covering this whole entry)
+
+**Scope of the verbatim claim, stated precisely so this entry cannot be over-cited.** Only the
+`>`-blockquoted passage under "Fable's reply, verbatim" below is the adjudicator's own text,
+captured directly rather than paraphrased (this file's own "for future rulings" instruction,
+followed here for the first time) — the one edit made to it is removal of a closing
+usage/token-count line, which is run infrastructure metadata, not part of the ruling. Everything
+outside that blockquote — the "Question put to Fable" framing immediately below, and the "Note
+added by the Orchestrator, not Fable" paragraph at the end of this entry — is the Orchestrator's
+own prose, written to give the blockquote context, and carries the same paraphrase-not-source
+status as every other entry in this file per the header note above. A citation of this entry that
+quotes outside the blockquote is quoting the Orchestrator, not the adjudicator.
+
+**Question put to Fable** *(Orchestrator's framing, not Fable's text)*: `architect` and
+`rust-engineer` jointly planned P7 (manga-ocr ONNX backend) and disagreed on which third-party ONNX
+artifact to pin — `architect` chose `onnx-community/manga-ocr-base-ONNX` (rejecting
+`mayocream/manga-ocr-onnx` as "a finetune," citing its vocab.txt as 30,216 B against kha-white's
+24,072 B); `rust-engineer` chose `mayocream/manga-ocr-onnx` and did not rebut the finetune concern.
+Fable was asked to make the final call on the artifact, plus two secondary questions (vocab
+delivery mechanism; whether P7 should include CLI/pipeline wiring or split into P7+P8).
+
+**Fable's reply, verbatim** *(the blockquote below only)*:
+
+> **Mode statement:** I am answering in **Mode A** (tie-break, final call), per the brief.
+> Advisory-only status suspended for these three decisions; I wrote no files.
+>
+> **Prior-ratification check (ran, clean):** `grep -in "mayocream|onnx-community|kha-white|koharu|vocab" docs/PIPELINE_SPEC_V1.md` — no ratified clause pins an OCR artifact. The question is genuinely open.
+>
+> ### What I actually ran, and what it showed
+>
+> Network access worked; every claim below is measured, not read off a model card.
+>
+> 1. **The vocab files are the same vocabulary.** Fetched both at the exact pinned commits. `kha-white/manga-ocr-base` vocab.txt @ `aa6573bd`: 24,072 B, sha256 `344fbb6b…` (architect's pin verified), **6144 lines**. `mayocream/manga-ocr-onnx` vocab.txt @ `24b12778`: 30,216 B, sha256 `5cb5c558…` (engineer's pin verified), **also 6144 lines**. `xxd` shows mayocream's file is CRLF; after `tr -d '\r'` its sha256 is **byte-identical to kha-white's** (`344fbb6b…`). 30,216 − 24,072 = 6,144 = exactly one `\r` per line. The size discrepancy the architect read as "different vocab" is line endings, nothing else.
+> 2. **The ONNX weights are the same weights.** Downloaded all four fp32 files; all four sha256s match the respective agents' pins exactly (mayo enc `15fa8155…`, mayo dec `ef776526…`, oc enc `df35f64c…`, oc dec `31ca14d6…`). Parsed initializers with `onnx` 1.22.0: decoders — 63/63 tensors equal (41 name-matched bit-exact, 22 exporter-renamed matched as full-byte multisets); encoders — 198/198 equal (126 name-matched bit-exact, 72 by full bytes). The exports differ only in exporter metadata: torch 2.7.0/opset 14/IR 7 (mayocream) vs torch 2.11.0/opset 18/IR 8 (onnx-community). Graph I/O signatures are identical (`input_ids` + `encoder_hidden_states [b, s, 768]` → `logits [b, s, 6144]`).
+> 3. **Both anchor to the true base model, not merely to each other.** Downloaded `kha-white/manga-ocr-base`'s original `pytorch_model.bin` (444,135,475 B, sha256 `c63e0bb5…`) at the pinned commit and compared tensors by name: **mayocream decoder 41/41 bit-exact** (including the full 6144×768 `word_embeddings.weight` — the single most finetune-sensitive tensor — and `cls.predictions.bias`), **mayocream encoder 126/126 bit-exact**, **onnx-community encoder 126/126 bit-exact**, worst diff 0.0 everywhere. The onnx-community decoder anchors transitively through its byte-identity with mayocream's.
+> 4. **Configs are functionally identical.** `generation_config.json` differs only in the `transformers_version` string (4.51.1 vs 4.57.6); all generation parameters (beam 4, length_penalty 2.0, max_length 300, no_repeat_ngram 3, tokens 2/3/0) identical. `preprocessor_config.json` differs only in the deprecated alias `ViTFeatureExtractor` vs `ViTImageProcessor`.
+> 5. **Repo facts.** `onnx-community/manga-ocr-base-ONNX` @ `f9023406` contains **no vocab.txt and no tokenizer files at all** (full tree fetched via HF API) — the architect's cross-repo vendoring was forced, not a preference. mayocream's README states the export command verbatim (`optimum-cli export onnx --model kha-white/manga-ocr-base --task vision2seq-lm`); its 3-commit history shows upload + README edit, no training activity.
+>
+> ### Ruling 1 (primary): pin `mayocream/manga-ocr-onnx` @ `24b12778d85800835e2ca409236de281b8ab7b9f` — the rust-engineer's artifact — for the encoder and decoder ONNX files. The architect's disqualifying argument is refuted by measurement.
+>
+> **Grounds.** The architect's stated and only reason for rejecting mayocream — "a finetune … would put us permanently off upstream with no oracle at all" — is empirically false: every weight tensor in mayocream's export is bit-exact against `kha-white/manga-ocr-base`'s original checkpoint (evidence items 2–3), and its "different" vocab is the same 6144 tokens with CRLF endings (item 1). With the disqualifier gone, mayocream wins on the remaining merits: (a) P7's ratified scope text says "port from koharu `manga_ocr`", and mayocream's export is the artifact koharu itself runs — making koharu a byte-identical secondary oracle during implementation, with zero artifact-difference confounds; (b) the repo is self-contained (tokenizer_config, special_tokens_map, generation_config all present) where onnx-community's carries no tokenizer files and nests the fp32 files among 16 quantized variants someone can grab by mistake; (c) opset 14 is the more conservative target for `ort =2.0.0-rc.12` (opset 18 would very likely also work — unmeasured, and with mayocream it doesn't need to).
+>
+> **Graft from the losing position (mandatory):** the vocab.txt is **not** taken from mayocream's repo — it is vendored from `kha-white/manga-ocr-base` per the architect's approach (Ruling 2). Mayocream's CRLF vocab is a live defect vector: a naive line-by-line loader would append `\r` to every decoded token. Also graft the architect's habit of pinning the true-upstream commit: the §16.x transcription should record the weight-identity verification (the sha256s and tensor counts above) so the oracle chain to kha-white is in the record, not in a README's claim.
+>
+> **Scope:** this ruling holds for the two fp32 files `encoder_model.onnx` and `decoder_model.onnx` at commit `24b12778…` only, with the sha256s `15fa8155…`/`ef776526…`. It certifies nothing about any quantized variant, any other commit of either repo, or any other file in mayocream's repo — in particular **not** its vocab.txt, which this ruling explicitly declines to use. It also does not re-verify the unanimous beam-4 finding (out of scope per the brief). What rests on reasoning rather than measurement: the availability-longevity comparison between the two hosting accounts (unknowable either way; sha256 verification in `pc-models` protects integrity, and `--model-path` is the existing mitigation for URL death), and I ran no actual inference on either export — behavioral identity is inferred from total weight identity plus identical graph I/O and identical generation configs, not from an executed OCR run.
+>
+> ### Ruling 2 (vocab handling): vendor vocab.txt as a repo-tracked file — the architect's approach — sourced from `kha-white/manga-ocr-base` @ `aa6573bd10b0d446cbf622e29c3e084914df9741`, 24,072 B LF, sha256 `344fbb6b…`. Do not make it a `ModelSpec` registry entry.
+>
+> **Grounds.** (a) The spec's binding general rule (the §16.x item at `docs/PIPELINE_SPEC_V1.md:2866`): "no test-reachable code path may perform network I/O." Vocab parsing, token→text decode and post-processing are pure logic that belongs in the default test tier; a registry-fetched vocab would push those tests behind provisioning, or force a duplicated in-repo fixture — and a gate on a duplicate is cookbook rule 12's inversion (guarding a copy). (b) 24 KB of Apache-2.0 text, with an existing repo convention for vendored, hash-verifiable third-party fixtures plus attribution (`tests/fixtures/upstream/ATTRIBUTION.md`; spec line 4634). (c) It permanently eliminates the CRLF hazard from Ruling 1. Two conditions travel with this ruling: the vendored file gets a sha256 gate in-repo (the `model_signature.rs` recorded-fixture pattern), and a `.gitattributes` entry marking it `-text` so eol normalization can never silently alter the bytes the gate pins — a CRLF-vs-LF sha256 mismatch is precisely the failure this file has already demonstrated once.
+>
+> **Scope:** this ruling covers vocab.txt only — one 24 KB text file. It is not a precedent for vendoring model binaries (the two .onnx files stay registry entries with sha256 pins, per both plans), and it does not decide the loading mechanism (`include_str!` vs path-based read) — that stays with the joint plan.
+>
+> ### Ruling 3 (task scope): split — P7 stays pc-ocr-only (heavy, isolated), and a new P8 carries the CLI/pipeline wiring. The rust-engineer's structure wins, with binding conditions.
+>
+> **Grounds.** The engineer's C.3 observation is correct and I verified its textual basis: §16.12 item 4 (spec line ~2310) reads "P7 (manga-ocr) is unstarted, **so** … pc-cli passes `None` … inactive until P7", and the shipped WARN at `crates/pc-cli/src/setup.rs:94-96` says "v1 ships no OCR engine (task P7)". A pc-ocr-only P7 with no successor leaves a shipped binary emitting a message that has become false (an engine exists; the CLI just doesn't pass it) and a spec promise unfulfilled. But the cure is not welding the wiring into P7: the repo's own precedent separates the detector's ONNX session (D4, heavy) from `run()` wiring (D7) and CLI exposure (X1); §9.5's batching rule isolates heavy tasks; and the two halves have disjoint test surfaces — P7's parity tests need real models (onnx-tier/provisioned), while wiring tests run against the existing P6 mock in the default tier. Conditions, which the transcription must carry: (i) **v1.0 is complete only when P7 and P8 have both landed** — P8 is not optional follow-up, otherwise this ruling would just re-create the gap C.3 found; (ii) when the split is ratified, §16.12 item 4's "until P7" sentence and the `setup.rs` WARN-text expectation get **dual-end supersession markers** naming the ratifying §16.x entry, per §16.19's convention and the supersession cross-check gate; (iii) P8 enters the §9.5 and §13 task tables as its own row (deps: P7, plus the existing pipeline/CLI tasks it touches).
+>
+> **Scope:** this rules on task *structure* only. It does not design P8 (factory construction, `onnx` feature gating in pc-cli, WARN replacement text) — that remains the joint architects' plan work — and it does not rule on P8's simple/heavy classification beyond noting the table's own taxonomy would call mock-testable cross-crate wiring "simple".
+>
+> ### What none of this decides
+>
+> The beam-search supersession of "greedy decode loop" (spec lines 836/1330) is unanimous background per the brief — not adjudicated here, and my Ruling 3's table amendments will land in the same §16.x sequence but are a separate transcription. I also did not review `p7_engine.rs`'s drafted assertions; its hardcoded expected strings should be re-checked against the mayocream-pinned artifacts once the plan is updated, since I did not verify which artifact produced them.
+
+**Note added by the Orchestrator, not Fable:** Fable's closing line above is explicit that the
+beam-4-vs-greedy question is *not* something it adjudicated — it was relayed as unanimous
+background in the brief, not measured or ruled on by Fable itself. The actual beam-4 finding
+transcribed into §16.30 item 4 is a **joint-architect finding**: both `architect` and
+`rust-engineer`, working independently in separate fresh sessions with no shared context, each
+re-derived it from scratch (reading `kha-white/manga-ocr-base`'s `config.json`, the pinned
+mayocream export's `generation_config.json`, and `manga_ocr/ocr.py`'s `generate()` call; running a
+beam-4 and a greedy decode over the model's own 12 published labels: beam 12/12, greedy 10/12,
+both agents' numbers agreeing exactly). Because this is agreement between the two Opus subagents,
+not a disagreement, it does not fall under CLAUDE.md's Fable-escalation rule — it goes through the
+step-1a fresh-reader path like any other joint-architect conclusion, which is why it is transcribed
+into the same §16.30 entry as Fable's three rulings but is labeled separately within it.

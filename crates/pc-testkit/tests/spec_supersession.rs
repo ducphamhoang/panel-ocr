@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 13;
+const EXPECTED_PARSED_CLAIMS: usize = 16;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -62,6 +62,16 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.27", "16.6 item 4"),
     ("16.27", "16.24 item 21"),
     ("16.28", "16.27 item 1(g)"),
+    // §16.30's three markers. The first is item-scoped; the other two are BARE-SECTION targets, and
+    // deliberately so — §9.5's P7 row and §13's row 30 live inside markdown tables, which carry no
+    // `^N. ` item marker, so no item-scoped anchor exists to name. That is ratified §16.26 item
+    // 3(c) leniency ("a bare `§N` target with no item scopes to the whole section"), the same class
+    // as the `step N` fallback in item 3(b). Consequence worth stating rather than discovering: a
+    // back-pointer anywhere in §9.5 or anywhere in §13 satisfies the gate, so the row-level
+    // precision of those two annotations is a convention this constant cannot enforce.
+    ("16.30", "16.12 item 4"),
+    ("16.30", "9.5"),
+    ("16.30", "13"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.

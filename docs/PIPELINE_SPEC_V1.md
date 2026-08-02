@@ -833,7 +833,7 @@ From `DetectOutput.page`: `base_image` (for OCR crops), `raw_mask` (passed throu
 | **P4** | `order.rs`: reading-order key + stable sort, auto/manga/comic resolution | simple |
 | **P5** | Padding tiers + `MaskingRegion` construction + `run()` wiring | simple |
 | **P6** | `pc-ocr`: `trait OcrEngine`/`OcrEngineFactory`, `MockOcrEngine` (scripted responses), blacklist-regex filter logic + analytics | simple |
-| **P7** | `pc-ocr`: manga-ocr ONNX backend (encoder/decoder sessions, greedy decode loop, vocab, preprocessing) — port from koharu `manga_ocr` | **heavy** |
+| **P7** | `pc-ocr`: manga-ocr ONNX backend (encoder/decoder sessions, greedy decode loop, vocab, preprocessing) — port from koharu `manga_ocr` — **"greedy decode loop" is SUPERSEDED by §16.30 item 4: upstream runs beam search (`num_beams=4`, `length_penalty=2.0`, `early_stopping=true`, `no_repeat_ngram_size=3`, `max_length=300`), measured at 12/12 against greedy's 10/12 on manga-ocr's own 12 published labels. Original wording kept per §16.19's convention. §16.30 item 3 also splits this task into P7 (`pc-ocr` only) plus a mandatory P8 (CLI/pipeline wiring, depends on P7); P8's own row is added by the P7/P8 task-breakdown plan, not by that ratification entry (§16.30 item 3(iii)).** | **heavy** |
 
 Batching: `{P1, P2, P3, P4, P5}` one sequential call (all pure geometry/boilerplate on the same data structure); `{P6}` one call; `P7` isolated.
 
@@ -1327,7 +1327,7 @@ Order is the recommended implementation order; "Dep" lists blocking task IDs. Ki
 | 27 | **X1** | pc-cli | `clap` surface, config discovery, logging/verbosity, progress bars, analytics printout, exit codes | simple | G2 |
 | 28 | **F1** | xtask | `record-fixtures` (real models → `tests/fixtures/recorded/`, incl. OpenCV NLM references) | simple | D4, D6 |
 | 29 | **F2** | xtask | `calibrate-goldens` + `docs/GOLDEN_CALIBRATION.md` (**must precede freezing the §11.7(B) test**; §10.7(B) is a non-gating report per §15.2 but still must be run and recorded). Also records: the detector's upstream-vs-ours box-count comparison on the recorded page fixture (§15.1 verification), and the demo_bubbles masking calibration report (§15.2). | simple | F1, M6, N4 |
-| 30 | **P7** | pc-ocr | manga-ocr ONNX backend (encoder/decoder, greedy decode, vocab) | **heavy** | P6, D1 |
+| 30 | **P7** | pc-ocr | manga-ocr ONNX backend (encoder/decoder, greedy decode, vocab) — **"greedy decode" is SUPERSEDED by §16.30 item 4: upstream runs beam search (`num_beams=4`, `length_penalty=2.0`, `early_stopping=true`, `no_repeat_ngram_size=3`, `max_length=300`), measured at 12/12 against greedy's 10/12 on manga-ocr's own 12 published labels. Original wording kept per §16.19's convention. §16.30 item 3 also splits this row into P7 (`pc-ocr` backend only) plus a mandatory P8 (CLI/pipeline wiring, depends on P7); P8's own row is added by the P7/P8 task-breakdown plan, not by that ratification entry (§16.30 item 3(iii)).** | **heavy** | P6, D1 |
 
 **Suggested Codex call batches:**
 `[F0, C1, C2]` · `[C3]` · `[C4]` · `[D2]` · `[D8]` · `[M1]` · `[M2]` · `[M3]` · `[M4]` · `[M5, M6]` · `[P1..P5]` · `[P6]` · `[N1]` · `[N2, N3, N4]` · `[E1, E2, E3]` · `[E4]` · `[D1, D3]` · `[D4]` · `[D5]` · `[D6]` · `[D7]` · `[G1, G2]` · `[D9, E5]` · `[X1]` · `[F1]` · `[F2]` · `[P7]`
@@ -2307,7 +2307,15 @@ stage crate's API below was traced against the **already-implemented, frozen** s
    **unless the provider declares its failures run-fatal** (§16.19 item 5) — a missing
    replay fixture for page 7 must not kill pages 1–6.
 
-4. **OCR has no engine in v1, and that is not an error.** P7 (manga-ocr) is unstarted,
+4. **(SUPERSEDED IN PART by §16.30 — read it before treating "until P7" as this item's completion
+   condition. §16.30 item 3 splits P7 into P7 (the `pc-ocr` backend) plus a mandatory new P8 (the
+   CLI/pipeline wiring), and rules that v1.0 is not done until both land. So the promise this item
+   makes — that the `WARN` retires and OCR-based box discarding becomes reachable "until P7" — is
+   discharged when P8 lands, not when P7 does. §16.30 item 3(ii) also records that the two live
+   `WARN` strings still read "task P7" and are corrected at P8, not by that ratification. The
+   original wording below is kept unchanged per §16.19's convention; only the task that retires it
+   has moved.)**
+   **OCR has no engine in v1, and that is not an error.** P7 (manga-ocr) is unstarted,
    so `PipelineCtx.ocr` is `Option<&dyn OcrEngineFactory>` (matching
    `pc_preprocess::run`'s `Ctx` exactly) and `pc-cli` passes `None`. When `None` is
    passed while `preprocessor.ocr_enabled == true`, the pipeline logs one `WARN` per run
@@ -5939,6 +5947,201 @@ settles two open design questions and records an agreed fix.
    consequence — but the precedent is corroboration, not the primary ground. Item 3's reading of
    "once the fixture is present" as contemplating a pre-fixture doc state is interpretation of
    ratified prose, flagged as such by Fable itself and recorded verbatim in `docs/RULINGS.md`.
+
+## 16.30 P7's ONNX artifact pin, the vendored vocab, the P7/P8 split (Fable tie-break, 2026-08-02), and the beam-search decode correction (joint architects, 2026-08-02)
+
+**SUPERSEDES: §16.12 item 4** — item 3 condition (ii): the "inactive until P7" promise is discharged by P8, not by P7.
+
+**SUPERSEDES: §9.5** — item 4: the P7 row's "greedy decode loop" does not describe upstream.
+
+**SUPERSEDES: §13** — item 4: row 30's "greedy decode" does not describe upstream.
+
+Both table anchors are **bare-section** targets, per §16.26 item 3(c) — *"a bare `§N` target with no
+item scopes to the whole section — the only available reading"*. The two P7 rows live inside
+markdown tables, which carry no `^N. ` item marker, so no item-scoped anchor exists to name; §16.26
+item 3(b) records the same leniency for `step N` anchors into §8.3, for the same structural reason.
+The back-pointers therefore sit in the two table rows themselves, which is where a reader actually
+lands today. **This placement is convention, not something the gate enforces**: because both
+targets are bare-section anchors, the gate is satisfied by a back-pointer anywhere in §9.5's span
+(lines ~826-839) or §13's span (lines ~1294-1336) — moving either annotation to a different row in
+the same table would still pass `every_supersession_marker_has_a_back_pointer_at_its_target`. The
+row-level placement is maintained for the reader's benefit, not because anything would go red if it
+slipped.
+
+The P7 planning pass was spawned per `CLAUDE.md`'s Plan step — `architect` and `rust-engineer`, each
+blind to the other. They **disagreed on which third-party ONNX artifact to pin**, so per
+`CLAUDE.md`'s tie-break rule `fable-adjudicator` was convened and ruled on three points (items 1-3
+below). **Item 1 rests on independently executed evidence** — Fable downloaded and hashed every
+candidate file and diffed tensors against the true upstream checkpoint, rather than reading
+repository descriptions, in the spirit of CLAUDE.md's "by running it, not only by reading it."
+**Items 2 and 3 do not share that grounding**: item 2 rests on a spec clause plus reasoned
+argument (vendoring convention, CRLF-hazard elimination), and item 3 rests on a textual reading of
+§16.12 item 4 and `setup.rs` plus repo precedent — neither involved downloading or hashing a
+candidate. Item 4 was already unanimous **background** the two agents had independently reported
+before Fable was convened — Fable's own reply notes the beam-search question "is unanimous
+background per the brief" and explicitly declines to re-verify it, so it was not adjudicated and
+did not arise only after the ruling. Both agents then finalized their plans under Fable's ruling on
+items 1-3, **independently and unprompted, each reaffirming the same fourth conclusion** (item 4)
+when asked to finalize.
+
+**Item 4 is a joint-architect finding, NOT a Fable ruling, and the distinction is load-bearing.**
+Nothing about item 4 was adjudicated, because nothing about it was disputed: two agents working
+blind reached the same conclusion from the same measurements. It reaches this spec by the step-1a
+path that any joint-architect conclusion takes — which is precisely the "consensus with no
+adversary" case `CLAUDE.md` step 1a exists for. A future citation must not upgrade it to an
+adjudicated ruling, and must not downgrade items 1-3 to agreed premises.
+
+**Source record:** `docs/RULINGS.md`, under "P7 manga-ocr artifact, vocab, task split — Fable
+tie-break, 2026-08-02", marked `record quality: MIXED` there — its blockquoted passage is the
+adjudicator's reply captured directly (that file's own "for future rulings" instruction, followed
+here for the first time), but the framing prose around it in that entry is the Orchestrator's, not
+Fable's, exactly as every other passage in this spec entry outside an explicit quote is. Two
+consequences a reader must still carry: nothing below may be cited as verbatim adjudicator text
+except the passages explicitly marked as quotes (the source record's own blockquote is the place to
+check a wider quote against), and **this transcription re-measured none of the tensor comparisons in
+items 1-2** — those are recorded as the ruling's measured literals. The full sha256 digests and byte
+counts in item 1's table are **not** in the source record verbatim (it carries only abbreviated
+8-hex prefixes, e.g. `15fa8155…`) — they were independently confirmed against the pinned commit's
+HF-hosted artifacts (`paths-info` at `24b12778d85800835e2ca409236de281b8ab7b9f`) as part of this
+step-1a review, and item 2(a)'s in-repo sha256 gate is what re-checks the vocab at P7 implementation
+time. The artifact
+digests in item 1 have no in-repo gate yet; giving them one is P7's job, not this entry's.
+
+1. **RATIFIED (Fable) — the pinned manga-ocr ONNX artifact.** P7 pins
+   `mayocream/manga-ocr-onnx` at commit `24b12778d85800835e2ca409236de281b8ab7b9f`, taking two
+   files:
+
+   | file | sha256 | bytes |
+   |---|---|---|
+   | `encoder_model.onnx` | `15fa8155fe9bc1a7d25d9bb353debaa4def033d0174e907dbd2dd6d995def85f` | 343,454,249 |
+   | `decoder_model.onnx` | `ef7765261e9d1cdc34d89356986c2bbc2a082897f753a89605ae80fdfa61f5e8` | 117,480,262 |
+
+   **Grounds, measured rather than argued.** This artifact had earlier been rejected on the reading
+   that it was "a finetune" of manga-ocr rather than an export of it. Fable retracted that reading
+   by running the comparison: mayocream's decoder matches the real `kha-white/manga-ocr-base`
+   checkpoint (sha256 `c63e0bb5…`, at `pytorch_model.bin`) **bit-exact on 41/41 tensors, including
+   the full word-embeddings matrix** — the tensor a finetune would be most likely to move — and the
+   encoder matches **bit-exact on 126/126 tensors**. The "finetune" reading was a reading of
+   repository prose; the tensor diff is the thing that settled it.
+
+   **Fable's own scope statement, quoted verbatim rather than paraphrased (truncated only at the
+   point marked `…`, which is where the quote moves from this ruling's scope to a different topic —
+   what Fable did and did not verify beyond the artifact, carried below rather than dropped):**
+
+   > this ruling holds for the two fp32 files `encoder_model.onnx` and `decoder_model.onnx` at
+   > commit `24b12778…` only, with the sha256s `15fa8155…`/`ef776526…`. It certifies nothing about
+   > any quantized variant, any other commit of either repo, or any other file in mayocream's repo —
+   > in particular **not** its vocab.txt, which this ruling explicitly declines to use. …
+
+   That last clause is not decoration: item 2 takes the vocab from a different repository entirely,
+   and it does so *because* this ruling declines to certify mayocream's copy. The quote's own next
+   sentence, carried rather than dropped: Fable states plainly that it **"ran no actual inference on
+   either export — behavioral identity is inferred from total weight identity plus identical graph
+   I/O and identical generation configs, not from an executed OCR run."** That caveat applies to this
+   item's conclusion as much as the scope sentence above it, and belongs beside it for the same
+   reason the scope sentence does.
+
+2. **RATIFIED (Fable) — `vocab.txt` is vendored, from kha-white, as a repo-tracked file, not a
+   `ModelSpec` registry entry.** P7 vendors the vocabulary, sourced from `kha-white/manga-ocr-base`
+   at commit `aa6573bd10b0d446cbf622e29c3e084914df9741`: **24,072 bytes, LF line endings, sha256
+   `344fbb6b8bf18c57839e924e2c9365434697e0227fac00b88bb4899b78aa594d`.** The destination path
+   `crates/pc-ocr/assets/vocab.txt` is **not part of the ruling** — Fable's own scope note says this
+   entry "does not decide the loading mechanism (`include_str!` vs path-based read) — that stays
+   with the joint plan"; the path named here is the joint plan's choice, carried for concreteness,
+   and remains open to the same review the rest of the plan gets. Whatever path is used, it should
+   follow the existing `tests/fixtures/upstream/ATTRIBUTION.md` convention Fable's own ground (b)
+   leaned on for third-party vendored fixtures — attribution is owed regardless of which directory
+   the file lands in.
+
+   **Two things it is explicitly NOT.** (i) Not mayocream's own `vocab.txt` (30,216 bytes), even
+   though that file was measured to carry **the exact same 6,144-token vocabulary** — it is merely
+   CRLF-terminated, and the arithmetic is exact: 30,216 = 24,072 + 6,144 line endings, and stripping
+   `\r` yields a byte-identical sha256 to kha-white's file. The choice between them is therefore not
+   a content decision at all; it is a decision about which byte sequence the repo pins, and the
+   LF-terminated original is the one with a first-party source. (ii) Not a `ModelSpec` registry
+   entry — the vocabulary is repo content, not a downloaded artifact.
+
+   **Two binding conditions, both from the ruling.** (a) The vendored file needs a **sha256 gate
+   in-repo**, so the pinned bytes cannot drift silently. (b) A **`.gitattributes` entry marking it
+   `-text`**, so eol normalization can never rewrite the pinned bytes on checkout or commit — the
+   30,216-vs-24,072 measurement above is exactly what that hazard looks like when it fires.
+
+3. **RATIFIED (Fable) — P7 splits into P7 + P8, and P8 is mandatory for v1.0.** P7 becomes the
+   `pc-ocr` backend only (**heavy**); a new **P8** carries the CLI/pipeline wiring and depends on
+   P7. **Grounds, paraphrased from the source record (not a quotation):** `§16.12 item 4` and the
+   CLI's WARN text currently promise OCR becomes reachable "until P7" / "v1 ships no OCR engine
+   (task P7)" — a pc-ocr-only P7 leaves that promise broken with no successor task. The split is not
+   a convenience; without it the spec would ship a completion condition that completing P7 does not
+   satisfy.
+
+   **Three binding conditions.**
+
+   (i) **v1.0 is not done until BOTH P7 and P8 land.** P8 is mandatory, not optional follow-up.
+
+   (ii) **§16.12 item 4's "until P7" sentence and the CLI's WARN-text expectations get supersession
+   markers at BOTH this new entry AND those sites.** The spec half is discharged in this entry: the
+   marker at the top of §16.30, and the back-pointer written into §16.12 item 4. **The code half is
+   NOT discharged here** — the two live WARN strings (`crates/pc-cli/src/setup.rs:94`, the `clean`
+   path, and `crates/pc-cli/src/lib.rs:110`, the `ocr` path, both citing `spec §16.12 item 4`) and
+   whatever pins them are untouched by this ratification commit, which is spec-and-test bookkeeping
+   only. That half lands with P8, and this sentence is the record that it is owed.
+
+   (iii) **P8 gets its own row in the §9.5 and §13 task tables, depending on P7.** Deliberately
+   **not** done in this entry: adding a task row is plan content, and the P7/P8 task breakdown has
+   not been planned yet. The two table rows carry a back-pointer here saying so, so a reader who
+   lands on the table learns the row is owed rather than assuming P7 is the whole job.
+
+4. **JOINT-ARCHITECT FINDING (not Fable) — upstream decodes with beam search, not greedily.** Both
+   agents independently found that this spec's literal words for P7 contradict measured upstream
+   behaviour, and both proposed the same replacement. The decode strategy P7 ports is:
+
+   `num_beams=4`, `length_penalty=2.0`, `early_stopping=true`, `no_repeat_ngram_size=3`,
+   `max_length=300`.
+
+   **Three independent confirmations, each checked by both agents.** (a) `kha-white/manga-ocr-base`'s
+   `config.json` carries these five values at top level, and that repo has no
+   `generation_config.json`, so HuggingFace derives the generation config from `config.json`.
+   (b) `manga_ocr/ocr.py` calls `self.model.generate(x[None], max_length=300)` with **no `num_beams`
+   override**, so it takes the config's 4 — the "greedy" reading came from the call site looking
+   bare, and the call site is bare precisely because the config already carries the value.
+   (c) the pinned mayocream export's own `generation_config.json` independently declares the same
+   five values.
+
+   **Measured, on manga-ocr's own 12 published labels: beam reproduces 12/12, greedy reproduces
+   10/12.** Torch-greedy and ONNX-greedy agree with each other 12/12, which is what rules out a
+   torch-vs-onnx numerical difference and localises the 2-label gap to the search strategy itself.
+
+   **Why this is ratified rather than adopted quietly (Orchestrator's paraphrase — no committed
+   source record exists for this reasoning, so it is deliberately NOT presented as a quotation):**
+   this is a spec-vs-upstream conflict, and "greedy because beam is too hard" is not a live argument
+   against fixing it — a beam port over the pinned ONNX files also reproduces 12/12, so the strategy
+   is implementable, not merely correct in principle. The trade being accepted is real decode-time
+   cost (measured, in-session, at roughly 1.4x) against 2 of 12 labels reproduced wrong — which is
+   why this goes through ratification rather than being silently adopted as "the obvious fix."
+
+   The two spec sites are annotated, not rewritten: §9.5's P7 row ("greedy decode loop") and §13's
+   row 30 ("greedy decode") keep their original wording with a back-pointer here, per §16.19's
+   convention.
+
+5. **What this entry does NOT do, enumerated because an unenumerated omission reads as an
+   oversight.** It adds no P8 row to §9.5 or §13 (item 3(iii)); it touches no source file in
+   `pc-cli`, `pc-ocr`, `pc-pipeline` or `pc-models`, so the two WARN strings and their expectations
+   still say "task P7" (item 3(ii)); it vendors no file and adds no `.gitattributes` entry or sha256
+   gate (item 2(a)/(b) are P7's work); it re-measured none of items 1-2's digests or byte counts;
+   and it does not decide P7's or P8's task decomposition, test plan, or ordering relative to any
+   other task. Those are the P7/P8 planning pass's output, not a ratification's.
+
+6. **This entry was run through the gate it feeds, per cookbook rule 14b.** `§16.26`'s Layer B
+   scanner pairs a prose verb with the anchors on the *same physical line*, so every line above was
+   written to keep the verb list off any line carrying a live older anchor — the one-sentence rule
+   at §16.26 item 8(b). The three claims above are therefore Layer A markers and nothing here adds a
+   Layer B row; `cargo test -p pc-testkit --test spec_supersession` is what proves that (12 passed
+   at transcription time, after 13→16 on the pinned count). The pinned claim count and the three
+   ratified-marker rows in `crates/pc-testkit/tests/spec_supersession.rs` are raised in this entry's
+   own commit, as §16.26 item 6 requires. Each of the three markers was additionally falsified
+   individually before the entry was handed over — its back-pointer stripped, the suite re-run, the
+   red confirmed at the named site, the file restored — because a marker whose removal keeps the
+   suite green is decoration (cookbook rule 6).
 
 ## 16. Summary of what v1 is NOT
 
