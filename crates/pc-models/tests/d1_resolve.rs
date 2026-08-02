@@ -7,7 +7,10 @@ mod common;
 
 use common::{FAKE_SPEC, PAYLOAD, PAYLOAD_SHA256};
 use pc_core::StageError;
-use pc_models::{resolve, sha256_hex, verify_sha256, ModelError, Resolution, COMIC_TEXT_DETECTOR};
+use pc_models::{
+    resolve, sha256_hex, verify_sha256, ModelError, Resolution, COMIC_TEXT_DETECTOR,
+    MANGA_OCR_DECODER, MANGA_OCR_ENCODER,
+};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -31,6 +34,56 @@ fn comic_text_detector_spec_matches_the_spec_url_and_digest() {
         !COMIC_TEXT_DETECTOR.name.is_empty(),
         "errors quote the name"
     );
+}
+
+#[test]
+fn manga_ocr_encoder_spec_matches_the_spec_url_and_digest() {
+    // spec §16.30 item 1, transcribed literally: upstream's encoder artifact.
+    // Frozen here because a typo in either string turns every download into a confusing
+    // HashMismatch (or a 404) rather than an obvious mistake.
+    assert_eq!(
+        MANGA_OCR_ENCODER.url,
+        "https://huggingface.co/mayocream/manga-ocr-onnx/resolve/24b12778d85800835e2ca409236de281b8ab7b9f/encoder_model.onnx"
+    );
+    assert_eq!(
+        MANGA_OCR_ENCODER.sha256,
+        "15fa8155fe9bc1a7d25d9bb353debaa4def033d0174e907dbd2dd6d995def85f"
+    );
+    assert_eq!(MANGA_OCR_ENCODER.file_name, "encoder_model.onnx");
+    assert_eq!(MANGA_OCR_ENCODER.name, "manga-ocr-encoder");
+}
+
+#[test]
+fn manga_ocr_decoder_spec_matches_the_spec_url_and_digest() {
+    // spec §16.30 item 1, transcribed literally: upstream's decoder artifact.
+    // Frozen here because a typo in either string turns every download into a confusing
+    // HashMismatch (or a 404) rather than an obvious mistake.
+    assert_eq!(
+        MANGA_OCR_DECODER.url,
+        "https://huggingface.co/mayocream/manga-ocr-onnx/resolve/24b12778d85800835e2ca409236de281b8ab7b9f/decoder_model.onnx"
+    );
+    assert_eq!(
+        MANGA_OCR_DECODER.sha256,
+        "ef7765261e9d1cdc34d89356986c2bbc2a082897f753a89605ae80fdfa61f5e8"
+    );
+    assert_eq!(MANGA_OCR_DECODER.file_name, "decoder_model.onnx");
+    assert_eq!(MANGA_OCR_DECODER.name, "manga-ocr-decoder");
+}
+
+#[test]
+fn the_manga_ocr_encoder_registry_entry_matches_the_pc_testkit_pin() {
+    let pin = pc_testkit::ocr_model_signature::MANGA_OCR_ENCODER;
+
+    assert_eq!(MANGA_OCR_ENCODER.file_name, pin.file_name);
+    assert_eq!(MANGA_OCR_ENCODER.sha256, pin.sha256);
+}
+
+#[test]
+fn the_manga_ocr_decoder_registry_entry_matches_the_pc_testkit_pin() {
+    let pin = pc_testkit::ocr_model_signature::MANGA_OCR_DECODER;
+
+    assert_eq!(MANGA_OCR_DECODER.file_name, pin.file_name);
+    assert_eq!(MANGA_OCR_DECODER.sha256, pin.sha256);
 }
 
 #[test]

@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 pub fn expected_size(spec: &pc_models::ModelSpec) -> Option<u64> {
     match spec.file_name {
         "comictextdetector.pt.onnx" => Some(94_669_756),
+        "encoder_model.onnx" => Some(343_454_249),
+        "decoder_model.onnx" => Some(117_480_262),
         _ => None,
     }
 }

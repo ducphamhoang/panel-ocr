@@ -30,8 +30,24 @@ pub const COMIC_TEXT_DETECTOR: ModelSpec = ModelSpec {
     sha256: "1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f",
 };
 
+/// The manga-ocr encoder weights (spec §16.30 item 1, ratified artifact pin).
+pub const MANGA_OCR_ENCODER: ModelSpec = ModelSpec {
+    name: "manga-ocr-encoder",
+    file_name: "encoder_model.onnx",
+    url: "https://huggingface.co/mayocream/manga-ocr-onnx/resolve/24b12778d85800835e2ca409236de281b8ab7b9f/encoder_model.onnx",
+    sha256: "15fa8155fe9bc1a7d25d9bb353debaa4def033d0174e907dbd2dd6d995def85f",
+};
+
+/// The manga-ocr decoder weights (spec §16.30 item 1, ratified artifact pin).
+pub const MANGA_OCR_DECODER: ModelSpec = ModelSpec {
+    name: "manga-ocr-decoder",
+    file_name: "decoder_model.onnx",
+    url: "https://huggingface.co/mayocream/manga-ocr-onnx/resolve/24b12778d85800835e2ca409236de281b8ab7b9f/decoder_model.onnx",
+    sha256: "ef7765261e9d1cdc34d89356986c2bbc2a082897f753a89605ae80fdfa61f5e8",
+};
+
 /// The registry exposed to model-management callers.
-pub const ALL: &[&ModelSpec] = &[&COMIC_TEXT_DETECTOR];
+pub const ALL: &[&ModelSpec] = &[&COMIC_TEXT_DETECTOR, &MANGA_OCR_ENCODER, &MANGA_OCR_DECODER];
 
 /// The result of querying an override or the managed cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
