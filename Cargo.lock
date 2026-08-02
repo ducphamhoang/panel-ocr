@@ -1178,6 +1178,7 @@ dependencies = [
  "pc-ocr",
  "pc-testkit",
  "sha2",
+ "tempfile",
  "tracing",
 ]
 

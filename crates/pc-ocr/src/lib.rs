@@ -11,6 +11,7 @@
 //! the (declared, unimplemented) `onnx` feature — see spec §16.8 item 1.
 
 pub mod engine;
+pub mod onnx;
 pub mod post;
 pub mod preprocess;
 pub mod vocab;

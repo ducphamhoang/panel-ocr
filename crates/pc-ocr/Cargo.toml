@@ -30,3 +30,4 @@ ort     = { workspace = true, optional = true }
 pc-ocr = { path = ".", features = ["testkit"] }
 pc-testkit = { path = "../pc-testkit" }
 sha2 = { workspace = true }
+tempfile = { workspace = true }
