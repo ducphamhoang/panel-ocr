@@ -53,8 +53,8 @@ pub struct EncoderOutput {
 #[cfg(feature = "onnx")]
 #[derive(Debug)]
 pub struct MangaOcrSessions {
-    // DEVIATION(15): ort rc.12's session execution takes `&mut self`; later inference code will
-    // therefore use these Mutex guards to preserve a shareable OCR backend.
+    // DEVIATION(15): ort rc.12's session execution takes `&mut self`; `encode`/`decode_step`
+    // below use these Mutex guards to preserve a shareable OCR backend.
     encoder: Mutex<Session>,
     decoder: Mutex<Session>,
     encoder_inputs: Vec<TensorMeta>,

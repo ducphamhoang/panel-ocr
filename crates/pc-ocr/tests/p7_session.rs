@@ -1,8 +1,9 @@
 //! Task P7c Phase 3 — manga-ocr ONNX session construction and live metadata cross-check.
 //!
-//! This cannot run in this checkout (the workspace pins `ort` with `default-features = false`,
-//! so no ONNX Runtime shared library is linkable here), the same documented situation as
-//! `crates/pc-detect/tests/d4_session.rs`.
+//! `ort` DOES link and run in this environment (measured during P7c, corrected during the
+//! P7/P8 final review): 4 of the 5 tests below execute and pass under `--features onnx`.
+//! Only `manga_ocr_real_sessions_match_recorded_signatures_without_running_inference` is
+//! `#[ignore]`d, since it additionally needs real manga-ocr weights on disk.
 #![cfg(feature = "onnx")]
 
 use pc_core::StageError;

@@ -8,7 +8,7 @@
 //!
 //! `pc-preprocess` depends on this crate for the traits only; the concrete engine is
 //! injected as the stage's `Ctx` (§3). The manga-ocr ONNX backend is task **P7**, behind
-//! the (declared, unimplemented) `onnx` feature — see spec §16.8 item 1.
+//! the `onnx` feature — see spec §16.8 item 1 and §16.30/§16.31.
 
 pub mod decode;
 pub mod engine;

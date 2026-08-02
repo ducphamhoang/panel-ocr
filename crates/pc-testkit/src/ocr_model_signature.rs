@@ -2,9 +2,10 @@ use crate::model_signature::{
     load_model_signature, Dim, SymbolicModelSignature, TypedSignaturePath,
 };
 
-/// A third-party ONNX artifact this repo records a graph signature for, but which is NOT
-/// a `pc_models::ModelSpec` (no URL, no registry membership — that's task P8a, not yet
-/// landed; spec §16.31 item 2).
+/// A third-party ONNX artifact this repo records a graph signature for. `pc_models` also
+/// carries a `ModelSpec` for the same file (registry membership landed as task P8a, spec
+/// §16.31 item 2) — this type stays separate because it pins the graph signature, not the
+/// download/cache identity.
 pub struct OcrModelPin {
     pub file_name: &'static str,
     pub sha256: &'static str,
