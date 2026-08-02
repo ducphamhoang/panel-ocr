@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 16;
+const EXPECTED_PARSED_CLAIMS: usize = 17;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -72,6 +72,13 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.30", "16.12 item 4"),
     ("16.30", "9.5"),
     ("16.30", "13"),
+    // §16.31's single marker. Item-scoped, and narrower than a decision reversal: §16.29 item 2's
+    // RULING stands whole, and what §16.31 item 3(e) qualifies is one parenthetical of its GROUNDS
+    // — the description of `assert_known_non_committed_form`'s accepted set as "a bare `*.pt.onnx`
+    // filename", which stops describing the predicate once the enumerated three-name allow-list
+    // lands. Recorded here rather than left to the reader because the target site is the one a
+    // future reader lands on, which is the whole point of §16.26.
+    ("16.31", "16.29 item 2"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.

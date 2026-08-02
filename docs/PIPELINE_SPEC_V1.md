@@ -5856,7 +5856,17 @@ settles two open design questions and records an agreed fix.
    `crates/pc-testkit/tests/provenance_schema.rs::r8_reaches_the_source_and_input_page_path_slots_too`'s
    last case) and `crates/pc-testkit/tests/recorded_provenance.rs:315-321`
    (`assert_known_non_committed_form`, which panics on a declared path that is neither scratch-
-   prefixed nor a bare `*.pt.onnx` filename). Fable, quoted:
+   prefixed nor a bare `*.pt.onnx` filename).
+   **(QUALIFIED by §16.31 item 3(e) — the wording above is kept verbatim, and describes the
+   predicate AS IT STANDS TODAY, unchanged. §16.31 item 3 RATIFIES, but does not yet implement,
+   turning this bare-filename branch into an enumerated three-name allow-list — that edit is P7c
+   implementation work, still owed (§16.31 item 7). Once it lands, a `*.pt.onnx` name other than
+   `comictextdetector.pt.onnx` will no longer pass, and `encoder_model.onnx`/`decoder_model.onnx`
+   will. Until then, the predicate above is accurate exactly as written: only a bare `*.pt.onnx`
+   name passes, and neither OCR filename does yet. This item's decision and the scratch-probe
+   measurement above are untouched either way: a path-shaped value fails under both the current
+   and the ratified form of the branch.)**
+   Fable, quoted:
 
    > The engineer's factual premise — "the prefix is only a wrong comment on an unenforced
    > constraint" — is therefore wrong. Given a copy inside the group is mandatory, the
@@ -6142,6 +6152,279 @@ digests in item 1 have no in-repo gate yet; giving them one is P7's job, not thi
    individually before the entry was handed over — its back-pointer stripped, the suite re-run, the
    red confirmed at the named site, the file restored — because a marker whose removal keeps the
    suite green is decoration (cookbook rule 6).
+
+## 16.31 P7c infrastructure: the generic signature schema, the OCR pin's home, and the frozen non-committed-form predicate (Fable tie-break, 2026-08-02)
+
+**SUPERSEDES: §16.29 item 2** — item 3(e) below only: that entry's parenthetical description of this predicate's accepted set ("a bare `*.pt.onnx` filename") stops describing it once item 3's enumerated allow-list lands. That entry's decision — P01 moves, no second copy — and the measurement behind it stand entirely.
+
+P7c records the ONNX graph signatures of §16.30 item 1's two pinned manga-ocr artifacts. It has to
+extend `xtask`'s existing detector-only signature infrastructure, whose `parse_dim` bails on
+symbolic ONNX dimensions — and both OCR graphs are almost entirely symbolic. The P7c planning pass
+was spawned per `CLAUDE.md`'s Plan step: `architect` and `rust-engineer`, each blind to the other.
+They converged on two points and **diverged on three**, so per `CLAUDE.md`'s tie-break rule
+`fable-adjudicator` was convened and ruled on all three (items 1-3 below).
+
+**Items 1-3 are Fable rulings, not joint-architect findings, and the distinction is the one §16.30
+set out.** Each was adjudicated because it was disputed. Item 4 records what the two agents had
+already agreed before Fable was convened; Fable did not rule on it, and a future citation must not
+upgrade it to an adjudicated ruling.
+
+**Source record:** `docs/RULINGS.md`, under "P7c infra — signature schema, pin home, frozen
+provenance predicate — Fable tie-break, 2026-08-02", marked `record quality: MIXED` there, same as
+§16.30's source entry — that is the **second** entry captured under that file's own "for future
+rulings" instruction to record the adjudicator's reply verbatim before condensing it (§16.30's
+source entry was the first). The scope of the verbatim claim is narrower than a first glance at
+either entry's blockquote might suggest, and travels with the citation: only the `>`-blockquoted
+passage is Fable's own text, the sole edit to it being removal of a closing usage/token-count line.
+The "Question put to Fable" framing and the closing note in that entry are the Orchestrator's prose,
+and everything in this spec entry outside an explicit quote is this transcription's wording, not
+Fable's.
+
+**Grounding differs across the three rulings, by Fable's own statement, and flattening it would
+misdescribe the record.** Rulings A and B (items 1-2) rest on execution: Fable downloaded and hashed
+both artifacts, re-implemented the protobuf walk and parsed both graphs, applied the engineer's
+refactor to a scratch clone and ran the workspace suite, and probed the serde behaviour. Ruling C
+(item 3) rests on ratified text plus cookbook rule 13's corollary — Fable marks it "the
+reasoning-based ruling of the three", noting "there is no runnable oracle for a governance-shape
+choice". Upstream PanelCleaner was not consulted: Fable states none of the three is a
+ported-behaviour ambiguity, and that "the tiebreak oracle for artifact facts here is the pinned
+files themselves, which I ran."
+
+**What this transcription re-measured, and what it did not.** It re-measured none of Fable's ONNX
+graph readings, neither artifact digest, and none of the suite runs. Four cheap code references were
+re-checked while transcribing, and **two** figures moved: `pc_models::COMIC_TEXT_DETECTOR` resolves at
+`crates/pc-models/src/lib.rs:25-31` (Fable cited `:26-31`; the `pub const` is line 26 and its doc
+comment line 25), and Fable's "`xtask/src/record.rs` has ~10" unit tests re-counts to **12**
+`#[test]` functions — the point it supports, that unit tests in the bin crate are established
+practice, is unaffected. The other two references confirmed, unchanged: `pc-testkit` is a
+dev-dependency of `pc-ocr` (`crates/pc-ocr/Cargo.toml:31`); `crates/pc-ocr/tests/p7_signature.rs`
+does not exist yet, as expected.
+
+1. **RATIFIED (Fable) — Ruling A: the signature schema becomes generic; no parallel OCR type set.**
+
+   **Decision.** `crates/pc-testkit/src/model_signature.rs` is restructured as `TensorSig<D>` /
+   `ModelSig<D>` with four aliases — `TensorSignature = TensorSig<i64>`,
+   `ModelSignature = ModelSig<i64>`, `SymbolicTensorSignature = TensorSig<Dim>`,
+   `SymbolicModelSignature = ModelSig<Dim>` — plus
+   `#[serde(untagged)] enum Dim { Fixed(i64), Symbolic(String) }`. A parallel
+   `OcrModelSignature`/`OcrTensorSignature` type set is **not** created.
+
+   **Grounds, measured by Fable rather than accepted from either plan.** Applied verbatim to a
+   scratch clone at commit `1158809`, the refactor left both frozen consumers
+   (`crates/pc-testkit/tests/model_signature.rs`, `crates/pc-detect/tests/d4_signature.rs`) passing
+   **with zero edits to either file**; `cargo test --workspace` gave **881 passed / 0 failed / 6
+   ignored**, identical to a same-tree baseline taken after reverting the probe; and
+   `cargo clippy --workspace --all-targets --all-features -- -D warnings` was clean. That is §16.24
+   item 1's own acceptance standard for touching this territory — "green **with the test file
+   unmodified**" — met here by measurement. Fable's three further grounds: the architect's
+   "field-for-field parallel so a future unification is a rename, not a merge" prepays permanent
+   duplication to make cheap a unification that is available now at a measured cost of zero; the
+   frozen file's own header (`crates/pc-testkit/tests/model_signature.rs:4-6`) states the
+   anti-duplication ground, *"Duplicating the shape in either consumer would let the two drift…"*
+   (the sentence continues by naming §16.13 item 3 as the reason `xtask` may consume this crate at
+   all — elided here as a cross-reference, not as part of the ground being cited), and two
+   field-for-field-parallel type sets inside `pc-testkit` are that same drift vector one
+   module over; and the safety property the parallel set would buy is already held, because
+   `the_named_convenience_loader_matches_the_general_one` asserts `shape == vec![1, 3, 1024, 1024]`
+   through the alias, so flipping `ModelSignature`'s alias target away from `i64` is a compile error
+   inside a frozen file.
+
+   **Two binding grafts — conditions on the win, not optional follow-ups.**
+
+   (a) The refactor lands **with additive tests**, because no existing frozen test covers the new
+   surface: (i) `SymbolicModelSignature` round-trips a mixed symbolic/fixed shape; (ii) the `i64`
+   alias still **rejects** a symbolic shape element, as the old `Vec<i64>` did by type, and must
+   observably keep doing so; (iii) `Dim` rejects a JSON float. All three passed under Fable's probe;
+   the implementer writes their own test text.
+
+   (b) **§16.16 item 2 is not relaxed by this ruling.** The `model_signature` group's recorder keeps
+   rejecting symbolic, dynamic, zero and missing dims for the detector artifact. If `xtask`'s
+   low-level walk is shared between the detector and OCR recorders, the detector path's symbolic bail
+   must remain **and be provable**; unit tests in the bin crate are established practice.
+
+   **Scope, from the ruling.** It holds for the type definitions in
+   `crates/pc-testkit/src/model_signature.rs` and the four aliases named above. It does **not** decide
+   `xtask`-side code organization — a shared walk or a new parse path are both acceptable so long as
+   graft (b) holds. It does **not** decide which module hosts the OCR group's path constants and
+   loader: Fable notes that a new `ocr_model_signature.rs` module holding constants, loader and pins
+   **built on the shared generic types** would keep the architect's module boundary without the type
+   duplication, and calls that compatible, not required. And it authorizes **no new schema fields**,
+   `ir_version` included — "neither position proposed it; adding one needs its own argument."
+
+2. **RATIFIED (Fable) — Ruling B: one `OcrModelPin` constant per file, in `pc-testkit`, with two
+   importers.**
+
+   **Decision.** The encoder and decoder pins (file name, sha256, size_bytes) live **once**, as
+   constants in `pc-testkit` — under the type name `OcrModelPin`, which is Fable's own — imported by
+   the `xtask` OCR recorder, which verifies the real file against the pin **before** parsing, as
+   `xtask/src/model_signature.rs:76` does for the detector today, and by
+   `crates/pc-ocr/tests/p7_signature.rs`. The two constant identifiers, `MANGA_OCR_ENCODER` and
+   `MANGA_OCR_DECODER`, are carried over from the architect's plan rather than named by Fable —
+   ratified as the mechanism (one constant, two importers), not as a naming requirement; an
+   implementer is free to name them differently so long as the mechanism holds. Both dependency
+   edges already exist: `xtask` depends on `pc-testkit`, and `pc-testkit` is a dev-dependency of
+   `pc-ocr`.
+
+   **The load-bearing factual question, settled by Fable reading the code rather than the
+   transcripts.** The existing pattern is one constant, not two independently-typed literal copies.
+   `pc_models::COMIC_TEXT_DETECTOR` is defined once and imported by the recorder, by the H2 gate
+   (`xtask/tests/provenance_digests.rs::the_model_signature_source_digest_equals_the_pc_models_constant`)
+   and by `pc-models`' own keystone, while `crates/pc-detect/tests/d4_signature.rs:62-69`
+   deliberately carries no digest literal — its own inline comment there names the detector model
+   task (`§8.3 step 3`) and the cross-crate dependency rule keeping `pc-detect` off `pc-models`, not
+   §16.16 item 5 by number, but the substance is the same fact §16.16 item 5 states (spec
+   `:2804-2805`: *"the single source of truth for model identity lives in `pc-models`"*). The
+   engineer's contrary characterisation of the existing pattern was factually wrong about the digest,
+   and the main ground for that position goes with it.
+
+   **Binding graft, taken from the losing position.** The existing pattern is not constants-only:
+   `d4_signature.rs:73-74` pins `size_bytes == 94_669_756` and `opset == 11` as **frozen-test
+   literals**. Without that leg, one edit to a pin constant plus a re-record against a different real
+   file keeps every test green, and nothing frozen anchors *which* artifact is pinned. So
+   `crates/pc-ocr/tests/p7_signature.rs` must assert the pin constants' identity fields (sha256 and
+   size_bytes) against §16.30 item 1's ratified literals, in the frozen test. That is duplication
+   **with a comparator between the copies**, which is the H2 pattern — unlike the rejected proposal,
+   in which the `xtask`-local and test-local copies were compared by nothing and a drift would
+   surface only at the next re-record.
+
+   **Scope, from the ruling, plus the obligation Fable asked be recorded with this transcription.**
+   It holds for the two P7 pins (encoder/decoder sha256 + size) and their two named consumers: the
+   `xtask` OCR recorder and `crates/pc-ocr/tests/p7_signature.rs`. It does **not** decide P8a's
+   `ModelSpec` design. **Recorded here because the ruling directs that it be:** when P8a moves model
+   identity into `pc_models`, it must either retire the `pc-testkit` pin or add an identity assertion
+   binding the two — leaving both unbound would recreate exactly the drift this ruling exists to
+   prevent. That obligation is owed by P8a and is not discharged here.
+
+3. **RATIFIED (Fable) — Ruling C: an enumerated three-name allow-list in the frozen predicate, plus a
+   compensating digest gate bound to the pin constants. A synthesis; neither position as stated was
+   complete.**
+
+   **Decision, two halves, both binding.** (a) `assert_known_non_committed_form`
+   (`crates/pc-testkit/tests/recorded_provenance.rs`) has its `.ends_with(".pt.onnx")` suffix test
+   replaced by an **enumerated allow-list of exactly three bare filenames**:
+   `comictextdetector.pt.onnx`, `encoder_model.onnx`, `decoder_model.onnx`. (b) Additively, in
+   `xtask/tests/provenance_digests.rs`, a new **bidirectional** gate asserts set equality between
+   every bare-model-filename source declared anywhere in the tree and that three-name list, with each
+   one's `source_sha256` bound to its **pin constant** — `pc_models::COMIC_TEXT_DETECTOR.sha256` for
+   the detector, which is already H2, and item 2's `OcrModelPin` constants for the other two — and
+   **not** to a second independently-typed literal table.
+
+   **Grounds.** Against widening the suffix `.pt.onnx` → `.onnx`: cookbook rule 13's corollary is
+   near-verbatim on point — *"`ignore dotfiles` or an extension allowlist would have re-opened it
+   silently… the exempt set is itself asserted: a stray file must not pass by merely looking
+   exemption-shaped."* Widening the suffix converts a narrow accident of the detector's filename into
+   a genuine extension allowlist, and §16.24 item 1(e) already called loosening this exemption "the
+   bypass wearing different clothes". Against the allow-list as the architect left it: membership
+   without a digest binding lets `encoder_model.onnx` be declared with a garbage `source_sha256` and
+   still pass the frozen gate, which never hashes non-committed sources. The engineer's objection was
+   therefore correct, but its dichotomy was false — the compensating leg is not intrinsic to suffix
+   widening and attaches to an allow-list just as well. One correction to that leg: a literal digest
+   table in the xtask test would re-introduce the two-copies-no-comparator shape item 2 rejects, so
+   it binds to the pin constants instead, and item 2's frozen-test literal leg is what anchors the
+   constants themselves.
+
+   (c) **Fable's direction claim, quoted, and the exact set relation the quote does not state.**
+   Fable writes that an enumerated set "is the *opposite* move — it is **stricter than today's
+   predicate**, not laxer, which is the direction every ratified precedent here prefers." Checked
+   against the code while transcribing, that holds of the *pattern* but not of the *accepted set*,
+   and the difference is worth one sentence rather than a future reader's surprise: today's branch
+   accepts every bare `*.pt.onnx` filename, the new one accepts exactly three names, so the new set
+   **drops** every `*.pt.onnx` name other than `comictextdetector.pt.onnx` and **admits** two names
+   the old branch rejected. It is neither a subset nor a superset of the old one. What "stricter" is
+   true of is closure — the accepted set stops being open-ended — and closure is the property the
+   grounds above actually rest on.
+
+   (d) **Housekeeping this ruling explicitly authorizes.** The comment at
+   `crates/pc-testkit/tests/provenance_schema.rs:587-590`, which describes the exemption as "keyed on
+   a single path component ending `.pt.onnx`", goes stale under (a) and gets a **comment-only**
+   correction, authorizing no behaviour change — the same class as §16.29 item 2's precedent for a
+   code comment that over-cites. Separately, the `EXPECTED_GROUPS` / `EXPECTED_DECLARED_PATHS` /
+   `EXPECTED_COMMITTED_PATHS` additions the new OCR group's fixtures require are **already
+   authorized** additive edits, extending §16.24 item 1(f)'s clause — quoted with its own scope,
+   since that clause's stated trigger is the detector group, not this one: *"(f) When the detector
+   group records, `EXPECTED_GROUPS` / `EXPECTED_DECLARED_PATHS` / `EXPECTED_COMMITTED_PATHS`
+   (`:11-27`) gain the new entries. This is an authorised additive edit, invited by the test's own
+   message (`:85`)..."* — on the same two conditions ratified there (every existing entry retained
+   verbatim; the constants stay literal). The clause's own ground for being additive-not-ratified is
+   the test's message itself (`"recorded fixture group count changed; inspect this test and update
+   its expected count"`), which is group-agnostic wording, not detector-specific — that is why this
+   entry extends it to the new OCR group rather than treating it as already covering one; if that
+   reading is wrong, this paragraph is the thing to correct, not the underlying edit.
+
+   (e) **The one spec site whose description this changes, and the two it does not.** §16.29 item 2
+   describes this predicate as one "which panics on a declared path that is neither scratch-prefixed
+   nor a bare `*.pt.onnx` filename". Under (a) that stops being an accurate description of the live
+   predicate, so that site keeps its original wording and carries a back-pointer here, per §16.26's
+   convention; the marker at the head of this entry is the other end of it. **This site was found
+   while transcribing, not by the ruling** — Fable's prior-ratification check named §16.24 items
+   1(e), 1(f) and 2 and cookbook rule 13, and did not reach §16.29 item 2. The other two spec sites
+   naming this predicate are unaffected and carry no marker: §16.24 item 1(e)'s prohibition on adding
+   upstream-path digests to the provenance files holds unchanged, because a path-shaped value still
+   fails under either form of the branch; and §16.24 item 2's "the bare-model form is exactly the
+   deliberately-unverifiable bucket" stays true of all three names.
+
+   **Scope, from the ruling.** It holds for `assert_known_non_committed_form`'s bare-model-filename
+   branch and the three named files. It does **not** widen the scratch-prefix branch, does **not**
+   touch the key-name walker (§16.24 item 1(b): neither deleted nor patched), and does **not**
+   pre-authorize any fourth filename — a future model file needs another explicit allow-list edit
+   plus its own pin, by design.
+
+4. **AGREED BACKGROUND, not adjudicated — recorded so a future citation does not upgrade it.** Three
+   premises were common ground and are part of no ruling above. (i) The OCR signatures go into a
+   **new provenance group** rather than widening the existing `model_signature` group — both agents
+   converged on this independently, and it appears in the source record's "Question put to Fable"
+   framing, which is the Orchestrator's prose, not Fable's. (ii) An in-place `Vec<i64>` → `Vec<Dim>`
+   mutation of `TensorSignature` is rejected: both agents compiled it against the real frozen suite
+   and got real `rustc` errors, and Fable accepted that without re-executing it. (iii) "Pins must not
+   live in `pc_models` before P8a" is agreed ground, likewise accepted rather than measured. The name
+   of the new group is not fixed by this entry.
+
+5. **Verified versus accepted, in Fable's own split, because the two are not settled the same way.**
+   Verified by execution: both artifacts' digests and sizes, re-derived and matching §16.30 item 1's
+   table exactly; both graphs' full I/O signatures, including that the frozen `parse_dim` bails on
+   both files; the generic refactor's 881/0/6-with-zero-test-edits against an identical same-tree
+   baseline, with clean clippy; the `Dim` serde semantics (number → `Fixed`, string → `Symbolic`,
+   round-trip stable, the `i64` alias rejecting a symbolic string, a JSON float rejected); and the
+   single-constant pin pattern. Accepted without re-execution: items 4(ii) and 4(iii).
+
+   Fable's measured graph facts, recorded because item 1's grafts are written against them: the
+   encoder has 198 initializers, one true input `pixel_values` f32
+   `[batch_size, num_channels, height, width]`, and output `last_hidden_state` f32 with three
+   symbolic dims — **7 symbolic dims and zero concrete across its I/O**; the decoder has two true
+   inputs (`input_ids` i64, both dims symbolic; `encoder_hidden_states` f32 `[sym, sym, 768]`) and
+   output `logits` f32 `[sym, sym, 6144]`; both files declare **opset 14 and ir_version 7**.
+   Recording `ir_version` is not authorized — see item 1's scope.
+
+6. **Mode and integrity statement, recorded because the tie-break rule turns on it.** Fable's reply
+   opens with a mode statement: Mode A, tie-break, final call, advisory-only status suspended for
+   these three decisions; no files written in the repository; all probes run in a scratch clone and a
+   scratch crate; `git status --porcelain` on the working tree empty. Fable also ran the
+   prior-ratification check before ruling and reported that §16.30 reserves this ground rather than
+   deciding it — "The artifact digests in item 1 have no in-repo gate yet; giving them one is P7's
+   job, not this entry's" — that §16.16 item 2's reject-symbolic clause binds the `model_signature`
+   **group's recorder** rather than the Rust representation of signatures generally, and that no
+   ratified clause decides A or B.
+
+7. **What this entry does NOT do, enumerated because an unenumerated omission reads as an oversight.**
+   It writes no code: no `Dim` enum, no `TensorSig<D>`/`ModelSig<D>` refactor, no `OcrModelPin`
+   constants, no `crates/pc-ocr/tests/p7_signature.rs`, no edit to `assert_known_non_committed_form`,
+   no new gate in `xtask/tests/provenance_digests.rs`, and no correction to the
+   `provenance_schema.rs` comment — each is P7c implementation work, owed and not done. It adds no
+   provenance group, no `EXPECTED_GROUPS` entry, no fixture and no recorded signature. It does not
+   name the new group, decide the `xtask` module layout, or decide P7c's task decomposition, test
+   plan or batching — those are the P7c planning pass's output, not a ratification's. It decides
+   nothing about P8a beyond recording item 2's obligation, and it re-measures none of item 5's
+   figures.
+
+8. **This entry was run through the gate it feeds, per cookbook rule 14b.** §16.26's Layer B scanner
+   pairs a prose verb with the anchors on the same physical line, so every line above was written to
+   keep the verb list off any line carrying a live older anchor — the one-sentence rule at §16.26
+   item 8(b). The single claim above is a Layer A marker and this entry adds no Layer B row;
+   `cargo test -p pc-testkit --test spec_supersession` is what proves that. The pinned claim count
+   and the ratified-marker set in `crates/pc-testkit/tests/spec_supersession.rs` are raised in this
+   entry's own commit, as §16.26 item 6 requires. The marker was falsified before handover — its
+   back-pointer stripped, the suite re-run, the red confirmed at the named site, the file restored —
+   because a marker whose removal keeps the suite green is decoration (cookbook rule 6).
 
 ## 16. Summary of what v1 is NOT
 
