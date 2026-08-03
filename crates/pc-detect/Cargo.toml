@@ -16,6 +16,8 @@ default = []
 onnx    = ["dep:ort"]
 # Exposes MockDetector / ReplayDetector to other crates' tests (§7.2).
 testkit = []
+# Exposes session knobs only to maintainer benchmarks and opt-in real-model tests.
+bench-tuning = []
 
 [dependencies]
 pc-core     = { path = "../pc-core" }
@@ -36,6 +38,8 @@ tempfile   = { workspace = true }
 # rayon threads", so the test needs a sized `rayon::ThreadPoolBuilder`. The crate itself
 # has no rayon dependency -- parallelism lives in `pc-pipeline` (§4.5).
 rayon      = { workspace = true }
+sha2       = { workspace = true }
+toml_edit  = { workspace = true }
 # Self dev-dependency so integration tests (which link the crate as an external lib,
 # without `cfg(test)`) can see the `testkit`-gated mock backends.
-pc-detect  = { path = ".", features = ["testkit"] }
+pc-detect  = { path = ".", features = ["testkit", "bench-tuning"] }

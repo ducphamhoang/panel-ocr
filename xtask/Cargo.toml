@@ -12,7 +12,7 @@ repository.workspace   = true
 
 [features]
 default = []
-onnx    = ["pc-detect/onnx"]
+onnx    = ["pc-detect/onnx", "pc-detect/bench-tuning"]
 
 [dependencies]
 # §16.13 item 3: xtask is the ONE place `pc-testkit` is a normal (non-dev) dependency.

@@ -16,8 +16,23 @@ use std::{fmt::Write as _, path::Path};
 
 #[cfg(feature = "onnx")]
 use crate::detector::TextDetector;
+#[cfg(any(test, feature = "bench-tuning"))]
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "onnx")]
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    path::PathBuf,
+    sync::{mpsc, Mutex},
+    thread,
+};
+
+#[cfg(any(test, feature = "bench-tuning"))]
+static PANIC_NEXT_PREPROCESS: AtomicBool = AtomicBool::new(false);
+
+#[cfg(any(test, feature = "bench-tuning"))]
+static PANIC_NEXT_INFER: AtomicBool = AtomicBool::new(false);
+
+#[cfg(any(test, feature = "bench-tuning"))]
+static PANIC_NEXT_SESSION_BUILD: AtomicBool = AtomicBool::new(false);
 
 /// Network input side length (spec §8.3 step 3).
 pub const NET_SIZE: u32 = 1024;
@@ -306,6 +321,45 @@ pub fn ensure_model_file(path: &Path) -> Result<(), StageError> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionTuning {
+    pub flush_denormals: bool,
+    pub parallel_execution: bool,
+    pub intra_op_spinning: Option<bool>,
+    pub dynamic_block_base: Option<u32>,
+}
+
+impl Default for SessionTuning {
+    fn default() -> Self {
+        Self {
+            flush_denormals: true,
+            parallel_execution: false,
+            intra_op_spinning: None,
+            dynamic_block_base: None,
+        }
+    }
+}
+
+#[cfg(feature = "onnx")]
+pub type RawTensors = (Vec<OutputMeta>, Vec<Vec<f32>>, LetterboxGeometry);
+
+#[cfg(feature = "onnx")]
+type WorkerOutputs = (Vec<OutputMeta>, Vec<Vec<f32>>);
+
+#[cfg(feature = "onnx")]
+enum WorkerInitResponse {
+    Ready(Vec<OutputMeta>),
+    Error(StageError),
+    Panic(Box<dyn std::any::Any + Send>),
+}
+
+#[cfg(feature = "onnx")]
+enum WorkerInferenceResponse {
+    Outputs(WorkerOutputs),
+    Error(StageError),
+    Panic(Box<dyn std::any::Any + Send>),
+}
+
 #[cfg(feature = "onnx")]
 use ort::{
     session::{builder::GraphOptimizationLevel, Session, SessionOutputs},
@@ -318,14 +372,31 @@ use pc_config::TextDetectorConfig;
 #[derive(Debug)]
 pub struct OnnxDetector {
     model_path: PathBuf,
-    // DEVIATION(15): `concurrent_models` would be honoured at provider construction;
-    // v1 shares one Mutex-guarded session, and a configured value > 1 is warned-and-ignored.
-    session: Mutex<Session>,
+    worker_tx: mpsc::Sender<WorkerRequest>,
+    worker_join: Mutex<Option<thread::JoinHandle<()>>>,
     outputs: Vec<OutputMeta>,
     output_names: Vec<String>,
     output_shapes: Vec<Vec<i64>>,
 }
 
+#[cfg(feature = "onnx")]
+enum WorkerRequest {
+    Infer {
+        input: Tensor<f32>,
+        response: mpsc::Sender<WorkerInferenceResponse>,
+    },
+    Shutdown,
+}
+
+/// The worker owns the only [`Session`] and processes requests serially.
+///
+/// Preprocessing and output decoding deliberately stay on the calling thread. A worker
+/// panic from `Session::run` or `extract_outputs` is caught and forwarded as a raw payload,
+/// which the receiving thread resumes so the existing pipeline panic boundary can render it
+/// as a per-request `StageError::Inference`. The worker survives that panic and continues
+/// handling subsequent requests on the same detector instance.
+/// Session construction failures remain `StageError::Model` because they prevent
+/// construction of an `OnnxDetector` rather than failing one image.
 #[cfg(feature = "onnx")]
 impl OnnxDetector {
     pub fn from_path(model: &Path) -> Result<Self, StageError> {
@@ -336,69 +407,98 @@ impl OnnxDetector {
         model: &Path,
         config: &TextDetectorConfig,
     ) -> Result<Self, StageError> {
-        Self::from_path_with_threads(model, config.intra_threads, config.inter_threads)
+        Self::from_path_with_tuning_impl(
+            model,
+            config.intra_threads,
+            config.inter_threads,
+            &SessionTuning::default(),
+        )
     }
 
-    fn from_path_with_threads(
+    #[cfg(any(test, feature = "bench-tuning"))]
+    pub fn from_path_with_tuning(
         model: &Path,
         intra_threads: usize,
         inter_threads: usize,
+        tuning: &SessionTuning,
+    ) -> Result<Self, StageError> {
+        Self::from_path_with_tuning_impl(model, intra_threads, inter_threads, tuning)
+    }
+
+    fn from_path_with_tuning_impl(
+        model: &Path,
+        intra_threads: usize,
+        inter_threads: usize,
+        tuning: &SessionTuning,
     ) -> Result<Self, StageError> {
         // This pre-flight must precede every ort call so path errors remain actionable.
         ensure_model_file(model)?;
 
-        let mut builder = Session::builder().map_err(|error| {
-            StageError::Model(format!("failed to configure {}: {error}", model.display()))
-        })?;
-        builder = builder
-            .with_optimization_level(GraphOptimizationLevel::Level3)
+        let model_path = model.to_path_buf();
+        let worker_model_path = model_path.clone();
+        let worker_tuning = tuning.clone();
+        let (worker_tx, worker_rx) = mpsc::channel();
+        let (init_tx, init_rx) = mpsc::channel::<WorkerInitResponse>();
+        let worker_join = thread::Builder::new()
+            .name("pc-detect-onnx".into())
+            .spawn(move || {
+                // The worker deliberately does not format panic messages. It forwards the raw
+                // payload so the caller can resume the unwind on the thread that already owns
+                // panic rendering policy (§16.19 item 4; §16.12 item 18 / §5.2 item 2).
+                let initialization = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    build_session(
+                        &worker_model_path,
+                        intra_threads,
+                        inter_threads,
+                        &worker_tuning,
+                    )
+                }));
+                match initialization {
+                    Ok(Ok((mut session, outputs))) => {
+                        if init_tx.send(WorkerInitResponse::Ready(outputs)).is_ok() {
+                            run_worker(&mut session, worker_rx);
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        let _ = init_tx.send(WorkerInitResponse::Error(error));
+                    }
+                    Err(payload) => {
+                        let _ = init_tx.send(WorkerInitResponse::Panic(payload));
+                    }
+                }
+            })
             .map_err(|error| {
-                StageError::Model(format!("failed to configure {}: {error}", model.display()))
+                StageError::Model(format!(
+                    "failed to start ONNX worker for {}: {error}",
+                    model.display()
+                ))
             })?;
-        builder = builder.with_intra_threads(intra_threads).map_err(|error| {
-            StageError::Model(format!("failed to configure {}: {error}", model.display()))
-        })?;
-        builder = builder.with_inter_threads(inter_threads).map_err(|error| {
-            StageError::Model(format!("failed to configure {}: {error}", model.display()))
-        })?;
-        // No execution provider is registered: ONNX Runtime's default CPU provider is
-        // the CPU-only v1 decision.
-        let session = builder.commit_from_file(model).map_err(|error| {
-            StageError::Model(format!("failed to load {}: {error}", model.display()))
-        })?;
 
-        let inputs = session.inputs().len();
-        if inputs != 1 {
-            return Err(StageError::Model(format!(
-                "model has {inputs} inputs, expected exactly 1"
-            )));
-        }
-
-        let outputs = session
-            .outputs()
-            .iter()
-            .map(outlet_meta)
-            .collect::<Result<Vec<_>, _>>()?;
-        tracing::debug!(
-            model = %model.display(),
-            outputs = %describe_outputs(&outputs),
-            "ONNX model outputs"
-        );
-        if outputs.len() != 3 {
-            return Err(StageError::Model(format!(
-                "model has {} outputs, expected exactly 3; {}",
-                outputs.len(),
-                describe_outputs(&outputs)
-            )));
-        }
-        let binding = bind_outputs(&outputs)?;
-        validate_output_shapes(&outputs, binding)?;
+        let outputs = match init_rx.recv() {
+            Ok(WorkerInitResponse::Ready(outputs)) => outputs,
+            Ok(WorkerInitResponse::Error(error)) => {
+                let _ = worker_join.join();
+                return Err(error);
+            }
+            Ok(WorkerInitResponse::Panic(payload)) => {
+                let _ = worker_join.join();
+                std::panic::resume_unwind(payload);
+            }
+            Err(error) => {
+                let _ = worker_join.join();
+                return Err(StageError::Model(format!(
+                    "ONNX worker failed while loading {}; panic payload could not be recovered: {error}",
+                    model.display()
+                )));
+            }
+        };
 
         let output_names = outputs.iter().map(|output| output.name.clone()).collect();
         let output_shapes = outputs.iter().map(|output| output.shape.clone()).collect();
         let detector = Self {
-            model_path: model.to_path_buf(),
-            session: Mutex::new(session),
+            model_path,
+            worker_tx,
+            worker_join: Mutex::new(Some(worker_join)),
             outputs,
             output_names,
             output_shapes,
@@ -424,9 +524,136 @@ impl OnnxDetector {
 }
 
 #[cfg(feature = "onnx")]
+fn build_session(
+    model: &Path,
+    intra_threads: usize,
+    inter_threads: usize,
+    tuning: &SessionTuning,
+) -> Result<(Session, Vec<OutputMeta>), StageError> {
+    #[cfg(any(test, feature = "bench-tuning"))]
+    if PANIC_NEXT_SESSION_BUILD.swap(false, Ordering::SeqCst) {
+        panic!("injected session build panic");
+    }
+
+    let mut builder = Session::builder().map_err(|error| {
+        StageError::Model(format!("failed to configure {}: {error}", model.display()))
+    })?;
+    builder = builder
+        .with_optimization_level(GraphOptimizationLevel::Level3)
+        .map_err(|error| {
+            StageError::Model(format!("failed to configure {}: {error}", model.display()))
+        })?;
+    builder = builder.with_intra_threads(intra_threads).map_err(|error| {
+        StageError::Model(format!("failed to configure {}: {error}", model.display()))
+    })?;
+    builder = builder.with_inter_threads(inter_threads).map_err(|error| {
+        StageError::Model(format!("failed to configure {}: {error}", model.display()))
+    })?;
+    builder = builder
+        .with_parallel_execution(tuning.parallel_execution)
+        .map_err(|error| {
+            StageError::Model(format!("failed to configure {}: {error}", model.display()))
+        })?;
+    if tuning.flush_denormals {
+        builder = builder.with_flush_to_zero().map_err(|error| {
+            StageError::Model(format!("failed to configure {}: {error}", model.display()))
+        })?;
+    }
+    if let Some(spinning) = tuning.intra_op_spinning {
+        builder = builder.with_intra_op_spinning(spinning).map_err(|error| {
+            StageError::Model(format!("failed to configure {}: {error}", model.display()))
+        })?;
+    }
+    if let Some(dynamic_block_base) = tuning.dynamic_block_base {
+        builder = builder
+            .with_dynamic_block_base(dynamic_block_base)
+            .map_err(|error| {
+                StageError::Model(format!("failed to configure {}: {error}", model.display()))
+            })?;
+    }
+    // No execution provider is registered: ONNX Runtime's default CPU provider is
+    // the CPU-only v1 decision.
+    let session = builder.commit_from_file(model).map_err(|error| {
+        StageError::Model(format!("failed to load {}: {error}", model.display()))
+    })?;
+
+    let inputs = session.inputs().len();
+    if inputs != 1 {
+        return Err(StageError::Model(format!(
+            "model has {inputs} inputs, expected exactly 1"
+        )));
+    }
+    let outputs = session
+        .outputs()
+        .iter()
+        .map(outlet_meta)
+        .collect::<Result<Vec<_>, _>>()?;
+    tracing::debug!(
+        model = %model.display(),
+        outputs = %describe_outputs(&outputs),
+        "ONNX model outputs"
+    );
+    if outputs.len() != 3 {
+        return Err(StageError::Model(format!(
+            "model has {} outputs, expected exactly 3; {}",
+            outputs.len(),
+            describe_outputs(&outputs)
+        )));
+    }
+    let binding = bind_outputs(&outputs)?;
+    validate_output_shapes(&outputs, binding)?;
+    Ok((session, outputs))
+}
+
+#[cfg(feature = "onnx")]
+fn run_worker(session: &mut Session, requests: mpsc::Receiver<WorkerRequest>) {
+    while let Ok(request) = requests.recv() {
+        match request {
+            WorkerRequest::Infer { input, response } => {
+                // Soundness relies on pinned ort =2.0.0-rc.12: `Session::run_inner` takes
+                // `&self` and only reads Rust-side session state, so reuse after recovery is
+                // safe (§16.19 item 10(a)); re-verify this before any ort version bump.
+                // Do not turn this panic into a new diagnostic on the worker. Forwarding the
+                // original payload lets the existing caller-side panic boundary render it.
+                let response_value =
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        infer(session, input)
+                    })) {
+                        Ok(Ok(outputs)) => WorkerInferenceResponse::Outputs(outputs),
+                        Ok(Err(error)) => WorkerInferenceResponse::Error(error),
+                        Err(payload) => WorkerInferenceResponse::Panic(payload),
+                    };
+                let _ = response.send(response_value);
+            }
+            WorkerRequest::Shutdown => break,
+        }
+    }
+}
+
+#[cfg(feature = "onnx")]
+fn infer(session: &mut Session, input: Tensor<f32>) -> Result<WorkerOutputs, StageError> {
+    let runtime_outputs = session
+        .run(ort::inputs![input])
+        .map_err(|error| StageError::Inference(format!("ONNX session run failed: {error}")))?;
+    extract_outputs(&runtime_outputs)
+}
+
+#[cfg(feature = "onnx")]
 impl TextDetector for OnnxDetector {
     fn detect(&self, image: &RgbImage) -> Result<RawDetection, StageError> {
+        let (metas, values, geometry) = self.detect_raw_tensors_impl(image)?;
+        decode_outputs(&metas, &values, &geometry)
+    }
+}
+
+#[cfg(feature = "onnx")]
+impl OnnxDetector {
+    fn detect_raw_tensors_impl(&self, image: &RgbImage) -> Result<RawTensors, StageError> {
         let boxed = letterbox(image);
+        #[cfg(any(test, feature = "bench-tuning"))]
+        if PANIC_NEXT_PREPROCESS.swap(false, Ordering::SeqCst) {
+            panic!("injected preprocessing panic");
+        }
         let input = Tensor::<f32>::from_array((
             [1usize, 3, NET_SIZE as usize, NET_SIZE as usize],
             to_nchw(&boxed.image),
@@ -434,34 +661,70 @@ impl TextDetector for OnnxDetector {
         .map_err(|error| {
             StageError::InvalidInput(format!("failed to create input tensor: {error}"))
         })?;
+        let (response_tx, response_rx) = mpsc::channel();
+        self.worker_tx
+            .send(WorkerRequest::Infer {
+                input,
+                response: response_tx,
+            })
+            .map_err(|error| {
+                StageError::Inference(format!("failed to send image to ONNX worker: {error}"))
+            })?;
+        match response_rx.recv().map_err(|error| {
+            StageError::Inference(format!("failed to receive ONNX worker result: {error}"))
+        })? {
+            WorkerInferenceResponse::Outputs((metas, values)) => {
+                Ok((metas, values, boxed.geometry))
+            }
+            WorkerInferenceResponse::Error(error) => Err(error),
+            WorkerInferenceResponse::Panic(payload) => std::panic::resume_unwind(payload),
+        }
+    }
 
-        let (metas, values) = {
-            // Keep the guard alive through extraction because `SessionOutputs` borrows the
-            // session; end this scope immediately after owned output data is extracted so
-            // all pure validation and decoding runs outside the session's critical section.
-            // The recovered poison guard is sound for ort rc.12: `Session` is only
-            // `{ inner: Arc<SharedSessionInner>, inputs: Vec<Outlet>, outputs: Vec<Outlet> }`
-            // (`session/mod.rs:114-118`), `Session::run` (`mod.rs:212`) immediately calls
-            // `run_inner` (`mod.rs:272-273`), and that function only reads those fields.
-            // A panic can leak un-Released `OrtValue`s (`mod.rs:329` onward), but cannot
-            // leave Rust-side session state half-updated; the only Rust callbacks are the
-            // `extern "system"` logging callbacks (`logging.rs:108/139`), whose unwinds
-            // abort rather than poison this mutex.
-            let mut session = self.session.lock().unwrap_or_else(|poisoned| {
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn detect_raw_tensors(&self, image: &RgbImage) -> Result<RawTensors, StageError> {
+        self.detect_raw_tensors_impl(image)
+    }
+}
+
+/// Arrange for the next call's preprocessing arithmetic to panic. This is only exposed to
+/// the real-model testkit so the worker-confinement regression test can distinguish a panic
+/// on the calling thread from a panic that terminates the session worker.
+#[cfg(any(test, feature = "bench-tuning"))]
+pub fn panic_next_preprocess_for_test() {
+    PANIC_NEXT_PREPROCESS.store(true, Ordering::SeqCst);
+}
+
+/// Arrange for the next worker inference to panic, for the real-model worker-confinement
+/// regression test.
+#[cfg(any(test, feature = "bench-tuning"))]
+pub fn panic_next_infer_for_test() {
+    PANIC_NEXT_INFER.store(true, Ordering::SeqCst);
+}
+
+/// Arrange for the next ONNX session construction to panic before loading the model.
+#[cfg(any(test, feature = "bench-tuning"))]
+pub fn panic_next_session_build_for_test() {
+    PANIC_NEXT_SESSION_BUILD.store(true, Ordering::SeqCst);
+}
+
+#[cfg(feature = "onnx")]
+impl Drop for OnnxDetector {
+    fn drop(&mut self) {
+        let _ = self.worker_tx.send(WorkerRequest::Shutdown);
+        let join = self
+            .worker_join
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(join) = join {
+            if join.join().is_err() {
                 tracing::warn!(
                     model = %self.model_path.display(),
-                    "a previous ONNX inference panicked inside the session lock; reusing the \
-                     session (ort rc.12 `Session::run` mutates no Rust-side session state)"
+                    "ONNX detector worker panicked while shutting down"
                 );
-                poisoned.into_inner()
-            });
-            let runtime_outputs = session.run(ort::inputs![input]).map_err(|error| {
-                StageError::Inference(format!("ONNX session run failed: {error}"))
-            })?;
-            extract_outputs(&runtime_outputs)?
-        };
-
-        decode_outputs(&metas, &values, &boxed.geometry)
+            }
+        }
     }
 }
 
@@ -472,6 +735,10 @@ fn extract_outputs(
     let mut metas = Vec::with_capacity(runtime_outputs.len());
     let mut values = Vec::with_capacity(runtime_outputs.len());
     for (name, output) in runtime_outputs.iter() {
+        #[cfg(any(test, feature = "bench-tuning"))]
+        if PANIC_NEXT_INFER.swap(false, Ordering::SeqCst) {
+            panic!("injected ONNX output extraction panic");
+        }
         let (shape, tensor_values) = output.try_extract_tensor::<f32>().map_err(|error| {
             StageError::Inference(format!(
                 "failed to extract ONNX output `{name}` as f32: {error}"
@@ -494,7 +761,7 @@ fn extract_outputs(
     Ok((metas, values))
 }
 
-/// Decode extracted ONNX outputs after the session mutex has been released.
+/// Decode extracted ONNX outputs after the worker has returned owned values.
 pub fn decode_outputs(
     metas: &[OutputMeta],
     values: &[Vec<f32>],

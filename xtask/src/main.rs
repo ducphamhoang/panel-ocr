@@ -9,6 +9,7 @@
 //! corresponding parity gate circular and worthless, so a missing tool is always a
 //! reported skip, never a fallback.
 
+mod bench;
 mod calibrate;
 mod env;
 mod model_signature;
@@ -71,6 +72,37 @@ enum Command {
         #[arg(long, value_name = "SPEC")]
         detector: Option<String>,
     },
+    /// Measure ONNX detector tuning candidates in fresh child processes.
+    BenchDetector {
+        /// Detector model, using `onnx:<path>`; falls back to PANEL_OCR_ONNX_MODEL.
+        #[arg(long, value_name = "SPEC")]
+        detector: Option<String>,
+        /// Number of measured repetitions per candidate.
+        #[arg(long, default_value_t = 5)]
+        reps: usize,
+        /// Warmup repetitions excluded from the summary.
+        #[arg(long, default_value_t = 1)]
+        warmup: usize,
+        /// `all` or a comma-separated list of built-in labels.
+        #[arg(long, default_value = "all")]
+        variants: String,
+        /// Write the non-gating report here.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    #[command(hide = true)]
+    BenchDetectorChild {
+        #[arg(long)]
+        detector: PathBuf,
+        #[arg(long)]
+        label: String,
+        #[arg(long)]
+        reps: usize,
+        #[arg(long)]
+        warmup: usize,
+        #[arg(long)]
+        raw_out: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -118,6 +150,26 @@ fn main() -> Result<()> {
         Command::CalibrateGoldens { out, detector } => {
             calibrate::run(out.as_deref(), detector.as_deref())
         }
+        Command::BenchDetector {
+            detector,
+            reps,
+            warmup,
+            variants,
+            out,
+        } => {
+            let detector = detector
+                .as_deref()
+                .map(env::parse_detector_spec)
+                .transpose()?;
+            bench::run(detector.as_deref(), reps, warmup, &variants, out.as_deref())
+        }
+        Command::BenchDetectorChild {
+            detector,
+            label,
+            reps,
+            warmup,
+            raw_out,
+        } => bench::run_child(&detector, &label, reps, warmup, &raw_out),
     }
 }
 
