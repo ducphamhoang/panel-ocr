@@ -262,6 +262,20 @@ pub enum Mechanism {
     DbnetScattered { register_entry: &'static str },
 }
 
+impl Mechanism {
+    /// Return the Rust variant name using an exhaustive match, so adding a variant requires this
+    /// maintenance point to be updated.
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::ClassDuplicateOf { .. } => "ClassDuplicateOf",
+            Self::CoverageFilteredUpstream { .. } => "CoverageFilteredUpstream",
+            Self::DocumentedSplitMerge { .. } => "DocumentedSplitMerge",
+            Self::Open => "Open",
+            Self::DbnetScattered { .. } => "DbnetScattered",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExpectedPair {
     pub ours: usize,

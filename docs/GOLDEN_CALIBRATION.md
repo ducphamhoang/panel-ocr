@@ -142,25 +142,221 @@ for visibility and is **not** a gate.
 
 </details>
 
-## 3. Measurements blocked on the detector recording (F1, detector group)
+## 3. Detector-dependent test status
 
-None of the following can be measured until spec §8.5 tasks **D1** (`pc-models`) and
-**D4** (`pc-detect/src/onnx.rs`) exist and the recording is run on a machine holding
-`comictextdetector.pt.onnx`. `cargo xtask record-fixtures --only detector` prints the
-same explanation with the exact artifact list.
+Measured from the test attributes in the current workspace tree; `UNKNOWN` is never treated as live or ignored.
 
-| Measurement | Spec | Blocked test |
+| Test | Spec | Status |
 |---|---|---|
-| demo_bubbles masking calibration report (IoU, exact %, max Δ, SSIM per fixture) | §10.7(B)15 | *(non-gating report; no test)* |
-| Hand-written detect determinism + committed-raw equality | §8.7(A)6 / §16.20 item 1(b) | `pc-detect d7_run.rs::a6_pending_recorded_page_equality_and_determinism` |
-| Recorded-page box-count/coordinate regression lock | §8.7(B)9 | `pc-detect d7_run.rs::b9_pending_recorded_page_regression_lock` |
-| Hand-written preprocess tier arithmetic | §9.7(B)11 / §16.20 item 1(a) | `pc-preprocess p5_run.rs::b11_pending_recorded_page_tier_arithmetic` |
-| End-to-end denoise golden PNGs (`_noise_mask.png`, `_clean_denoised.png`) | §11.7(B)13 / §16.10 item 20 | `pc-denoise n4_run.rs::b13_pending_recorded_page_end_to_end_golden` |
+| Hand-written detect determinism + committed-raw equality (`a6_pending_recorded_page_equality_and_determinism`) | §8.7(A)6 | LIVE |
+| Recorded-page box-count/coordinate regression lock (`b9_pending_recorded_page_regression_lock`) | §8.7(B)9 | LIVE |
+| Hand-written preprocess tier arithmetic (`b11_pending_recorded_page_tier_arithmetic`) | §9.7(B)11 | LIVE |
+| End-to-end denoise golden PNGs (_noise_mask.png, _clean_denoised.png) (`b13_pending_recorded_page_end_to_end_golden`) | §11.7(B)13 | IGNORED — pending task F1: needs the recorded page fixture and its committed golden PNGs |
 
-§10.7(B)15 additionally needs one or two license-clean full manga pages (≤ 400 KB
-each) supplied by the maintainer (§7.2), which no automated step can source.
+`End-to-end denoise golden PNGs (_noise_mask.png, _clean_denoised.png)` (`b13_pending_recorded_page_end_to_end_golden`) is ignored with measured reason: `pending task F1: needs the recorded page fixture and its committed golden PNGs`.
 
-## 4. PIL `FIND_EDGES` cross-check — §10.3 step 2 / §16.9 item 21
+Among the 4 tracked tests, §11.7(B)13's denoise golden requires special handling: deriving its golden references by running our own denoiser would violate the "no self-oracle" rule (cookbook rule 7); its derivation/signing decision needs the joint architects, not a unilateral fix.
+
+Those four tests un-ignore only against the signed maintainer page, never against `demo_bubbles`. (§16.24 item 12)
+
+## 4. Reserved for demo_bubbles masking calibration
+
+| Measurement | Spec | Status | Reason |
+|---|---|---|---|
+| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED | Scratch-only demo_bubbles masking calibration report (§10.7(B)15) is not implemented; this remaining scope within F2 will be added in a subsequent F2 sub-task/PR per the ratified §16.24 item 12 approach: record to scratch, commit nothing. |
+
+## 5. Detector box-count comparison — §15.1
+
+Recorded page: `ja_Pepper-and-Carrot_by-David-Revoy_E01P01`.
+
+| Ours total | Upstream total | Pairs compared | Gating rows |
+|---:|---:|---:|---:|
+| 4 | 4 | 3 | 0 |
+
+| Side | Unmatched index | Mechanism |
+|---|---:|---|
+| ours | 3 | `CoverageFilteredUpstream` |
+| upstream | 1 | `ClassDuplicateOf` |
+
+The unmatched upstream `ClassDuplicateOf` entry at index 1 is the expected, accepted consequence of §15.1's ratified class-agnostic NMS decision and deviation §14.13; it is not an anomaly.
+
+<details><summary>Recording provenance (`tests/fixtures/recorded/detector/PROVENANCE.json`)</summary>
+
+```json
+{
+  "schema_version": 1,
+  "group": "detector",
+  "tool": "PanelCleaner detector oracle recorder",
+  "command_line": "cargo xtask record-fixtures --only detector",
+  "tool_versions": {
+    "numpy": "2.5.1",
+    "opencv": "5.0.0",
+    "python": "3.12.3",
+    "torch": "2.13.0+cpu"
+  },
+  "records": [
+    {
+      "name": "detector_mask",
+      "output": "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_detector_mask.png",
+      "output_sha256": "8052d7331648165cc01718e32cfd156ea24b50daf1b2544a6934878f94c7eac4",
+      "committed": true
+    },
+    {
+      "name": "detector_blocks",
+      "output": "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_detector_blocks.json",
+      "output_sha256": "ea5a2e36ddb5ce591b5c41ca9f5cd5ef229b0bf961a510259359848b54b52b36",
+      "committed": true
+    },
+    {
+      "name": "base",
+      "output": "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_base.png",
+      "output_sha256": "af3700d436a3a0a90f84c32c6d2b2d5ff79ecbdfca7bf3cbdb46709e1b508943",
+      "committed": true
+    },
+    {
+      "name": "raw_mask",
+      "output": "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_raw_mask.png",
+      "output_sha256": "d33e5359541962c563cf89c42d9ab99c52b690a7f425f40d7a9e4535911c78d7",
+      "committed": true
+    },
+    {
+      "name": "raw_page",
+      "output": "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01#raw.json",
+      "output_sha256": "d3e6965b2a50ed1f925f4d320369e98b3304a81884967e220e3385b4f706853b",
+      "committed": true
+    },
+    {
+      "name": "upstream_oracle",
+      "output": "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upstream_oracle.json",
+      "output_sha256": "c6cb214360132a1b52b09a5a084735930ee9f757c560067a810fa37c1cb6d686",
+      "committed": true
+    },
+    {
+      "name": "group_output_equality",
+      "output": "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upstream_group_output_equality.json",
+      "output_sha256": "e335276911a150d83394679ab4af32483e631a674f9685a280dd4bb2ff0bead3",
+      "committed": true
+    }
+  ],
+  "detector": {
+    "input_page": "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg",
+    "input_page_sha256": "3bef9922e09cea66ab12271da0070025768ae9bc5d286f41ced617468131267e",
+    "model": "comictextdetector.pt.onnx",
+    "model_digest": "1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f",
+    "ours": {
+      "backend": "ort",
+      "decoded_rgb_digest": "82c9b93e3bd95420df7c8bf9f5ffb5b322ec04c7d8576e8cf87ad254adf385e4",
+      "decoded_from": "input_page",
+      "execution_provider": "cpu",
+      "intra_threads": 0,
+      "inter_threads": 0,
+      "pad_value": 0,
+      "panel_ocr_commit": "cecb9f102177c50f3e8bb0af73f66bc08408db07"
+    },
+    "upstream": {
+      "backend": "cv2_dnn",
+      "decoded_rgb_digest": "82c9b93e3bd95420df7c8bf9f5ffb5b322ec04c7d8576e8cf87ad254adf385e4",
+      "decoded_from": "input_page",
+      "version": "2.11.11",
+      "commit": "0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3",
+      "command_line": "record_detector_oracle.py PanelCleaner comictextdetector.pt.onnx ja_Pepper-and-Carrot_by-David-Revoy_E01P01_decoded_rgb.png detector ja_Pepper-and-Carrot_by-David-Revoy_E01P01",
+      "dependency_versions": {
+        "numpy": "2.5.1",
+        "opencv": "5.0.0",
+        "pcleaner": "2.11.11",
+        "torch": "2.13.0+cpu"
+      }
+    }
+  },
+  "diagnostics": {
+    "confidence_mapping": {
+      "status": "ok"
+    },
+    "derivation_census": {
+      "dbnet_scattered": 0,
+      "yolo_split": 0,
+      "yolo_synthesized_corners": 2,
+      "yolo_unioned": 2
+    },
+    "instrumented_pristine_equality": {
+      "blocks": 4,
+      "checked": true,
+      "fields": [
+        "xyxy",
+        "lines",
+        "language",
+        "vertical",
+        "font_size"
+      ]
+    },
+    "line_count_census": {
+      "blocks": 4,
+      "with_zero_lines": 0
+    },
+    "upstream_pre_filter_mask_scores": [
+      {
+        "index": 0,
+        "len_lines": 2,
+        "mask_score": null,
+        "xyxy": [
+          567,
+          74,
+          663,
+          123
+        ]
+      },
+      {
+        "index": 1,
+        "len_lines": 0,
+        "mask_score": 0.46598988449777545,
+        "xyxy": [
+          674,
+          1397,
+          740,
+          1438
+        ]
+      },
+      {
+        "index": 2,
+        "len_lines": 3,
+        "mask_score": null,
+        "xyxy": [
+          607,
+          630,
+          723,
+          703
+        ]
+      },
+      {
+        "index": 3,
+        "len_lines": 0,
+        "mask_score": 0.2605883283987859,
+        "xyxy": [
+          607,
+          631,
+          724,
+          703
+        ]
+      },
+      {
+        "index": 4,
+        "len_lines": 0,
+        "mask_score": 0.03446455505279035,
+        "xyxy": [
+          438,
+          1407,
+          498,
+          1446
+        ]
+      }
+    ]
+  }
+}
+```
+
+</details>
+
+## 6. PIL `FIND_EDGES` cross-check — §10.3 step 2 / §16.9 item 21
 
 Not a fixture: `pc_mask::border` consumes no recorded file. `cargo xtask
 record-fixtures --only find-edges` runs real `PIL.ImageFilter.FIND_EDGES` over all
@@ -169,11 +365,15 @@ step 2's closed form, and that a fully-set 3×3 mask yields **8** edges. That is
 empirical confirmation of §16.9 item 21's hand proof; a disagreement is escalated,
 never patched. See the run log for the current result.
 
-## 5. Verdict
+## 7. Verdict
 
 | Gate | Spec | Status |
 |---|---|---|
 | NLM parity | §11.7(B)12 | MET |
 | INTER_AREA parity | §8.7(A)2 | MET |
-| Detector-dependent goldens | §8.7(A)6, §8.7(B)9, §9.7(B)11, §10.7(B)15, §11.7(B)13 | BLOCKED on D1+D4 |
+| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED — Scratch-only demo_bubbles masking calibration report (§10.7(B)15) is not implemented; this remaining scope within F2 will be added in a subsequent F2 sub-task/PR per the ratified §16.24 item 12 approach: record to scratch, commit nothing. |
+| Hand-written detect determinism + committed-raw equality | §8.7(A)6 | LIVE |
+| Recorded-page box-count/coordinate regression lock | §8.7(B)9 | LIVE |
+| Hand-written preprocess tier arithmetic | §9.7(B)11 | LIVE |
+| End-to-end denoise golden PNGs (_noise_mask.png, _clean_denoised.png) | §11.7(B)13 | IGNORED — pending task F1: needs the recorded page fixture and its committed golden PNGs |
 
