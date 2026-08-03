@@ -10,6 +10,10 @@ use crate::paths;
 use crate::record::{self, INTER_AREA_REFERENCE, INTER_AREA_TARGET, NLM_BUBBLES};
 use anyhow::{anyhow, Context, Result};
 use image::{DynamicImage, GrayImage, RgbImage};
+#[cfg(feature = "onnx")]
+use pc_config::{MaskerConfig, PreprocessorConfig, TextDetectorConfig};
+#[cfg(feature = "onnx")]
+use pc_core::ImageHandle;
 use pc_core::PageDataRaw;
 use pc_detect::oracle::{self, Derivation, Expectations, ExpectedPair, IdentityBranch, Mechanism};
 use pc_detect::RawBlock;
@@ -17,6 +21,8 @@ use pc_testkit::golden::{GoldenReport, GoldenThresholds};
 use pc_testkit::metrics;
 use std::fmt::Write as _;
 use std::path::Path;
+#[cfg(any(feature = "onnx", test))]
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Section {
@@ -34,13 +40,16 @@ fn render(sections: &[Section]) -> String {
     rendered
 }
 
-pub fn run(out: Option<&std::path::Path>) -> Result<()> {
-    let body = render_document()?;
-
+pub fn run(out: Option<&std::path::Path>, configured_detector: Option<&str>) -> Result<()> {
     let target = out
         .map(|path| path.to_path_buf())
         .unwrap_or_else(|| paths::docs_root().join("GOLDEN_CALIBRATION.md"));
+    let prior_measurements = previous_demo_bubbles_has_real_measurements_at(&target);
+    let body = render_document_with_detector(configured_detector, prior_measurements)?;
     std::fs::write(&target, &body).with_context(|| format!("writing {}", target.display()))?;
+    if prior_measurements && document_has_blocked_demo_bubbles(&body) {
+        eprintln!("WARNING: {DEMO_BUBBLES_DOWNGRADE_WARNING}");
+    }
     println!(
         "\nwrote {} ({} bytes)",
         paths::display_relative(&target),
@@ -49,10 +58,37 @@ pub fn run(out: Option<&std::path::Path>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn render_document() -> Result<String> {
+    render_document_with_demo_resolution(
+        None,
+        false,
+        Ok(crate::env::ModelResolution::OnnxFeatureDisabled),
+    )
+}
+
+fn render_document_with_detector(
+    configured_detector: Option<&str>,
+    prior_demo_bubbles_measurements: bool,
+) -> Result<String> {
+    let demo_resolution = crate::env::resolve_detector_model(configured_detector);
+    render_document_with_demo_resolution(
+        configured_detector,
+        prior_demo_bubbles_measurements,
+        demo_resolution,
+    )
+}
+
+fn render_document_with_demo_resolution(
+    _configured_detector: Option<&str>,
+    prior_demo_bubbles_measurements: bool,
+    demo_resolution: Result<crate::env::ModelResolution>,
+) -> Result<String> {
     let statuses: Vec<_> = TRACKED_TESTS.iter().map(tracked_status).collect();
     let (nlm, nlm_ok) = section_nlm()?;
     let (area, area_ok) = section_inter_area()?;
+    let (demo_bubbles_section, demo_bubbles_status) =
+        section_demo_bubbles_with_resolution(demo_resolution, prior_demo_bubbles_measurements);
     let detector_section = match detector_box_counts() {
         Ok(facts) => section_detector_box_counts(&facts),
         Err(error) => section_detector_box_counts_blocked(&error),
@@ -61,11 +97,10 @@ fn render_document() -> Result<String> {
         nlm,
         area,
         section_detector_status(&statuses),
-        // TODO(F2-2): demo_bubbles masking calibration report, §10.7(B)15
-        section_demo_bubbles_status(),
+        demo_bubbles_section,
         detector_section,
         section_find_edges(),
-        write_verdict(nlm_ok, area_ok, &statuses),
+        write_verdict(nlm_ok, area_ok, &statuses, &demo_bubbles_status),
     ];
     let mut document = String::new();
     write_header(&mut document);
@@ -79,6 +114,9 @@ fn write_header(body: &mut String) {
          \n\
          **Generated in full by `cargo xtask calibrate-goldens` — do not hand-edit.** Every\n\
          number here is measured at generation time; re-run the command to refresh it.\n\
+         Section 4's real demo_bubbles measurements require `--features onnx --detector\n\
+         onnx:<path>`; running without a verified model explicitly replaces prior real\n\
+         Section 4 measurements with a BLOCKED row and emits a warning below.\n\
          Recording provenance (tool versions, parameters, output hashes) is inlined below\n\
          from each fixture directory's `PROVENANCE.json`.\n\
          \n\
@@ -605,16 +643,458 @@ fn section_detector_status(statuses: &[TrackedStatus]) -> Section {
     }
 }
 
-const DEMO_BUBBLES_BLOCKED_REASON: &str =
-    "Scratch-only demo_bubbles masking calibration report (§10.7(B)15) is not implemented; this remaining scope within F2 will be added in a subsequent F2 sub-task/PR per the ratified §16.24 item 12 approach: record to scratch, commit nothing.";
+#[cfg(any(feature = "onnx", test))]
+#[derive(Debug, Clone, PartialEq)]
+enum DemoBubbleMeasurement {
+    Measured {
+        report: GoldenReport,
+        detected_boxes: usize,
+        masking_regions: usize,
+        dropped_regions: usize,
+        succeeded_regions: usize,
+        failed_regions: usize,
+        region_std_deviations: Vec<f64>,
+        output_changed: bool,
+    },
+    Failed {
+        name: String,
+        reason: String,
+    },
+}
 
-fn section_demo_bubbles_status() -> Section {
-    Section {
-        title: "Reserved for demo_bubbles masking calibration".into(),
-        body: format!(
-            "| Measurement | Spec | Status | Reason |\n|---|---|---|---|\n| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED | {DEMO_BUBBLES_BLOCKED_REASON} |\n"
-        ),
+#[cfg(any(feature = "onnx", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DemoBubbleDestinationPlan {
+    cleaned: PathBuf,
+    base_image_dest: Option<PathBuf>,
+    raw_mask_dest: Option<PathBuf>,
+    mask_dests: pc_mask::MaskDests,
+}
+
+#[cfg(any(feature = "onnx", test))]
+fn planned_demo_bubbles_destinations(scratch: &Path) -> Vec<DemoBubbleDestinationPlan> {
+    pc_testkit::paths::DEMO_BUBBLES
+        .iter()
+        .map(|bubble| {
+            let cleaned = scratch.join(format!("demo_bubbles/{}_bubble_clean.png", bubble.name));
+            DemoBubbleDestinationPlan {
+                cleaned: cleaned.clone(),
+                base_image_dest: None,
+                raw_mask_dest: None,
+                mask_dests: pc_mask::MaskDests {
+                    cleaned: Some(cleaned),
+                    ..pc_mask::MaskDests::default()
+                },
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn planned_demo_bubbles_scratch_paths(scratch: &Path) -> Vec<PathBuf> {
+    planned_demo_bubbles_destinations(scratch)
+        .iter()
+        .map(|plan| plan.cleaned.clone())
+        .collect()
+}
+
+#[cfg_attr(not(feature = "onnx"), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DemoBubbleStatus {
+    Measured,
+    Blocked { reason: String },
+}
+
+// SPEC AMBIGUITY: line ~1019/§10.7(B)15's recorded-detector wording conflicts with §16.24
+// item 12's scratch-only demo_bubbles constraint; the joint architects need to transcribe or
+// errata this tension. This implementation does not resolve that decision.
+fn section_demo_bubbles_with_resolution(
+    resolution: Result<crate::env::ModelResolution>,
+    prior_demo_bubbles_measurements: bool,
+) -> (Section, DemoBubbleStatus) {
+    match resolution {
+        Ok(crate::env::ModelResolution::Ready { model_path }) => {
+            #[cfg(feature = "onnx")]
+            match measure_demo_bubbles(&model_path) {
+                Ok(measurements) => (
+                    section_demo_bubbles_from_measurements(&measurements),
+                    DemoBubbleStatus::Measured,
+                ),
+                Err(error) => {
+                    let reason = format_error_with_paths(&error, &[model_path.as_path()]);
+                    (
+                        section_demo_bubbles_blocked(&reason, prior_demo_bubbles_measurements),
+                        DemoBubbleStatus::Blocked { reason },
+                    )
+                }
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                let _ = model_path;
+                let reason = "detector model resolution unexpectedly reached inference while the ONNX feature is disabled".to_string();
+                (
+                    section_demo_bubbles_blocked(&reason, prior_demo_bubbles_measurements),
+                    DemoBubbleStatus::Blocked { reason },
+                )
+            }
+        }
+        Ok(crate::env::ModelResolution::OnnxFeatureDisabled) => {
+            let reason: String = "ONNX feature is disabled for xtask. Rebuild with the ONNX feature and retry with `cargo xtask calibrate-goldens --features onnx --detector onnx:<path>`.".into();
+            (
+                section_demo_bubbles_blocked(&reason, prior_demo_bubbles_measurements),
+                DemoBubbleStatus::Blocked { reason },
+            )
+        }
+        Ok(crate::env::ModelResolution::ModelWeightsMissing {
+            model_path,
+            model_source,
+        }) => {
+            let reason = missing_model_reason(model_path.as_deref(), model_source);
+            (
+                section_demo_bubbles_blocked(&reason, prior_demo_bubbles_measurements),
+                DemoBubbleStatus::Blocked { reason },
+            )
+        }
+        Err(error) => {
+            let reason = format!(
+                "could not resolve the detector model: {}. Remedy: `cargo xtask calibrate-goldens --features onnx --detector onnx:<path>`.",
+                format_error_with_paths(&error, &[])
+            );
+            (
+                section_demo_bubbles_blocked(&reason, prior_demo_bubbles_measurements),
+                DemoBubbleStatus::Blocked { reason },
+            )
+        }
     }
+}
+
+const DEMO_BUBBLES_DOWNGRADE_WARNING: &str = "this run could not reproduce a previously measured Section 4. Writing this document will replace those maintainer measurements with a BLOCKED row. Re-run `cargo xtask calibrate-goldens --features onnx --detector onnx:<path>` to restore real measurements.";
+
+fn section_demo_bubbles_blocked(reason: &str, prior_demo_bubbles_measurements: bool) -> Section {
+    let mut body = demo_bubbles_prose();
+    if prior_demo_bubbles_measurements {
+        body.push_str(&format!(
+            "**WARNING:** {DEMO_BUBBLES_DOWNGRADE_WARNING}\n\n"
+        ));
+    }
+    let _ = writeln!(
+        body,
+        "| Measurement | Spec | Status | Reason |\n|---|---|---|---|\n| demo_bubbles masking calibration report | §10.7(B)15 | **BLOCKED** | {reason} |"
+    );
+    Section {
+        title: "demo_bubbles masking calibration — §10.7(B)15".into(),
+        body,
+    }
+}
+
+const DEMO_BUBBLES_SECTION_HEADING: &str = "## 4. demo_bubbles masking calibration — §10.7(B)15";
+
+fn missing_model_reason(model_path: Option<&Path>, model_source: Option<&str>) -> String {
+    let location = model_path
+        .map(display_report_path)
+        .unwrap_or_else(|| "no model path supplied".into());
+    let source = model_source.unwrap_or("no model source supplied");
+    format!(
+        "ONNX feature is enabled but the sha256-verified model weights are missing at `{location}` ({source}). Run `panel-ocr models download` or retry with `cargo xtask calibrate-goldens --detector onnx:<path>`."
+    )
+}
+
+fn demo_bubbles_prose() -> String {
+    "Input: each `<name>_bubble_raw.png` in `pc_testkit::paths::DEMO_BUBBLES`; reference: the matching vendored `<name>_bubble_clean.png`. Detector and mask artifacts are scratch-only under `target/xtask-scratch/` (§16.24 item 12); only the cleaned PNG is written for human inspection.\n\nThis is a non-gating calibration report (§15.2). A shortfall against reference values (IoU ≥ 0.99, ≥99.5% exact, max Δ ≤ 2, SSIM ≥ 0.995) may reflect the `MaskRefineMode::Simple` vs upstream's full refinement difference and/or §10.7(A)9 border-uniformity failures that leave a region untouched. The per-crop counts distinguish succeeded, failed, and dropped regions; fitting statistics describe only regions that reached fitting, and this report does not isolate causal contributions. This is evidence, not a build failure.\n\n"
+        .into()
+}
+
+fn previous_demo_bubbles_has_real_measurements_at(path: &Path) -> bool {
+    let Ok(document) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Some(start) = document.find(DEMO_BUBBLES_SECTION_HEADING) else {
+        return false;
+    };
+    let section = &document[start..];
+    let section = section
+        .split_once("\n## 5. ")
+        .map_or(section, |(section, _)| section);
+    pc_testkit::paths::DEMO_BUBBLES
+        .iter()
+        .all(|bubble| section.contains(&format!("| {} |", bubble.name)))
+}
+
+fn document_has_blocked_demo_bubbles(document: &str) -> bool {
+    document.contains("| demo_bubbles masking calibration report | §10.7(B)15 | **BLOCKED** |")
+}
+
+#[cfg(any(feature = "onnx", test))]
+fn dropped_masking_regions(total: usize, succeeded: usize, failed: usize) -> usize {
+    total.saturating_sub(succeeded + failed)
+}
+
+#[cfg(any(feature = "onnx", test))]
+fn section_demo_bubbles_from_measurements(measurements: &[DemoBubbleMeasurement]) -> Section {
+    let mut body = demo_bubbles_prose();
+    body.push_str(&GoldenReport::markdown_header());
+    body.push('\n');
+    for measurement in measurements {
+        if let DemoBubbleMeasurement::Measured { report, .. } = measurement {
+            body.push_str(&report.to_markdown_row());
+            body.push('\n');
+        }
+    }
+    body.push('\n');
+    for measurement in measurements {
+        match measurement {
+            DemoBubbleMeasurement::Measured {
+                report,
+                detected_boxes,
+                masking_regions,
+                dropped_regions,
+                succeeded_regions,
+                failed_regions,
+                region_std_deviations,
+                output_changed,
+            } => {
+                let std_deviations = if region_std_deviations.is_empty() {
+                    "—".into()
+                } else {
+                    format!(
+                        "[{}]",
+                        region_std_deviations
+                            .iter()
+                            .map(|value| format!("{value:.6}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                let _ = writeln!(
+                    body,
+                    "- `{}`: measured — detector boxes: {detected_boxes}; masking regions: {masking_regions} (reached fitting: {}; succeeded: {succeeded_regions}, failed: {failed_regions}, dropped: {dropped_regions}; border std devs: {std_deviations}); output changes: {}{}.",
+                    report.name,
+                    succeeded_regions + failed_regions,
+                    if *output_changed { "present" } else { "none" }
+                    , if *succeeded_regions > 0 {
+                        " Shortfall may reflect the `MaskRefineMode::Simple` vs upstream's full refinement difference; this report does not isolate that causal contribution."
+                    } else {
+                        ""
+                    }
+                );
+            }
+            DemoBubbleMeasurement::Failed { name, reason } => {
+                let _ = writeln!(body, "- `{name}`: **FAILED** — {reason}");
+            }
+        }
+    }
+    if measurements.iter().any(|measurement| {
+        matches!(
+            measurement,
+            DemoBubbleMeasurement::Measured {
+                output_changed: false,
+                ..
+            }
+        )
+    }) {
+        body.push_str(
+            "\n> For a crop with `output changes: none`, Within dilation=true is vacuous because the ours-change set is empty; it is not evidence that masking succeeded.\n",
+        );
+    }
+    Section {
+        title: "demo_bubbles masking calibration — §10.7(B)15".into(),
+        body,
+    }
+}
+
+#[cfg(feature = "onnx")]
+fn measure_demo_bubbles(model_path: &Path) -> Result<Vec<DemoBubbleMeasurement>> {
+    pc_models::verify_sha256(model_path, pc_models::COMIC_TEXT_DETECTOR.sha256)
+        .map_err(|error| anyhow!(format_error_with_paths(error, &[model_path])))
+        .with_context(|| "verifying the detector model before constructing the ONNX session")?;
+
+    let scratch = paths::scratch_dir().context("creating xtask scratch directory")?;
+    std::fs::create_dir_all(scratch.join("demo_bubbles"))
+        .with_context(|| format!("creating {}", display_report_path(&scratch)))?;
+
+    #[cfg(feature = "onnx")]
+    {
+        let detector = pc_detect::onnx::OnnxDetector::from_path_with_config(
+            model_path,
+            &TextDetectorConfig::default(),
+        )
+        .map_err(|error| anyhow!(error.to_string()))
+        .with_context(|| "constructing the ONNX detector")?;
+
+        Ok(pc_testkit::paths::DEMO_BUBBLES
+            .iter()
+            .zip(planned_demo_bubbles_destinations(&scratch))
+            .map(|(bubble, destinations)| {
+                measure_demo_bubble(bubble, model_path, &destinations, &detector)
+            })
+            .collect())
+    }
+
+    #[cfg(not(feature = "onnx"))]
+    {
+        let _ = (model_path, scratch);
+        unreachable!("model resolution blocks before measure_demo_bubbles without onnx")
+    }
+}
+
+#[cfg(feature = "onnx")]
+fn measure_demo_bubble(
+    bubble: &pc_testkit::paths::DemoBubble,
+    model_path: &Path,
+    destinations: &DemoBubbleDestinationPlan,
+    detector: &pc_detect::onnx::OnnxDetector,
+) -> DemoBubbleMeasurement {
+    let name = bubble.name.to_owned();
+    let raw_path = bubble.path(pc_testkit::paths::BubbleKind::Raw);
+    let clean_path = bubble.path(pc_testkit::paths::BubbleKind::Clean);
+    let scratch_path = destinations.cleaned.clone();
+    let result = (|| -> Result<DemoBubbleMeasurement> {
+        let detect_output = pc_detect::run(
+            pc_detect::DetectInput {
+                schema_version: pc_core::SCHEMA_VERSION,
+                source: ImageHandle::from_path(&raw_path),
+                original_path: raw_path.clone(),
+                target_height_lower: 1000,
+                target_height_upper: 4000,
+                base_image_dest: destinations.base_image_dest.clone(),
+                raw_mask_dest: destinations.raw_mask_dest.clone(),
+                min_mask_coverage: pc_detect::DEFAULT_MIN_MASK_COVERAGE,
+                config: TextDetectorConfig::default(),
+            },
+            detector,
+        )
+        .map_err(|error| anyhow!(error.to_string()))
+        .with_context(|| "running the detector")?;
+        let detected_boxes = detect_output.analytics.blocks_detected;
+
+        let preprocess_output = pc_preprocess::run(
+            pc_preprocess::PreprocessInput {
+                schema_version: pc_core::SCHEMA_VERSION,
+                page: detect_output.page,
+                config: PreprocessorConfig::default(),
+                performing_ocr: false,
+            },
+            None,
+        )
+        .map_err(|error| anyhow!(error.to_string()))
+        .with_context(|| "running preprocessing")?;
+        let masking_regions = preprocess_output.page.masking_regions.len();
+
+        let mask_output = pc_mask::run(pc_mask::MaskInput {
+            schema_version: pc_core::SCHEMA_VERSION,
+            page: preprocess_output.page,
+            original_image: ImageHandle::from_path(&raw_path),
+            config: MaskerConfig::default(),
+            extract_text: false,
+            debug_outputs: false,
+            dests: destinations.mask_dests.clone(),
+        })
+        .map_err(|error| anyhow!(error.to_string()))
+        .with_context(|| "running masking")?;
+
+        let raw_luma = image::open(&raw_path)
+            .map(|image| image.to_luma8())
+            .with_context(|| format!("decoding raw crop `{}`", display_report_path(&raw_path)))?;
+        let clean_luma = image::open(&clean_path)
+            .map(|image| image.to_luma8())
+            .with_context(|| {
+                format!(
+                    "decoding clean reference `{}`",
+                    display_report_path(&clean_path)
+                )
+            })?;
+        let cleaned_luma = mask_output
+            .cleaned
+            .load()
+            .map(|image| image.to_luma8())
+            .map_err(|error| anyhow!(error.to_string()))
+            .with_context(|| {
+                format!(
+                    "loading cleaned output `{}`",
+                    display_report_path(&scratch_path)
+                )
+            })?;
+        if raw_luma.dimensions() != clean_luma.dimensions()
+            || raw_luma.dimensions() != cleaned_luma.dimensions()
+        {
+            return Err(anyhow!(
+                "dimension mismatch: raw {:?}, clean reference {:?}, cleaned output {:?}",
+                raw_luma.dimensions(),
+                clean_luma.dimensions(),
+                cleaned_luma.dimensions()
+            ));
+        }
+        let output_changed = raw_luma
+            .pixels()
+            .zip(cleaned_luma.pixels())
+            .any(|(raw, cleaned)| raw != cleaned);
+        let report = GoldenReport::compare_gray_with_shape(
+            bubble.name,
+            &raw_luma,
+            &clean_luma,
+            &cleaned_luma,
+            2,
+        );
+        Ok(DemoBubbleMeasurement::Measured {
+            report,
+            detected_boxes,
+            masking_regions,
+            dropped_regions: dropped_masking_regions(
+                masking_regions,
+                mask_output
+                    .mask_data
+                    .regions
+                    .iter()
+                    .filter(|region| !region.failed)
+                    .count(),
+                mask_output
+                    .mask_data
+                    .regions
+                    .iter()
+                    .filter(|region| region.failed)
+                    .count(),
+            ),
+            succeeded_regions: mask_output
+                .mask_data
+                .regions
+                .iter()
+                .filter(|region| !region.failed)
+                .count(),
+            failed_regions: mask_output
+                .mask_data
+                .regions
+                .iter()
+                .filter(|region| region.failed)
+                .count(),
+            region_std_deviations: mask_output
+                .mask_data
+                .regions
+                .iter()
+                .map(|region| region.std_deviation)
+                .collect(),
+            output_changed,
+        })
+    })();
+
+    result.unwrap_or_else(|error| DemoBubbleMeasurement::Failed {
+        name,
+        reason: format_error_with_paths(
+            error,
+            &[model_path, &raw_path, &clean_path, &scratch_path],
+        ),
+    })
+}
+
+fn format_error_with_paths(error: impl std::fmt::Display, paths_to_replace: &[&Path]) -> String {
+    let mut text = format!("{error:#}");
+    for path in paths_to_replace {
+        text = text.replace(&path.display().to_string(), &display_report_path(path));
+    }
+    text
+}
+
+fn display_report_path(path: &Path) -> String {
+    paths::display_relative(path)
 }
 
 fn section_find_edges() -> Section {
@@ -624,7 +1104,12 @@ fn section_find_edges() -> Section {
     }
 }
 
-fn write_verdict(nlm_ok: bool, area_ok: bool, statuses: &[TrackedStatus]) -> Section {
+fn write_verdict(
+    nlm_ok: bool,
+    area_ok: bool,
+    statuses: &[TrackedStatus],
+    demo_bubbles_status: &DemoBubbleStatus,
+) -> Section {
     let mut body = String::from("| Gate | Spec | Status |\n|---|---|---|\n");
     let _ = writeln!(
         body,
@@ -636,10 +1121,20 @@ fn write_verdict(nlm_ok: bool, area_ok: bool, statuses: &[TrackedStatus]) -> Sec
         "| INTER_AREA parity | §8.7(A)2 | {} |",
         if area_ok { "MET" } else { "NOT MET / BLOCKED" }
     );
-    let _ = writeln!(
-        body,
-        "| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED — {DEMO_BUBBLES_BLOCKED_REASON} |"
-    );
+    match demo_bubbles_status {
+        DemoBubbleStatus::Measured => {
+            let _ = writeln!(
+                body,
+                "| demo_bubbles masking calibration report | §10.7(B)15 | REPORTED (non-gating) |"
+            );
+        }
+        DemoBubbleStatus::Blocked { reason } => {
+            let _ = writeln!(
+                body,
+                "| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED — {reason} |"
+            );
+        }
+    }
     for (test, status) in TRACKED_TESTS.iter().zip(statuses) {
         let _ = writeln!(
             body,
@@ -892,6 +1387,289 @@ mod tests {
     use pc_detect::oracle::{self, Mechanism, UnmatchedEntry};
 
     #[test]
+    fn demo_bubbles_calibration_plans_the_exact_seven_crops() {
+        let scratch = paths::scratch_dir().expect("scratch directory");
+        let plans = planned_demo_bubbles_destinations(&scratch);
+        let names: Vec<_> = plans
+            .iter()
+            .map(|plan| {
+                plan.cleaned
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| name.strip_suffix("_bubble_clean.png"))
+                    .expect("planned demo_bubble name")
+            })
+            .collect();
+        assert_eq!(
+            planned_demo_bubbles_scratch_paths(&scratch).len(),
+            names.len()
+        );
+        assert_eq!(
+            names,
+            vec![
+                "black",
+                "darkrays",
+                "handwritten",
+                "nightmare",
+                "ray",
+                "spikey",
+                "square",
+            ]
+        );
+    }
+
+    #[test]
+    fn demo_bubbles_calibration_outputs_are_scratch_only() {
+        let scratch = paths::scratch_dir().expect("scratch directory");
+        let fixtures = pc_testkit::paths::fixtures_root();
+        for plan in planned_demo_bubbles_destinations(&scratch) {
+            let mut outputs = vec![Some(plan.cleaned.clone())];
+            outputs.push(plan.base_image_dest.clone());
+            outputs.push(plan.raw_mask_dest.clone());
+            outputs.extend([
+                plan.mask_dests.combined_mask.clone(),
+                plan.mask_dests.cleaned.clone(),
+                plan.mask_dests.text_layer.clone(),
+                plan.mask_dests.box_mask.clone(),
+                plan.mask_dests.cut_mask.clone(),
+                plan.mask_dests.mask_overlay.clone(),
+            ]);
+            for output in outputs.into_iter().flatten() {
+                assert!(
+                    output.starts_with(&scratch),
+                    "planned output escaped scratch: {}",
+                    output.display()
+                );
+                assert!(
+                    !output.starts_with(&fixtures),
+                    "planned output entered fixtures: {}",
+                    output.display()
+                );
+            }
+            // Only cleaned is currently written. Any future populated destination must still
+            // be a scratch path, and these assertions make the intentional None fields visible.
+            assert!(plan.base_image_dest.is_none());
+            assert!(plan.raw_mask_dest.is_none());
+            assert!(plan.mask_dests.combined_mask.is_none());
+            assert!(plan.mask_dests.text_layer.is_none());
+            assert!(plan.mask_dests.box_mask.is_none());
+            assert!(plan.mask_dests.cut_mask.is_none());
+            assert!(plan.mask_dests.mask_overlay.is_none());
+        }
+    }
+
+    #[test]
+    fn demo_bubbles_section_is_blocked_actionably_without_onnx() {
+        let section = section_demo_bubbles_with_resolution(
+            Ok(crate::env::ModelResolution::OnnxFeatureDisabled),
+            false,
+        )
+        .0;
+        assert!(section.body.contains("BLOCKED"));
+        assert!(section.body.contains("ONNX feature is disabled"));
+        assert!(section
+            .body
+            .contains("cargo xtask calibrate-goldens --features onnx --detector onnx:<path>"));
+    }
+
+    #[test]
+    fn the_committed_demo_bubbles_measurements_have_not_been_silently_downgraded() {
+        let section = section_demo_bubbles_with_resolution(
+            Ok(crate::env::ModelResolution::OnnxFeatureDisabled),
+            true,
+        )
+        .0;
+        assert!(section.body.contains("WARNING"));
+        assert!(section
+            .body
+            .contains("replace those maintainer measurements with a BLOCKED row"));
+    }
+
+    #[test]
+    fn downgrade_regression_test_name_describes_measurements_not_warning_emission() {
+        let source = include_str!("calibrate.rs");
+        assert!(source.contains(
+            "fn the_committed_demo_bubbles_measurements_have_not_been_silently_downgraded()"
+        ));
+        let old_name = [
+            "fn blocked_section_warns_before_downgrading_existing_",
+            "measurements()",
+        ]
+        .concat();
+        assert!(!source.contains(&old_name));
+    }
+
+    #[test]
+    fn blocked_section_emits_the_downgrade_warning_when_requested() {
+        let section = section_demo_bubbles_blocked("synthetic reason", true);
+        assert!(section.body.contains("**WARNING:**"));
+        assert!(section
+            .body
+            .contains("replace those maintainer measurements with a BLOCKED row"));
+    }
+
+    #[test]
+    fn prior_measurement_detection_uses_the_requested_output_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let measured = temp.path().join("measured.md");
+        let fresh = temp.path().join("fresh.md");
+        std::fs::write(&measured, include_str!("../../docs/GOLDEN_CALIBRATION.md"))
+            .expect("measured document");
+        assert!(previous_demo_bubbles_has_real_measurements_at(&measured));
+        assert!(!previous_demo_bubbles_has_real_measurements_at(&fresh));
+    }
+
+    #[test]
+    fn missing_external_model_message_keeps_the_requested_path() {
+        let model = PathBuf::from("/tmp/reviewer-models/missing.onnx");
+        let reason =
+            missing_model_reason(Some(&model), Some("from the --detector onnx:<path> flag"));
+        assert!(reason.contains("/tmp/reviewer-models/missing.onnx"));
+    }
+
+    #[test]
+    fn demo_bubbles_section_uses_all_golden_report_metrics() {
+        let source = GrayImage::from_raw(2, 2, vec![0, 10, 20, 30]).expect("source");
+        let expected = GrayImage::from_raw(2, 2, vec![0, 20, 20, 40]).expect("expected");
+        let actual = GrayImage::from_raw(2, 2, vec![0, 20, 30, 40]).expect("actual");
+        let report = GoldenReport::compare_gray_with_shape("black", &source, &expected, &actual, 2);
+        let section = section_demo_bubbles_from_measurements(&[DemoBubbleMeasurement::Measured {
+            report: report.clone(),
+            detected_boxes: 1,
+            masking_regions: 1,
+            dropped_regions: 0,
+            succeeded_regions: 1,
+            failed_regions: 0,
+            region_std_deviations: vec![0.0],
+            output_changed: true,
+        }]);
+        assert!(section.body.contains(&GoldenReport::markdown_header()));
+        assert!(section.body.contains(&report.to_markdown_row()));
+    }
+
+    #[test]
+    fn one_demo_bubble_failure_does_not_suppress_other_measurements() {
+        let source = GrayImage::new(2, 2);
+        let report = GoldenReport::compare_gray_with_shape("ray", &source, &source, &source, 2);
+        let section = section_demo_bubbles_from_measurements(&[
+            DemoBubbleMeasurement::Failed {
+                name: "black".into(),
+                reason: "synthetic detector failure".into(),
+            },
+            DemoBubbleMeasurement::Measured {
+                report: report.clone(),
+                detected_boxes: 1,
+                masking_regions: 1,
+                dropped_regions: 0,
+                succeeded_regions: 1,
+                failed_regions: 0,
+                region_std_deviations: vec![0.0],
+                output_changed: true,
+            },
+        ]);
+        assert!(section
+            .body
+            .contains("`black`: **FAILED** — synthetic detector failure"));
+        assert!(section.body.contains(&report.to_markdown_row()));
+    }
+
+    #[test]
+    fn demo_bubbles_section_explains_expected_shortfall_without_gating() {
+        let section = section_demo_bubbles_from_measurements(&[]);
+        assert!(section.body.contains("shortfall against reference values"));
+        assert!(section.body.contains("MaskRefineMode::Simple"));
+        assert!(section.body.contains("border-uniformity failures"));
+        assert!(section.body.contains("may reflect"));
+        assert!(!section.body.contains("UNMET"));
+    }
+
+    #[test]
+    fn demo_bubbles_section_reports_failed_regions_and_vacuous_subset_checks() {
+        let source = GrayImage::new(2, 2);
+        let report =
+            GoldenReport::compare_gray_with_shape("handwritten", &source, &source, &source, 2);
+        let section = section_demo_bubbles_from_measurements(&[DemoBubbleMeasurement::Measured {
+            report,
+            detected_boxes: 2,
+            masking_regions: 2,
+            dropped_regions: 1,
+            succeeded_regions: 0,
+            failed_regions: 2,
+            region_std_deviations: vec![16.0, 21.5],
+            output_changed: false,
+        }]);
+        assert!(section.body.contains(
+            "masking regions: 2 (reached fitting: 2; succeeded: 0, failed: 2, dropped: 1"
+        ));
+        assert!(section
+            .body
+            .contains("border std devs: [16.000000, 21.500000]"));
+        assert!(section.body.contains("output changes: none"));
+        assert!(section.body.contains("Within dilation=true is vacuous"));
+    }
+
+    #[test]
+    fn dropped_masking_regions_are_reported_explicitly() {
+        assert_eq!(dropped_masking_regions(2, 1, 0), 1);
+        let source = GrayImage::new(2, 2);
+        let report = GoldenReport::compare_gray_with_shape("black", &source, &source, &source, 2);
+        let section = section_demo_bubbles_from_measurements(&[DemoBubbleMeasurement::Measured {
+            report,
+            detected_boxes: 2,
+            masking_regions: 2,
+            dropped_regions: 1,
+            succeeded_regions: 1,
+            failed_regions: 0,
+            region_std_deviations: vec![0.0],
+            output_changed: true,
+        }]);
+        assert!(section
+            .body
+            .contains("reached fitting: 1; succeeded: 1, failed: 0, dropped: 1"));
+    }
+
+    #[test]
+    fn zero_detected_boxes_are_a_plain_measurement() {
+        let source = GrayImage::new(2, 2);
+        let report =
+            GoldenReport::compare_gray_with_shape("handwritten", &source, &source, &source, 2);
+        let section = section_demo_bubbles_from_measurements(&[DemoBubbleMeasurement::Measured {
+            report,
+            detected_boxes: 0,
+            masking_regions: 0,
+            dropped_regions: 0,
+            succeeded_regions: 0,
+            failed_regions: 0,
+            region_std_deviations: Vec::new(),
+            output_changed: false,
+        }]);
+        assert!(section.body.contains("`handwritten`: measured"));
+        assert!(section.body.contains("detector boxes: 0"));
+        assert!(!section.body.contains("`handwritten`: **FAILED**"));
+    }
+
+    #[test]
+    fn chained_error_formatting_keeps_the_innermost_cause() {
+        let error = anyhow!("permission denied while opening crop")
+            .context("decoding the raw crop")
+            .context("running the detector");
+        let rendered = format_error_with_paths(&error, &[]);
+        assert!(rendered.contains("running the detector"));
+        assert!(rendered.contains("decoding the raw crop"));
+        assert!(rendered.contains("permission denied while opening crop"));
+    }
+
+    #[test]
+    fn blocked_demo_bubbles_status_reaches_the_verdict() {
+        let document = render_document_with_detector(Some("not-a-detector-spec"), false)
+            .expect("malformed detector remains a document");
+        assert!(
+            document.contains("| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED —")
+        );
+        assert!(document.contains("invalid --detector value `not-a-detector-spec`"));
+    }
+
+    #[test]
     fn tracked_status_reads_the_real_tree() {
         let statuses: Vec<_> = TRACKED_TESTS.iter().map(tracked_status).collect();
         assert!(matches!(statuses[0], TrackedStatus::Live));
@@ -967,7 +1745,7 @@ mod tests {
                 "## 1. NLM vs. `cv2.fastNlMeansDenoising` — §11.7(B)12 (frozen gate)",
                 "## 2. `resize_area` vs. `cv2.INTER_AREA` — §8.7(A)2 (frozen gate)",
                 "## 3. Detector-dependent test status",
-                "## 4. Reserved for demo_bubbles masking calibration",
+                "## 4. demo_bubbles masking calibration — §10.7(B)15",
                 "## 5. Detector box-count comparison — §15.1",
                 "## 6. PIL `FIND_EDGES` cross-check — §10.3 step 2 / §16.9 item 21",
                 "## 7. Verdict",
@@ -992,22 +1770,64 @@ mod tests {
     }
 
     #[test]
-    fn the_committed_document_matches_render_document() {
+    fn the_committed_document_matches_render_document_outside_section_four() {
         let document = render_document().expect("render document");
-        assert_eq!(document, include_str!("../../docs/GOLDEN_CALIBRATION.md"));
+        let committed = include_str!("../../docs/GOLDEN_CALIBRATION.md");
+
+        // Section 4 is deliberately excluded from this byte-freshness comparison. §16.24
+        // item 12 forbids committing the detector/mask artifacts that would make its real
+        // ONNX measurements reproducible in the default/CI test tier. Its freshness is
+        // therefore maintainer-verified by rerunning `cargo xtask calibrate-goldens
+        // --features onnx --detector onnx:<path>`; section 5, by contrast, reads committed
+        // fixtures and remains reproducible here. The section-ordering test above still locks
+        // its heading, while this assertion keeps sections 1/2/3/5/6/7 byte-exact except
+        // for Section 7's one status cell, which is necessarily a projection of excluded
+        // Section 4 state (default rendering is BLOCKED without ONNX; the committed document
+        // is maintainer-rendered with real measurements).
+        assert!(document.contains(DEMO_BUBBLES_SECTION_HEADING));
+        assert!(committed.contains(DEMO_BUBBLES_SECTION_HEADING));
+        assert_eq!(
+            normalize_dynamic_demo_bubbles_section(&document),
+            normalize_dynamic_demo_bubbles_section(committed)
+        );
+    }
+
+    fn normalize_dynamic_demo_bubbles_section(document: &str) -> String {
+        let start = document
+            .find(DEMO_BUBBLES_SECTION_HEADING)
+            .expect("section 4 heading");
+        let end = document[start..]
+            .find("\n## 5. ")
+            .map(|offset| start + offset)
+            .expect("section 5 boundary");
+        let mut normalized = String::with_capacity(document.len());
+        normalized.push_str(&document[..start]);
+        normalized.push_str(DEMO_BUBBLES_SECTION_HEADING);
+        normalized.push_str("\n\n<section 4 dynamic body excluded>\n\n");
+        normalized.push_str(&document[end + 1..]);
+        normalized
+            .lines()
+            .map(|line| {
+                if line.starts_with(
+                    "| demo_bubbles masking calibration report | §10.7(B)15 |",
+                ) {
+                    "| demo_bubbles masking calibration report | §10.7(B)15 | <section 4 status projection excluded> |"
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
     }
 
     #[test]
-    fn the_demo_bubbles_report_is_explicitly_blocked_in_section_four_and_the_verdict() {
+    fn the_demo_bubbles_report_is_explicitly_blocked_when_onnx_is_unavailable() {
         let document = render_document().expect("render document");
-        assert!(document.contains(&format!(
-            "| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED | {DEMO_BUBBLES_BLOCKED_REASON} |"
-        )));
-        assert!(document.contains(&format!(
-            "| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED — {DEMO_BUBBLES_BLOCKED_REASON} |"
-        )));
-        assert!(document.contains("remaining scope within F2"));
-        assert!(!document.contains("separate F2 follow-up task"));
+        assert!(document.contains("ONNX feature is disabled"));
+        assert!(document
+            .contains("cargo xtask calibrate-goldens --features onnx --detector onnx:<path>"));
+        assert!(!document.contains("Reserved for demo_bubbles masking calibration"));
     }
 
     #[test]

@@ -111,9 +111,62 @@ Until then the dependent tests stay `#[ignore]`d — that is the correct state, 
 /// the configured model path. An explicit `--detector` spec takes precedence over the
 /// `PANEL_OCR_ONNX_MODEL` fallback, just as other explicit xtask options do.
 pub fn detector_backend_status(configured_detector: Option<&str>) -> Result<DetectorStatus> {
+    detector_backend_status_under(
+        configured_detector,
+        &crate::paths::workspace_root(),
+        cfg!(feature = "onnx"),
+    )
+}
+
+fn detector_backend_status_under(
+    configured_detector: Option<&str>,
+    workspace_root: &Path,
+    onnx_enabled: bool,
+) -> Result<DetectorStatus> {
+    let resolution =
+        resolve_detector_model_under(configured_detector, workspace_root, onnx_enabled)?;
+    let model_path = match resolution {
+        ModelResolution::OnnxFeatureDisabled => return Ok(DetectorStatus::OnnxFeatureDisabled),
+        ModelResolution::ModelWeightsMissing {
+            model_path,
+            model_source,
+        } => {
+            return Ok(DetectorStatus::ModelWeightsMissing {
+                model_path,
+                model_source,
+            })
+        }
+        ModelResolution::Ready { model_path } => model_path,
+    };
+    // §16.29 item 2: the atomic recording commit moved P01 out of `oracle_pages/` into the
+    // recorded group it belongs to; a fresh `--force` re-record must find it there.
+    let page = workspace_root
+        .join("tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg");
+    if !page.is_file() {
+        return Ok(DetectorStatus::MangaPagesMissing);
+    }
+    Ok(DetectorStatus::Ready { model_path })
+}
+
+/// Resolve only the model capability needed by reports that do not consume the signed manga
+/// page. In particular, this function must not check `tests/fixtures/recorded/detector` for the
+/// maintainer page; `calibrate-goldens`'s demo_bubbles report never touches that artifact.
+pub(crate) fn resolve_detector_model(configured_detector: Option<&str>) -> Result<ModelResolution> {
+    resolve_detector_model_under(
+        configured_detector,
+        &crate::paths::workspace_root(),
+        cfg!(feature = "onnx"),
+    )
+}
+
+fn resolve_detector_model_under(
+    configured_detector: Option<&str>,
+    workspace_root: &Path,
+    onnx_enabled: bool,
+) -> Result<ModelResolution> {
     let explicit_path = configured_detector.map(parse_detector_spec).transpose()?;
-    if !cfg!(feature = "onnx") {
-        return Ok(DetectorStatus::OnnxFeatureDisabled);
+    if !onnx_enabled {
+        return Ok(ModelResolution::OnnxFeatureDisabled);
     }
     let (model_path, model_source) = match explicit_path {
         Some(path) => (Some(path), Some("from the --detector onnx:<path> flag")),
@@ -125,20 +178,16 @@ pub fn detector_backend_status(configured_detector: Option<&str>) -> Result<Dete
             None => (None, None),
         },
     };
-    if !model_path.as_deref().is_some_and(Path::is_file) {
-        return Ok(DetectorStatus::ModelWeightsMissing {
+    let model_exists = model_path.as_deref().is_some_and(|path| {
+        path.is_file() || (path.is_relative() && workspace_root.join(path).is_file())
+    });
+    if !model_exists {
+        return Ok(ModelResolution::ModelWeightsMissing {
             model_path,
             model_source,
         });
     }
-    // §16.29 item 2: the atomic recording commit moved P01 out of `oracle_pages/` into the
-    // recorded group it belongs to; a fresh `--force` re-record must find it there.
-    let page = crate::paths::recorded_root()
-        .join("detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg");
-    if !page.is_file() {
-        return Ok(DetectorStatus::MangaPagesMissing);
-    }
-    Ok(DetectorStatus::Ready {
+    Ok(ModelResolution::Ready {
         model_path: model_path.expect("checked above"),
     })
 }
@@ -161,6 +210,18 @@ pub enum DetectorStatus {
         model_source: Option<&'static str>,
     },
     MangaPagesMissing,
+    Ready {
+        model_path: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ModelResolution {
+    OnnxFeatureDisabled,
+    ModelWeightsMissing {
+        model_path: Option<PathBuf>,
+        model_source: Option<&'static str>,
+    },
     Ready {
         model_path: PathBuf,
     },
@@ -249,3 +310,106 @@ and these tests must stay `#[ignore]`d:
   pc-preprocess p5_run.rs::b11_pending_recorded_page_tier_arithmetic         (§9.7(B)11)
   pc-denoise    n4_run.rs::b13_pending_recorded_page_end_to_end_golden     (§11.7(B)13)"
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    // Explicit Fable ruling, accepted and ratified: two residual evasions remain out of scope
+    // for source-text guarding because closing them requires deliberate adversarial construction,
+    // rather than being a natural regression shape. First, the filename could be split across
+    // multiple `.join()`/`format!` fragments so no single occurrence of the literal filename or
+    // the four banned substrings appears together. Second, the filename could be imported from
+    // another module as a named constant (for example, the existing
+    // `crate::record::DETECTOR_PAGE_RECORDED`) and laundered through a helper outside this
+    // scanned window that also bypasses `workspace_root` via an ambient `paths::` call. A
+    // reintroduction that reuses that constant but still routes through `workspace_root` correctly
+    // is caught by the behavioral half: synthetic root lacking the page -> non-Ready result.
+    fn model_resolution_is_independent_of_the_maintainer_manga_page() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let model = temp.path().join("comictextdetector.pt.onnx");
+        std::fs::write(&model, b"synthetic model").expect("model");
+
+        // Exercise the model-present path with an explicitly absent synthetic workspace root;
+        // this must fail if the resolver starts checking the maintainer manga page again.
+        let resolution = resolve_detector_model_under(
+            Some(&format!("onnx:{}", model.display())),
+            temp.path(),
+            true,
+        )
+        .expect("model resolution");
+        assert_eq!(
+            resolution,
+            ModelResolution::Ready {
+                model_path: model.clone()
+            }
+        );
+
+        // Keep the resolver's contract explicit: a model-only resolution path must not grow a
+        // dependency on the maintainer manga page. This source guard catches a regression that
+        // consults the real checkout even when the synthetic root below has no such page.
+        let source = include_str!("env.rs");
+        let resolver_start = source
+            .find("fn resolve_detector_model_under(")
+            .expect("resolver source");
+        let resolver_end = source[resolver_start..]
+            .find("\npub(crate) fn parse_detector_spec")
+            .map(|offset| resolver_start + offset)
+            .expect("resolver end");
+        let resolver_source = &source[resolver_start..resolver_end];
+        let status_start = source
+            .find("fn detector_backend_status_under(")
+            .expect("backend status source");
+        let status_end = source[status_start..]
+            .find("\n/// Resolve only the model capability")
+            .map(|offset| status_start + offset)
+            .expect("backend status end");
+        let maintainer_page_filename =
+            format!("{}{}", "ja_Pepper-and-Carrot_by-David-Revoy_E01P01", ".jpg");
+        let filename_offsets: Vec<_> = source
+            .match_indices(&maintainer_page_filename)
+            .map(|(offset, _)| offset)
+            .collect();
+        assert!(
+            filename_offsets.len() == 1
+                && filename_offsets.first().is_some_and(|&offset| {
+                    offset >= status_start
+                        && offset < status_end
+                        && !(offset >= resolver_start && offset < resolver_end)
+                }),
+            "maintainer page filename must occur exactly once within detector_backend_status_under"
+        );
+        assert!(!source[resolver_start..resolver_end].contains("tests/fixtures/recorded/detector/"));
+        assert!(!resolver_source.contains("recorded_root()"));
+        assert!(!resolver_source.contains("fixtures_root()"));
+        assert!(!resolver_source.contains("tests/fixtures"));
+        assert!(!resolver_source.contains("paths::"));
+
+        let missing = temp.path().join("missing.onnx");
+        assert!(matches!(
+            resolve_detector_model_under(
+                Some(&format!("onnx:{}", missing.display())),
+                temp.path(),
+                true,
+            )
+            .expect("missing model resolution"),
+            ModelResolution::ModelWeightsMissing { .. }
+        ));
+    }
+
+    #[test]
+    fn detector_backend_status_uses_the_supplied_workspace_root_for_the_page_check() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let model = temp.path().join("comictextdetector.pt.onnx");
+        std::fs::write(&model, b"synthetic model").expect("model");
+
+        let status = detector_backend_status_under(
+            Some(&format!("onnx:{}", model.display())),
+            temp.path(),
+            true,
+        )
+        .expect("detector status");
+        assert_eq!(status, DetectorStatus::MangaPagesMissing);
+    }
+}

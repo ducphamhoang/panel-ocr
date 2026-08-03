@@ -177,3 +177,34 @@ three erratum entries above gets written first, since all four are in the same n
 
 None of these block anything currently green; they're follow-up erratum entries for whoever is
 next in `docs/PIPELINE_SPEC_V1.md`'s §16.x sequence.
+
+### F2 demo_bubbles discrepancies requiring joint-architect decision
+
+These are escalated, not resolved here:
+
+1. §10.6 (~line 1019) says not to assume any demo fixture exercises the
+   “leave it untouched, failed: true” path. The measured §10.7(B)15 report shows 6 of 8
+   masking regions across the seven `demo_bubbles` crops taking that path. Four crops
+   (`darkrays`, `nightmare`, `ray`, and `square`) change zero pixels because their masking
+   region failed that border check; `handwritten` separately changes zero pixels because zero
+   detector boxes were found. This contradicts ratified guidance and needs a proper
+   erratum/supersession entry, or a joint determination that the masker is failing regions
+   that should succeed.
+2. §16.13 item 8 (~line 2584) still says the §10.7(B)15 report is blocked and recorded as
+   BLOCKED. The report is now live and maintainer-measured, but the stale statement has no
+   supersession marker pointing to the correction.
+
+### Known minor follow-ups (not blocking)
+
+1. **MEDIUM-2:** The report does not explain the attrition from 9 detector boxes to 8 masking
+   regions; specifically, `darkrays` has 2 boxes but 1 masking region.
+2. **MEDIUM-3:** The in-code SPEC AMBIGUITY comment about §10.6's “no model runs in CI” wording
+   versus this implementation's live ONNX requirement is not yet reflected in this HANDOVER
+   escalation section.
+3. **LOW-1:** The downgrade warning says “will replace” after replacement has already occurred,
+   and does not mention that no backup is created.
+4. **LOW-2/LOW-3:** The generated report has a doubled period in the black/spikey shortfall
+   notes, and emits the shortfall-attribution sentence whenever a region succeeds without
+   checking whether an actual shortfall exists.
+5. **LOW-4/LOW-5:** There are minor test-quality issues in the rename guard and the formatting
+   test's synthetic state; these are logged without individual write-ups.

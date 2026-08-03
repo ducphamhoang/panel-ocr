@@ -2,6 +2,9 @@
 
 **Generated in full by `cargo xtask calibrate-goldens` — do not hand-edit.** Every
 number here is measured at generation time; re-run the command to refresh it.
+Section 4's real demo_bubbles measurements require `--features onnx --detector
+onnx:<path>`; running without a verified model explicitly replaces prior real
+Section 4 measurements with a BLOCKED row and emits a warning below.
 Recording provenance (tool versions, parameters, output hashes) is inlined below
 from each fixture directory's `PROVENANCE.json`.
 
@@ -159,11 +162,31 @@ Among the 4 tracked tests, §11.7(B)13's denoise golden requires special handlin
 
 Those four tests un-ignore only against the signed maintainer page, never against `demo_bubbles`. (§16.24 item 12)
 
-## 4. Reserved for demo_bubbles masking calibration
+## 4. demo_bubbles masking calibration — §10.7(B)15
 
-| Measurement | Spec | Status | Reason |
-|---|---|---|---|
-| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED | Scratch-only demo_bubbles masking calibration report (§10.7(B)15) is not implemented; this remaining scope within F2 will be added in a subsequent F2 sub-task/PR per the ratified §16.24 item 12 approach: record to scratch, commit nothing. |
+Input: each `<name>_bubble_raw.png` in `pc_testkit::paths::DEMO_BUBBLES`; reference: the matching vendored `<name>_bubble_clean.png`. Detector and mask artifacts are scratch-only under `target/xtask-scratch/` (§16.24 item 12); only the cleaned PNG is written for human inspection.
+
+This is a non-gating calibration report (§15.2). A shortfall against reference values (IoU ≥ 0.99, ≥99.5% exact, max Δ ≤ 2, SSIM ≥ 0.995) may reflect the `MaskRefineMode::Simple` vs upstream's full refinement difference and/or §10.7(A)9 border-uniformity failures that leave a region untouched. The per-crop counts distinguish succeeded, failed, and dropped regions; fitting statistics describe only regions that reached fitting, and this report does not isolate causal contributions. This is evidence, not a build failure.
+
+| Name | Dimensions | Exact fraction | Max delta | Mean abs diff | SSIM | Shape IoU | Within dilation |
+|---|---:|---:|---:|---:|---:|---:|:---:|
+| black | 202×319 | 0.842624 | 255 | 7.841926 | 0.786630 | 0.113704 | true |
+| darkrays | 208×320 | 0.812109 | 255 | 13.989694 | 0.729663 | 0.000000 | true |
+| handwritten | 72×132 | 0.661616 | 255 | 20.541982 | 0.621282 | 0.000000 | true |
+| nightmare | 219×343 | 0.775377 | 254 | 7.396528 | 0.826528 | 0.000000 | true |
+| ray | 256×329 | 0.511208 | 255 | 50.733995 | 0.373859 | 0.000000 | true |
+| spikey | 354×354 | 0.873488 | 255 | 10.659174 | 0.832276 | 0.273086 | true |
+| square | 144×270 | 0.785082 | 255 | 14.689841 | 0.680407 | 0.000000 | true |
+
+- `black`: measured — detector boxes: 2; masking regions: 2 (reached fitting: 2; succeeded: 1, failed: 1, dropped: 0; border std devs: [25.107338, 2.345173]); output changes: present Shortfall may reflect the `MaskRefineMode::Simple` vs upstream's full refinement difference; this report does not isolate that causal contribution..
+- `darkrays`: measured — detector boxes: 2; masking regions: 1 (reached fitting: 1; succeeded: 0, failed: 1, dropped: 0; border std devs: [59.063776]); output changes: none.
+- `handwritten`: measured — detector boxes: 0; masking regions: 0 (reached fitting: 0; succeeded: 0, failed: 0, dropped: 0; border std devs: —); output changes: none.
+- `nightmare`: measured — detector boxes: 1; masking regions: 1 (reached fitting: 1; succeeded: 0, failed: 1, dropped: 0; border std devs: [26.972765]); output changes: none.
+- `ray`: measured — detector boxes: 1; masking regions: 1 (reached fitting: 1; succeeded: 0, failed: 1, dropped: 0; border std devs: [30.387882]); output changes: none.
+- `spikey`: measured — detector boxes: 2; masking regions: 2 (reached fitting: 2; succeeded: 1, failed: 1, dropped: 0; border std devs: [42.926213, 0.000000]); output changes: present Shortfall may reflect the `MaskRefineMode::Simple` vs upstream's full refinement difference; this report does not isolate that causal contribution..
+- `square`: measured — detector boxes: 1; masking regions: 1 (reached fitting: 1; succeeded: 0, failed: 1, dropped: 0; border std devs: [43.097891]); output changes: none.
+
+> For a crop with `output changes: none`, Within dilation=true is vacuous because the ours-change set is empty; it is not evidence that masking succeeded.
 
 ## 5. Detector box-count comparison — §15.1
 
@@ -371,7 +394,7 @@ never patched. See the run log for the current result.
 |---|---|---|
 | NLM parity | §11.7(B)12 | MET |
 | INTER_AREA parity | §8.7(A)2 | MET |
-| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED — Scratch-only demo_bubbles masking calibration report (§10.7(B)15) is not implemented; this remaining scope within F2 will be added in a subsequent F2 sub-task/PR per the ratified §16.24 item 12 approach: record to scratch, commit nothing. |
+| demo_bubbles masking calibration report | §10.7(B)15 | REPORTED (non-gating) |
 | Hand-written detect determinism + committed-raw equality | §8.7(A)6 | LIVE |
 | Recorded-page box-count/coordinate regression lock | §8.7(B)9 | LIVE |
 | Hand-written preprocess tier arithmetic | §9.7(B)11 | LIVE |

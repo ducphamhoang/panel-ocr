@@ -67,6 +67,9 @@ enum Command {
         /// Write somewhere other than `docs/GOLDEN_CALIBRATION.md`.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Detector model, using `onnx:<path>`; falls back to PANEL_OCR_ONNX_MODEL.
+        #[arg(long, value_name = "SPEC")]
+        detector: Option<String>,
     },
 }
 
@@ -112,7 +115,9 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::CalibrateGoldens { out } => calibrate::run(out.as_deref()),
+        Command::CalibrateGoldens { out, detector } => {
+            calibrate::run(out.as_deref(), detector.as_deref())
+        }
     }
 }
 
