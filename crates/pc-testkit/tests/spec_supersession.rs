@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 17;
+const EXPECTED_PARSED_CLAIMS: usize = 20;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -79,6 +79,9 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // lands. Recorded here rather than left to the reader because the target site is the one a
     // future reader lands on, which is the whole point of §16.26.
     ("16.31", "16.29 item 2"),
+    ("16.32", "16.19 item 10"),
+    ("16.32", "14 item 15"),
+    ("16.32", "4.5"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.

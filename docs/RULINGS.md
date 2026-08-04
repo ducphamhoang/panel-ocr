@@ -26,7 +26,53 @@ from the adjudicator's replies. So:
 
 **For future rulings: capture the adjudicator's reply verbatim into this file before condensing it
 anywhere else.** That is the only version of this file that closes the gap properly. Entries below
-predate the practice and are marked accordingly.
+predating that practice are marked accordingly; the two entries below are the source record for
+§16.32's two consultations.
+
+---
+
+## Entry 1 — original CPU-EP design tie-break — 2026-08-03 (BEST-EFFORT RECONSTRUCTION, not verbatim)
+
+The original Fable adjudication was not captured into this file at the time it happened. The only
+surviving verifiable artifact is commit `3801b32`'s message, checked with `git log -p 3801b32 -1`.
+That message contains one Fable-related sentence, quoted verbatim here:
+
+> A Fable adjudicator ruling (independently reproduced by the ruling itself) required the flag ship only bundled with thread confinement.
+
+This is a **BEST-EFFORT RECONSTRUCTION**, not a verbatim transcript. Which position was held by the
+architect and which by the rust-engineer is not recorded anywhere in the surviving material and is
+not being invented here.
+
+---
+
+## Entry 2 — task-#29-planning tie-break — 2026-08-04 (VERBATIM SOURCE TRANSCRIPTION)
+
+Fable was convened during task #29's planning phase, separately from the original CPU-EP tie-break,
+to resolve two disagreements in the joint architect+rust-engineer plan. The ruling text below is
+transcribed from the verbatim source supplied for that planning consultation. The commit named in
+Ruling 1 was independently verified with `git log --oneline -- tests/fixtures/recorded/detector/PROVENANCE.json`.
+Entry 2 follows this supplied verbatim source text convention, distinct from the paraphrase default
+described in the preamble for earlier and other entries.
+
+### Ruling 1 — flush_denormals in PROVENANCE.json: the rust-engineer's position wins, with one graft from the architect.
+
+Decision. #29 does not add the field. The new §16.32 entry records, in prose: (a) the committed detector recording was produced at commit `f6212eb`, which recorded `tests/fixtures/recorded/detector/PROVENANCE.json`, before SessionTuning existed, so its session ran without denormal flushing — the fact a flush_denormals field would carry is false; (b) xtask/src/record.rs writes intra_threads/inter_threads as hardcoded literals rather than observed values, an open defect against §16.21 item 5's "records the thread count actually used... facts, not inferences"; (c) a binding requirement that the next real re-record (the one §16.23 item 5 already budgets) lands the recorder fix — observed values for all three thread/tuning settings — and the flush_denormals schema field in the same change. Graft from the architect's position: the §16.24 item 19(c) table gains the xtask/src/ocr_model_signature.rs writer row in #29, since this gap was verified directly and is independent of this dispute.
+
+Grounds. Two, one measured and one structural. Measured: the three existing "resolved session-construction" fields the architect appeals to are not a class to join — two of the three are literals that merely coincide with TextDetectorConfig::default(), so the precedent being cited is itself the defect. Structural: under the architect's proposal, the committed file's false cannot be written by any recorder in the tree (the recorder at HEAD runs with flushing true), so the value would enter the file by hand-edit or by a one-off migration branch — a self-attested fact in a document whose entire purpose is that a recorder wrote it. The engineer's route keeps "provenance records facts" literally true: every field in the committed file was emitted by the recorder that ran. Deferral costs nothing the spec prose doesn't cover, and the re-record that makes the field honest is already budgeted.
+
+Scope. This ruling covers the flush_denormals field of OursPins in the detector group's PROVENANCE.json, and the two thread-count literals in xtask/src/record.rs's detector ours block. It does NOT decide: whether the future schema change needs a PROVENANCE_SCHEMA_VERSION bump, the shape of SessionTuning fields beyond flush_denormals, or anything about the other five recorded groups.
+
+### Ruling 2 — bench-tuning containment gate: the rust-engineer's position wins on "gate now", with the architect's unification finding converted into binding conditions on the gate's design.
+
+Decision. #29 adds the containment test. But the architect's technical objection is measured fact, not speculation — cargo test --workspace really does compile pc-detect with bench-tuning active and link that rlib into pc-cli's units — so the gate lands under three binding conditions:
+
+1. The traversal covers only [dependencies]/[build-dependencies] edges and [features] implication chains reachable from pc-cli. It must never read a [dev-dependencies] section, or pc-detect's self-dev-dep makes it permanently red.
+2. The test's name and doc claim only what it checks: that no manifest on pc-cli's normal/build dependency graph enables pc-detect/bench-tuning — i.e. the production binary's graph. It must state that workspace test builds DO carry bench-tuning into the linked pc-detect via dev-dep unification and that this is by design and out of the gate's scope.
+3. The anti-vacuity negative control (feature still declared where expected) stays.
+
+Grounds. Three production-graph leaks with zero automation is exactly the consensus-shaped gap this pipeline keeps paying for. The architect's dilemma ("vacuously green or wrongly red") is a false dichotomy for a manifest reader: unification is a build-time phenomenon that edits no manifest, so a normal/build-edge manifest walk is neither tainted by it nor vacuous — it is a regression gate on precisely the mechanism class (manifest edits) that caused all three historical leaks in the production build.
+
+Scope. This ruling covers one gate: pc-detect/bench-tuning reachability from pc-cli's normal/build manifest graph. It does NOT decide: whether the workspace-test-build taint needs its own mitigation someday; whether an additional resolver-backed check should complement the manifest reader; or CI tiering for either.
 
 ---
 

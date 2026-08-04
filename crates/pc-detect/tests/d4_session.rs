@@ -3,30 +3,31 @@
 //! session per run). FROZEN per CLAUDE.md.
 //!
 //! The fixed `intra_threads = 1` this header used to describe was removed by §16.21: its
-//! stated premise ("parallelism is at the image level") was false, because §14.15's
-//! `Mutex<Session>` means image-level parallelism never reaches the detector -- inference
-//! was mutex-serialized *and* single-threaded, costing ~8x. Do not reintroduce the pin.
+//! stated premise ("parallelism is at the image level") was false, because §14.15's old
+//! `Mutex<Session>` meant image-level parallelism never reached the detector -- inference
+//! was mutex-serialized *and* single-threaded, costing ~8x. As of §16.32 the mutex is gone:
+//! a dedicated `pc-detect-onnx` worker owns the session and serializes requests. Do not
+//! reintroduce the pin.
 //!
 //! `#![cfg(feature = "onnx")]`: without the non-default `onnx` feature this file compiles
 //! to an empty test binary, so a plain `cargo test --workspace` neither builds `ort` nor
 //! needs an ONNX Runtime shared library.
 //!
-//! **Known state at freeze time: nothing in this file can run in this checkout, and that
-//! is expected.** The workspace pins `ort` with `default-features = false`, which drops
-//! `download-binaries`, so the moment D4b references an `ort` symbol the test binary needs
-//! a native ONNX Runtime to link against -- and there is none here. This file is therefore
-//! blocked as a whole, not merely its `#[ignore]`d test. Every D4 assertion that can run
-//! today lives in `d4_onnx.rs` (task D4a), which is ungated and `ort`-free by design.
+//! **Measured state:** `cargo test -p pc-detect --features onnx,testkit --test d4_session`
+//! runs 3 tests: 2 passed, 0 failed, and 1 ignored (the real-weights smoke test). The
+//! compile-time and missing-path checks therefore run in this checkout; only the real-model
+//! test remains opt-in because it needs maintainer-supplied weights and ONNX Runtime.
 //!
 //! **Concurrency note, and why no test here shares a session across threads naively.**
 //! `ort` rc.12's `Session::run` takes `&mut self` (`session/mod.rs:212`), so §4.5's
 //! "one session created once and shared" cannot mean concurrent inference on one session.
-//! v1 wraps the session in a `Mutex` -- `DEVIATION(15)` -- which keeps
-//! `OnnxDetector: Send + Sync` and keeps `TextDetector::detect(&self)` unchanged, at the
-//! cost of serialising inference across images. `text_detector.concurrent_models > 1` is
-//! warned-and-ignored; a session pool was rejected because §8.3 lists multi-model
-//! concurrency as out of scope for v1. The smoke test below therefore asserts that shared
-//! concurrent use is *correct and deterministic*, not that it is parallel.
+//! v1 confines the session to a dedicated worker thread -- `DEVIATION(15)` -- and sends
+//! requests to it over a channel, keeping `OnnxDetector: Send + Sync` and
+//! `TextDetector::detect(&self)` unchanged while serialising inference across images.
+//! `text_detector.concurrent_models > 1` is warned-and-ignored; a session pool was rejected
+//! because §8.3 lists multi-model concurrency as out of scope for v1. The smoke test below
+//! therefore asserts that shared concurrent use is *correct and deterministic*, not that it
+//! is parallel.
 #![cfg(feature = "onnx")]
 
 use pc_core::StageError;
@@ -40,8 +41,10 @@ fn assert_send_sync<T: Send + Sync>() {}
 fn onnx_detector_is_shareable_across_threads() {
     // spec §4.5: the parallelism is at the image level and every image borrows the same
     // `&dyn TextDetector`, so the detector type must be `Send + Sync`. With `Session::run`
-    // taking `&mut self`, that property is what the `Mutex` (DEVIATION(15)) exists to
-    // preserve -- if the wrapper is ever removed this stops compiling, which is the point.
+    // taking `&mut self`, that property is carried by the worker-thread confinement
+    // (DEVIATION(15)): `OnnxDetector` shares an `mpsc::Sender`, which is `Sync`, while the
+    // session itself never crosses out of its dedicated worker. Removing the old Mutex
+    // wrapper therefore does not remove the type's `Send + Sync` property.
     // Compile-time only: no session is constructed, so no weights are needed.
     assert_send_sync::<OnnxDetector>();
 }
@@ -180,8 +183,9 @@ fn d4_real_weights_smoke_test() {
     assert_eq!(second.mask.as_raw(), first.mask.as_raw());
 
     // spec §4.5 + DEVIATION(15): four threads sharing ONE `&dyn TextDetector` must all
-    // succeed and agree. This is the property the `Mutex` buys -- serialised, but correct
-    // and deterministic; it is what makes the detector usable from the rayon batch runner.
+    // succeed and agree. The dedicated worker thread (DEVIATION(15) serialisation) keeps
+    // this correct and deterministic; it is what makes the detector usable from the rayon
+    // batch runner.
     let shared: &dyn TextDetector = &detector;
     let results: Vec<_> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..4)

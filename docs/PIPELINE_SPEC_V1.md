@@ -436,7 +436,7 @@ Format `{uuid}_{stem}{suffix}` mirrors upstream `OutputPathGenerator` (`output_s
 
 ### 4.5 Batch parallelism
 
-`rayon` `par_iter` over images at the *whole-pipeline* granularity (not per stage), with a semaphore-free bound: `min(config.max_threads_or_cpus, images.len())`. Rationale: upstream parallelizes per-stage with a process pool because Python needs it; per-image parallelism in Rust gives better cache locality and makes per-image error isolation trivial. The detect stage is the exception: a single `ort` session is shared across threads (`ort::Session` is `Send + Sync` for CPU EP; sessions are cheap to share and expensive to duplicate), with `text_detector.concurrent_models` controlling how many sessions are created (default 1, shared).
+`rayon` `par_iter` over images at the *whole-pipeline* granularity (not per stage), with a semaphore-free bound: `min(config.max_threads_or_cpus, images.len())`. Rationale: upstream parallelizes per-stage with a process pool because Python needs it; per-image parallelism in Rust gives better cache locality and makes per-image error isolation trivial. The detect stage is the exception: one `ort` session is created per run, but it is owned by a single dedicated worker thread (`pc-detect-onnx`, §16.32) and no rayon worker ever touches it directly. What the rayon workers share is the `Arc<dyn TextDetector>`: each sends its input tensor to the worker over a channel and decodes the reply on its own thread. `ort::Session` being `Send + Sync` for the CPU EP is still true and is no longer the reason anything works. `text_detector.concurrent_models` still controls how many sessions are created (default 1, shared), and a value greater than 1 is warned-and-ignored in v1.
 
 ---
 
@@ -659,7 +659,7 @@ Write the scaled RGB image to `base_image_dest` as PNG (compression default) whe
   sha256 `1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f`) — resolved/downloaded/verified by `pc-models`.
 - Preprocess (port of `inference.preprocess_img` + `letterbox`): letterbox to `1024×1024` with `stride=64, auto=false`, i.e. scale by `r = min(1024/h, 1024/w)` (no upscaling beyond `r=1`... upstream `letterbox` default `scaleup=True`; keep upstream behaviour: allow upscale), resize with bilinear, pad **right/bottom** with `(0,0,0)` (upstream default: `imgproc_utils.py:95`; call without `color`: `inference.py:86`) to reach the padded size; record `(dw, dh)` = total padding in x/y. Channel order: RGB, NCHW, `f32 / 255.0`.
 - Outputs (3): `blks` `[1, N, 5 + n_classes]` (n_classes = 2), with verified real shapes `blk` `[1, 64512, 7]`, `mask`/`seg` `[1, 1, 1024, 1024]`, and `lines_map`/`det` `[1, 2, 1024, 1024]`; `64512 = 3 × (128² + 64² + 32²)` for a 1024 input at strides 8/16/32. If the second output has 2 channels and the third has 1, swap them (upstream guards for this: `inference.py:181-185`). Bind by index, but log the actual output names/shapes once at `DEBUG` so a model swap is diagnosable.
-- Execution provider: **CPU by default**, `[text_detector] intra_threads` defaulting to **`0`** (all physical cores), session created once and shared. **Amended by §16.21 item 1 and §16.22 item 1.** The former text read *"CPU only, `intra_threads = 1` (parallelism is at the image level)"* — that parenthetical was false in the shipped design, because §14.15's `Mutex<Session>` means image-level parallelism never reaches the detector, so inference was serialized *and* single-threaded (~150 s/page). `1` remains expressible. CUDA is available opt-in via `device = "cuda"` under §16.22's binding conditions; it is quarantined from every gate, fixture and recording.
+- Execution provider: **CPU by default**, `[text_detector] intra_threads` defaulting to **`0`** (all physical cores), session created once and shared. **Amended by §16.21 item 1 and §16.22 item 1.** The former text read *"CPU only, `intra_threads = 1` (parallelism is at the image level)"* — that parenthetical was false in the shipped design, because §14.15's `Mutex<Session>` meant image-level parallelism never reached the detector, so inference was serialized and single-threaded (~150 s/page) (the mutex became a dedicated worker thread — §16.32; the serialization is unchanged). `1` remains expressible. CUDA is available opt-in via `device = "cuda"` under §16.22's binding conditions; it is quarantined from every gate, fixture and recording.
 
 **4 — YOLO postprocess** (`src/yolo.rs`, port of `postprocess_yolo` + yolov5 `non_max_suppression`):
 
@@ -1370,7 +1370,7 @@ Fresh, idiomatic design per decision #6 — no docopt compatibility. Verbosity m
 12. **Detector mask refinement** — v1 ships the "Simple" refinement, not upstream's `refine_mask`/`refine_undetected_mask` (§15.2).
 13. **Class-agnostic NMS** — upstream runs per-class NMS (`agnostic=False`, `inference.py:115` + `yolov5_utils.py:261`), which can emit duplicate boxes for one balloon across language classes; we run class-agnostic NMS instead (see §8.3 step 4, §15.1). `yolo.rs` must carry a `// DEVIATION(13): ...` comment at the NMS call site.
 14. **Letterbox minimum dimension clamp** — upstream can pass a zero-sized resize dimension to `cv2.resize` for sufficiently small inputs; v1 clamps each rounded dimension to at least `1`, keeping the resize valid and preventing `dw` or `dh` from reaching `1024` and making `mask::crop_letterbox` reject the geometry. The implementation comment is at `crates/pc-detect/src/onnx.rs::letterbox` as `DEVIATION(14)`.
-15. **One shared ONNX session** — upstream would honour `text_detector.concurrent_models` at provider construction; v1 shares one `Mutex`-guarded session, and a configured value greater than `1` is warned-and-ignored. The implementation comment is at `crates/pc-detect/src/onnx.rs::OnnxDetector` as `DEVIATION(15)`.
+15. **One shared ONNX session** — upstream would honour `text_detector.concurrent_models` at provider construction; v1 shares one session for the whole run — owned exclusively by a dedicated `pc-detect-onnx` worker thread (§16.32; formerly a `Mutex<Session>`), so requests are serialised by the worker's request channel rather than by a lock — and a configured value greater than 1 is warned-and-ignored. The implementation comment is at `crates/pc-detect/src/onnx.rs`, on the OnnxDetector doc comment, as `DEVIATION(15)`.
 16. **Lazy construct-and-latch** — upstream constructs the detector before its per-image loop; v1 defers construction until the first image that needs detection and latches that attempt's success or rendered refusal for the run, so §4.4 resume can bypass a model it will never read. The implementation site will carry `DEVIATION(16)`; the concurrent implementation pass has not added that comment yet.
 17. **Coverage-filter scope and operand** — ratified by §16.20 item 9, which corrects §8.3 step 6's former claim of unconditional parity. Upstream applies its `mask_score < mask_score_thresh` false-positive filter **only to line-less blocks** (`textblock.py:485-490`, inside `if len(blk.lines) == 0:`) and computes it over the **unrefined** mask (`inference.py:203` passes `mask` to `group_output`; `refine_mask` runs at `:204`). v1 applies the filter to **every** block over the **refined** mask. Both differences are deliberate: v1 synthesizes no DBNet line polygons (§14.12 and §8.3's out-of-scope list), so every block is line-less by construction and the scope difference is vacuous *for v1* — it would become live the moment line synthesis lands, which is why it is registered rather than left as prose. The operand difference makes our coverage values roughly 2× upstream's on the same boxes; measured across two real manga pages the filter has never fired (minimum coverage 0.3025 against a 0.1 threshold). The implementation site carries `DEVIATION(17)`.
 
@@ -2987,6 +2987,8 @@ Resolved against the upstream PanelCleaner construction shape, the current `pc-c
    of the `error:` line. Suppressing that hook is deliberately not attempted: a
    scoped `set_hook`/`take_hook` pair would race with panics on other rayon workers.
 
+   (Re-observed 2026-08-04, after §16.32 moved inference onto a dedicated worker thread: a per-image inference panic now originates on the worker, so the default panic hook's stderr line names `pc-detect-onnx` rather than the calling thread — observed as `thread 'pc-detect-onnx' (<tid>) panicked at ...`. There is still exactly ONE such line: `resume_unwind` on the receiving thread does not re-invoke the panic hook. The pinned rendered string `panicked: <payload>` is byte-for-byte unchanged — the thread name is stderr from Rust's default hook and was never part of that pinned string, so this is an observation, not a change to what this item pins.)
+
    `initialize_detector` takes no image, so an init panic is independent of the original
    by construction — item 5(b)'s causal criterion classifies it run-fatal, and §16.12
    item 2's “neither outcome is retried within a run” binds the panicking attempt as much
@@ -3135,18 +3137,18 @@ Resolved against the upstream PanelCleaner construction shape, the current `pc-c
    `DEVIATION(16)` when the concurrent Rust job adds it; it is deliberately not added
    by this documentation-only change.
 
-10. **The session lock spans only the `&mut Session` window, and a poisoned session is
-    reused.** `pc-detect/src/onnx.rs::<OnnxDetector as TextDetector>::detect` holds
+10. **The session lock spanned only the `&mut Session` window, and a poisoned session was
+    reused.** `pc-detect/src/onnx.rs::<OnnxDetector as TextDetector>::detect` held
     `session` for exactly `Session::run` plus the copy of each output into owned
     `Vec<f32>`. All decoding — `bind_outputs`, `validate_output_shapes`, `decode_blocks`,
-    `decode_mask` — runs **outside** the lock via the ungated `decode_outputs`, so a panic
-    in v1's own arithmetic cannot poison the one session `DEVIATION(15)` shares across the
+    `decode_mask` — ran **outside** the lock via the ungated `decode_outputs`, so a panic
+    in v1's own arithmetic could not poison the one session `DEVIATION(15)` shared across the
     run. Previously the guard spanned the whole function, which turned one page's panic
     into an image-independent `Inference("ONNX session mutex was poisoned")` for every
     remaining page: a failure mode v1 manufactured, named after our lock rather than its
     cause, and not asked for by any spec clause.
 
-    (a) **Poison recovery at this site is sound, on a verified fact.** `ort`
+    (a) **Poison recovery at this site was sound, on a verified fact.** `ort`
     2.0.0-rc.12's `Session::run(&mut self)` (`session/mod.rs:212`) delegates to
     `run_inner(&self, …)` (`:272`); `Session` is `{ inner: Arc<SharedSessionInner>,
     inputs: Vec<Outlet>, outputs: Vec<Outlet> }` (`:114-118`) and `run_inner` only reads
@@ -3161,19 +3163,19 @@ Resolved against the upstream PanelCleaner construction shape, the current `pc-c
     the poison recovery in `pc-cli/src/detector.rs`, which is sound because that mutex
     guards `()`; "we recovered poison elsewhere" is not a reason.
 
-    (b) **The residual panic surface is retained, not asserted away.** Inside the
-    narrowed window every remaining panic site is an ort "C API violated its contract"
+    (b) **The residual panic surface was retained, not asserted away.** Inside the
+    narrowed window every remaining panic site was an ort "C API violated its contract"
     assertion: `session/mod.rs:329`, and `Value::from_ptr`'s chain through
-    `value/mod.rs:353` → `value/type.rs:384-394`/`:152`. None is a function of pixel
-    content; none is provably unreachable, since a mis-built or ABI-mismatched
-    `libonnxruntime` could trip them. The branch is therefore handled, never
+    `value/mod.rs:353` → `value/type.rs:384-394`/`:152`. None was a function of pixel
+    content; none was provably unreachable, since a mis-built or ABI-mismatched
+    `libonnxruntime` could trip them. The branch was therefore handled, never
     `unreachable!()`.
 
-    (c) **`decode_outputs` is a public function over two independent slices, so it
-    validates rather than indexes.** It rejects `values.len() != metas.len()` and any
+    (c) **`decode_outputs` was a public function over two independent slices, so it
+    validated rather than indexed.** It rejected `values.len() != metas.len()` and any
     out-of-range bound index with `StageError::InvalidInput`. Adding a panic site while
-    fixing a panic-poisoning bug would be self-defeating. Being ungated, its test runs
-    under plain `cargo test --workspace` — coverage the feature-gated path never had.
+    fixing a panic-poisoning bug would have been self-defeating. Being ungated, its test ran
+    under plain `cargo test --workspace` — coverage the feature-gated path had never had.
 
     (d) **This is NOT the sibling of item 4, and item 5(b) does not promote it.** Item
     5(b) is the predicate for a `DetectorProvider` declaring `failures_are_run_fatal`, not
@@ -3188,6 +3190,8 @@ Resolved against the upstream PanelCleaner construction shape, the current `pc-c
     swallow §5.2 whole: any deterministic per-image failure — a profile that makes every
     page fail in masking, a replay dir with every fixture missing — would become
     run-fatal.
+
+    (e) **Mechanism replaced, invariant retained (2026-08-03; see §16.32).** The `Mutex<Session>` this item narrowed no longer exists: the session is owned by one dedicated worker thread, and preprocessing and decoding run on the calling thread, outside the worker entirely. The property this item ratified holds more strongly than when it was written — a panic in v1's own arithmetic cannot reach the session at all, rather than merely not poisoning it. What is withdrawn is only the lock, and with it the poison-recovery path and the "ONNX session mutex was poisoned" string; (a)'s standing duty to re-verify run_inner's receiver on any ort version bump is unchanged and now also covers the worker's catch_unwind/AssertUnwindSafe argument.
 
 ## 16.20 Snapshot tests dropped; the oracle moves to the F1 recording (Fable tie-break, 2026-07-29)
 
@@ -3529,9 +3533,11 @@ decision; it wrote no code.
    shared."*
 
    **The parenthetical justification was already false in the shipped design.** §14.15 /
-   `DEVIATION(15)` makes the detector session a single `Mutex<Session>` shared across the
-   whole run (`crates/pc-detect/src/onnx.rs`), so image-level parallelism **cannot reach the
-   detector at all** — inference is serialized by the mutex *and* single-threaded inside it.
+   `DEVIATION(15)` made the detector session a single `Mutex<Session>` shared across the
+   whole run (`crates/pc-detect/src/onnx.rs`), so image-level parallelism **could not reach the
+   detector at all** — inference was serialized by the mutex *and* single-threaded inside it
+   (the lock was replaced by a dedicated worker thread — §16.32; the serialization property this
+   item describes is unchanged, only its mechanism.).
    Two separately-ratified decisions contradicted each other, and the cost was the entire
    per-page runtime.
 
@@ -3589,6 +3595,8 @@ decision; it wrote no code.
    + cv2.dnn"* pinning; and any fix that perturbs recorded floats — **including a version
    bump** — is fixture-affecting and triggers re-record plus re-sign, so it must arrive with
    measurements before adoption.
+
+   **CLOSED, 2026-08-03 — see §16.32.** Root cause: CPU denormal/subnormal float stalls inside the ConvTranspose/Conv kernels — not kernel quality, not threading, and not a runtime version gap (an ort/ONNX Runtime version bump was measured and rejected as a regression, answering this item's version-bump candidate rather than deferring it). Setting ONNX Runtime's `session.set_denormal_as_zero` (`SessionBuilder::with_flush_to_zero()`) closes the gap: measured ~16.7-20s per page down to ~0.5-0.9s, this machine now faster than the recorded cv2.dnn baseline on the same page. Every hard constraint this item imposed held: model bytes untouched, no runtime replaced, the version bump was measured and rejected, and no recorded float moved — output is sha256-identical across intra_threads 0/1/8 and both flag states, and identical to the committed recorded fixture, so nothing here is fixture-affecting and no re-record/re-sign is triggered. The flag ships only bundled with the worker-thread confinement of §16.32 item 2(b) — the bundle, not the flag alone, is what the Fable ruling authorised. No new §14 register entry: §14 records deliberate divergences in what v1 produces, and a change measured to perturb zero output bits creates no such divergence (same shape as item 4's own reasoning for `intra_threads`).
 
 ## 16.22 GPU execution providers move to v1.5, opt-in and quarantined (Fable tie-break, 2026-07-29)
 
@@ -4347,6 +4355,10 @@ gating divergence; negative controls constructed in-test and never committed.
     | **`xtask/src/calibrate.rs`** | reader — **MISSED by the first enumeration**, see below |
     | `xtask/src/model_signature.rs` | writer, now through `pc_testkit::provenance` |
     | `xtask/src/record.rs` | writer, now through `pc_testkit::provenance` |
+    | `xtask/src/ocr_model_signature.rs` | reader/writer, now through `pc_testkit::provenance` |
+
+    One-line note for the `xtask/src/ocr_model_signature.rs` row: found 2026-08-04 in §16.32 by
+    re-running this item's own prescribed grep untruncated.
 
     Any future reader added to this table carries item 1(a)'s gate with it.
 
@@ -6427,6 +6439,120 @@ does not exist yet, as expected.
    entry's own commit, as §16.26 item 6 requires. The marker was falsified before handover — its
    back-pointer stripped, the suite re-run, the red confirmed at the named site, the file restored —
    because a marker whose removal keeps the suite green is decoration (cookbook rule 6).
+
+## 16.32 The detector's CPU execution provider: denormal flushing plus thread confinement (Fable rulings, 2026-08-03 and 2026-08-04; transcribed 2026-08-04 — see docs/RULINGS.md)
+
+1. **The surviving record, quoted not paraphrased.** This entry is transcribed from the
+   institutional record of the pipeline run plus commit `3801b32`'s message, the only committed
+   artifact that contains the original ruling's actual language. The reconstruction caveat — and
+   the fact that neither subagent's position is recorded — is documented in docs/RULINGS.md,
+   Entry 1; this entry does not assign positions. The commit message says:
+
+   > The flag has a real hazard: ONNX Runtime sets DAZ/FTZ on the constructing thread and never restores it, non-deterministically depending on thread-scheduling order — a silent, order-dependent float-semantics change for every other pure-Rust pipeline stage sharing that thread. A Fable adjudicator ruling (independently reproduced by the ruling itself) required the flag ship only bundled with thread confinement.
+   >
+   > Thread confinement: `OnnxDetector` moved off the old `Mutex<Session>`
+   > (§14.15/DEVIATION(15)) onto a dedicated worker thread that owns session
+   > construction and inference exclusively, confining the flag's CPU-register side
+   > effect. Preprocessing/decoding stay on the caller (a first cut wrongly ran them on
+   > the worker, reintroducing the exact whole-run-poisoning regression §16.19 item 10
+   > was ratified to prevent — proven and fixed via panic injection). Panic payloads now
+   > cross the thread boundary as raw `Box<dyn Any + Send>` and get `resume_unwind`'d on
+   > the receiving side, preserving the pinned `"panicked: <payload>"` rendering
+   > (§16.19 item 4, §16.12 item 18, §5.2 item 2) without the double-prefix bug a naive
+   > re-formatting fix would have caused (proven via a probe before implementing).
+   >
+   > 3. Flip the shipped default: `SessionTuning::default().flush_denormals` is
+   > now `true`. A normal `OnnxDetector::from_path(...)` call — no special
+   > configuration — now completes `detect()` in ~0.6s instead of ~17-20s.
+
+2. **What changes going forward.**
+
+   (a) The shipped default is `SessionTuning::default().flush_denormals == true` in
+   `crates/pc-detect/src/onnx.rs`. A plain `OnnxDetector::from_path` now flushes. The pinning
+   tests are `crates/pc-detect/tests/perf2_tuning.rs`'s default test, which runs by default, and
+   `crates/pc-detect/tests/perf2_from_path_smoke.rs`, whose only test is `#[ignore]`d and opt-in,
+   requiring `PANEL_OCR_ONNX_MODEL`, real ONNX weights, and ONNX Runtime.
+
+   (b) The worker-thread invariant is exact: one `Session` per `OnnxDetector`, constructed and
+   run only on a dedicated thread named `pc-detect-onnx`; preprocessing (`letterbox`, `to_nchw`)
+   and decoding (`decode_outputs`) run on the CALLING thread. The split matters because a first
+   cut ran preprocessing on the worker too, reintroducing the exact whole-run-poisoning regression
+   §16.19 item 10 was ratified to prevent — found via panic injection, not by reading the diff.
+   Of `crates/pc-detect/tests/perf2_mxcsr_hygiene.rs`'s four tests, the three opt-in tests —
+   `flush_denormals_does_not_escape_the_detector_worker_thread`,
+   `preprocessing_panic_is_per_image_and_does_not_kill_the_detector_worker`, and
+   `inference_panic_is_per_request_and_does_not_kill_the_detector_worker` — are `#[ignore]`d and
+   require `PANEL_OCR_ONNX_MODEL`, real ONNX weights, and ONNX Runtime; only
+   `session_build_panic_reaches_caller_with_original_payload` runs by default, and it does not
+   pin the worker/caller split.
+
+   **SUPERSEDES: §16.19 item 10**
+   **SUPERSEDES: §4.5**
+   **SUPERSEDES: §14 item 15**
+
+   (c) The panic-forwarding contract is raw and caller-rendered: the worker catches panics via
+   `catch_unwind(AssertUnwindSafe(..))`, forwards the raw `Box<dyn Any + Send>` payload unformatted,
+   and the receiving thread calls `resume_unwind`. The existing correct renderers —
+   `pc-cli/src/detector.rs` for init panics per §16.19 item 4, and
+   `pc-pipeline/src/batch.rs`'s `process_image_isolated` for per-image panics per §5.2/§16.12
+   item 18 — therefore produce the pinned `"panicked: <payload>"` string exactly once, with no
+   double-prefix. This was proven via a live probe before implementation; a naive re-format-on-
+   worker approach would double-prefix.
+
+3. **§16.21 item 6 closure:** see §16.21 item 6, closed by this entry.
+
+4. **The authorised comment-only corrections enumeration.** This licenses task 29b's edits to
+   the two FROZEN test files, and is an explicit enumeration:
+
+   - `crates/pc-detect/tests/d4_session.rs`: five stale comment regions — the stale
+     `intra_threads=1` rationale citing the old Mutex; the false "nothing in this file can run in
+     this checkout" claim — MEASURED FALSE: `cargo test -p pc-detect --features onnx,testkit
+     --test d4_session` runs 2 of 3 tests and passes both, only the real-weights test is
+     `#[ignore]`d; the Mutex→worker-thread concurrency-note rationale; the falsified "if the
+     wrapper is ever removed this stops compiling" claim — MEASURED FALSE: the Mutex wrapper WAS
+     removed and it still compiles, because `mpsc::Sender` is `Sync` on the pinned toolchain; and
+     the DEVIATION(15) rationale in the 4-thread smoke test comment.
+   - `crates/pc-detect/tests/d4_onnx.rs`: two stale comment regions — the Mutex-serializes-
+     inference rationale near the constants test; and a separate false "anything gated on that
+     feature cannot even link, let alone run" claim near the top of the file — also measurably
+     false the same way.
+   - Precedent: commit `cecb9f1` ("Final review D4/D10: correct four stale doc comments") already
+     established that correcting stale DOC COMMENTS (never assertions, literals, test names, or
+     `#[ignore]` reasons) in frozen test files of this class does not require fresh joint-architect
+     escalation.
+     No assertion in either file may change; the correction is licensed for `//` and `//!` text only.
+
+   `crates/pc-detect/src/onnx.rs`: the `DEVIATION(15)` marker was missing before this change and
+   has been restored at its current location, on the `impl OnnxDetector` doc comment block that
+   already explains the worker design, as required by §14's own closing convention ("Each of
+   these must appear as a `// DEVIATION(n): ...` comment at the implementation site").
+
+5. **PROVENANCE.json — recorded as an explicit deferral, per docs/RULINGS.md Entry 2 (Ruling 1).**
+   The committed `tests/fixtures/recorded/detector/PROVENANCE.json` was recorded at commit
+   `f6212eb`, before
+   `SessionTuning` existed — so it implicitly reflects `flush_denormals=false`, which is the true
+   historical fact. `xtask/src/record.rs` currently writes `"intra_threads": 0` and
+   `"inter_threads": 0` as HARDCODED LITERALS rather than observed values (an existing defect
+   against §16.21 item 5's "records the thread count actually used... facts, not inferences"
+   principle). Fable ruled: do not add a `flush_denormals` field now (it would sit beside already-
+   wrong literals and could only be added to the committed file by hand-edit, since no recorder in
+   the tree would currently emit `false` for it correctly at HEAD — HEAD's recorder would emit
+   `true`). Binding requirement: the NEXT real re-record (the one §16.23 item 5 already budgets,
+   for DBNet lines) must land both the recorder fix (write observed values, not literals) and the
+   `flush_denormals` schema field in the same change.
+
+6. **§16.24 item 19(c)'s reader/writer table gap.** `xtask/src/ocr_model_signature.rs` is the
+   third `PROVENANCE.json` writer and also a reader missing from that table: it deserializes an
+   existing group and constructs/writes a `GroupProvenance` for the `ocr_model_signature` group.
+   This was found during this transcription by re-running item 19's own prescribed enumeration
+   untruncated; the table now records both roles.
+
+7. **One explicitly recorded gate.** A gate now binds pc-cli's PRODUCTION feature resolution to
+   exclude pc-detect/bench-tuning at the manifest-authoring level, formally verified end to end by
+   `crates/pc-detect/tests/perf2_feature_containment.rs`. It is scoped to the normal/build
+   dependency graph only, per docs/RULINGS.md Entry 2 (Ruling 2) — workspace test builds ARE tainted
+   by pc-detect's own self-dev-dependency on itself with bench-tuning enabled, which is a separate,
+   known, out-of-scope fact, not a defect this gate is meant to catch.
 
 ## 16. Summary of what v1 is NOT
 

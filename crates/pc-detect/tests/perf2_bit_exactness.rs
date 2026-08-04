@@ -125,7 +125,9 @@ fn run_level_a(intra_threads: usize, tuning: &SessionTuning, label: &str) -> Str
     digest
 }
 
-fn run_level_a_default(intra_threads: usize) -> String {
+/// Deliberately runs the pre-flip `flush_denormals: false` Level A/B comparison arm; its name
+/// says `flush_off`, not `default`, because since §16.32 this state is not the default.
+fn run_level_a_flush_off(intra_threads: usize) -> String {
     let flush_off = SessionTuning {
         flush_denormals: false,
         ..SessionTuning::default()
@@ -170,7 +172,7 @@ fn the_raw_float_digests_match_the_recorded_scratch_baseline() {
         );
         return;
     };
-    let digest = run_level_a_default(0);
+    let digest = run_level_a_flush_off(0);
     let path = Path::new(&path);
     if std::env::var_os("PANEL_OCR_PERF_BASELINE_WRITE").is_some() {
         std::fs::write(path, format!("raw_sha256={digest}\n")).expect("write scratch baseline");
@@ -184,5 +186,38 @@ fn the_raw_float_digests_match_the_recorded_scratch_baseline() {
     assert_eq!(
         digest, expected,
         "raw float digest differs from scratch baseline"
+    );
+}
+
+#[test]
+#[ignore = "opt-in: needs PANEL_OCR_ONNX_MODEL and ONNX Runtime; run `PANEL_OCR_ONNX_MODEL=/path/comictextdetector.pt.onnx cargo test -p pc-detect --features onnx,testkit --test perf2_bit_exactness -- --ignored --nocapture`"]
+fn flushing_denormals_does_not_change_one_raw_output_float() {
+    let flush_on = SessionTuning {
+        flush_denormals: true,
+        ..SessionTuning::default()
+    };
+    let on_digest = run_level_a(0, &flush_on, "flush_denormals=on");
+    let off_digest = run_level_a_flush_off(0);
+
+    for (label, digest) in [("on", &on_digest), ("off", &off_digest)] {
+        assert_eq!(
+            digest.len(),
+            64,
+            "flush {label} digest is not SHA-256: {digest}"
+        );
+        assert!(
+            digest
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+            "flush {label} digest is not lowercase hexadecimal: {digest}"
+        );
+        assert!(
+            digest.bytes().any(|byte| byte != b'0'),
+            "flush {label} digest is degenerate all-zero output"
+        );
+    }
+    assert_eq!(
+        on_digest, off_digest,
+        "flushing denormals changed the one raw output float digest"
     );
 }

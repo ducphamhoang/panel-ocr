@@ -388,6 +388,10 @@ enum WorkerRequest {
     Shutdown,
 }
 
+// DEVIATION(15): v1 shares one session for the whole run, owned exclusively by the dedicated
+// `pc-detect-onnx` worker thread, versus upstream which would honour
+// `text_detector.concurrent_models` at provider construction; a configured value greater than
+// 1 is warned-and-ignored.
 /// The worker owns the only [`Session`] and processes requests serially.
 ///
 /// Preprocessing and output decoding deliberately stay on the calling thread. A worker

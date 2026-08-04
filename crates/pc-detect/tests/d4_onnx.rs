@@ -3,11 +3,11 @@
 //! (exercise dw/dh when aspect != 1)". FROZEN per CLAUDE.md.
 //!
 //! **This file is deliberately NOT gated on the `onnx` feature and never mentions `ort`.**
-//! The workspace pins `ort` with `default-features = false`, so building with
-//! `--features onnx` needs an ONNX Runtime shared library that is not available in this
-//! checkout -- anything gated on that feature cannot even link, let alone run. Every part
-//! of D4 that is pure arithmetic therefore lives outside the gate (task D4a) and is
-//! exercised by a plain `cargo test`; the `ort` session is D4b, in `d4_session.rs`.
+//! The workspace pins `ort` with `default-features = false`, so the real session test gated
+//! on `onnx` needs an ONNX Runtime shared library. This arithmetic-only file is deliberately
+//! outside that gate, and the measured command `cargo test -p pc-detect --features onnx,testkit
+//! --test d4_onnx` runs 30 tests: 30 passed, 0 failed, and 0 ignored. The `ort` session is
+//! D4b, in `d4_session.rs`.
 //!
 //! No model file is required by, or fabricated for, any test in this file.
 
@@ -72,9 +72,9 @@ fn constants_match_the_spec() {
     // (0, 0, 0), matching upstream comic-text-detector's `letterbox` default
     // (`imgproc_utils.py:93-95`) and its call without a `color` argument (`inference.py:86`).
     // `114` is the yolov5s default, which comic-text-detector does not use. Thread counts
-    // are configurable and default to 0, because §14.15/DEVIATION(15)'s Mutex<Session>
+    // are configurable and default to 0. §14.15/DEVIATION(15)'s dedicated worker thread
     // serializes image-level inference; the old fixed 1 therefore made inference both
-    // mutex-serialized and single-threaded. The session options are not constants tested here.
+    // worker-serialized and single-threaded. The session options are not constants tested here.
     assert_eq!(NET_SIZE, 1024);
     assert_eq!(STRIDE, 64);
     assert_eq!(PAD_VALUE, 0);

@@ -196,19 +196,19 @@ quoting a clause, check whether its subject is the thing you are applying it to.
 
 ## 5. Don't manufacture an image-independent failure out of a shared resource
 
-`OnnxDetector` holds one `Mutex<Session>` for the entire run (`DEVIATION(15)`;
-`concurrent_models > 1` is warned-and-ignored in v1), and every image clones the same
-`Arc`. The original `detect` held the guard to the end of the function — so the critical
-section covered `bind_outputs`, `validate_output_shapes`, `decode_blocks`, `decode_mask`:
+`OnnxDetector` had held one `Mutex<Session>` for the entire run (`DEVIATION(15)`;
+`concurrent_models > 1` was warned-and-ignored in v1), and every image had cloned the same
+`Arc`. The original `detect` had held the guard to the end of the function — so the critical
+section had covered `bind_outputs`, `validate_output_shapes`, `decode_blocks`, `decode_mask`:
 all pure arithmetic on owned data, in our own code.
 
-One panic in that arithmetic poisoned the session, and every remaining page got
+One panic in that arithmetic had poisoned the session, and every remaining page had got
 `Inference("ONNX session mutex was poisoned")` — **a failure named after our lock rather
-than its cause, which no spec clause asked for.** Note the shape: correctly classified per
+than its cause, which no spec clause had asked for.** Note the shape: correctly classified per
 §16.12, and still wrong, because the failure itself was our invention.
 
-**The fix (§16.19 item 10):** hold the lock for exactly `Session::run` plus the copy into
-owned `Vec<f32>`; decode outside it.
+**The fix (§16.19 item 10) had been:** hold the lock for exactly `Session::run` plus the copy
+into owned `Vec<f32>`; decode outside it.
 
 ```rust
 let (metas, values) = {
@@ -236,6 +236,8 @@ decode_outputs(&metas, &values, &boxed.geometry)   // ungated, no lock held
    **"We recovered poison elsewhere" is never a reason.** Cite the sources in the comment
    so an `ort` bump has a concrete thing to re-check.
 
+**Follow-up (2026-08-03, §16.32).** The lock this rule is about is gone: the session now lives on one dedicated worker thread and all decoding runs on the caller, so there is no lock left to poison. The rule survives its own fix, because the same trap has a second form — a worker thread that dies on one image's panic would manufacture exactly the same image-independent failure for every later page. That is what catch_unwind + resume_unwind on the worker prevents, and what the `#[ignore]`d, opt-in `perf2_mxcsr_hygiene.rs` preprocessing/inference panic tests pin; both require `PANEL_OCR_ONNX_MODEL`, real ONNX weights, and ONNX Runtime. The default-running `session_build_panic_reaches_caller_with_original_payload` test does not pin that split.
+
 ---
 
 ## 6. Prove the test *ran*, not that it compiles
@@ -258,13 +260,14 @@ cargo test --workspace 2>&1 | grep -E "^test result" \
   | awk '{p+=$4; f+=$6; i+=$8} END {print "passed="p" failed="f" ignored="i}'
 ```
 
-Current bar, both tiers: **860** default / **871** onnx, 6 ignored, clippy
-`--all-features` 0, fmt 0. (Measured 2026-07-30 with the one-liner above, not carried forward
-from a previous claim — this file's own text sat at 738/749 through the whole F1 Phase 2 session
-while the real count moved to 855/866 then 859/870 then 860/871, three drifts an independent
-reviewer caught by re-running the one-liner rather than trusting this file. §16.24 item 15 records
-that two independently-written plans cited *different* baselines, 735/746 and 738/749, which is
-what a hand-maintained count does. Re-measure; never quote.)
+Current bar, both tiers: **975 passed / 0 failed / 3 ignored** in the default tier and
+**992 passed / 0 failed / 13 ignored** in the onnx tier. (Explicitly re-measured 2026-08-04 as
+the final step after the task-#29 review fixes, with the one-liner above run for both tiers; not copied from a
+prior report. This file's own text sat at 738/749 through the whole F1 Phase 2 session while the
+real count moved to 855/866 then 859/870 then 860/871, three drifts an independent reviewer
+caught by re-running the one-liner rather than trusting this file. §16.24 item 15 records that two
+independently-written plans cited *different* baselines, 735/746 and 738/749, which is what a
+hand-maintained count does. Re-measure; never quote.)
 
 **Also:** a gate that is `#[ignore]` + `unimplemented!()` enforces *nothing*. Four of them
 (§8.7(A)6, §8.7(B)9, §9.7(B)11, §11.7(B)13) are placeholders blocked on F1. That is a
