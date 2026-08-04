@@ -1,0 +1,134 @@
+name: Release
+
+# Triggered by a version tag (e.g. `v0.1.0`), not by every push — CI's `ci.yml` already
+# covers ordinary pushes/PRs. Building `refs/tags/v*` keeps `${{ github.ref_name }}` usable
+# directly as both the archive-name version and the GitHub Release tag.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }}, ${{ matrix.feature-set }})
+    runs-on: ${{ matrix.os }}
+    # Only the Windows+onnx leg is allowed to fail: §16.33 item 10 already ratified that the
+    # onnx tier's Windows linking behaviour is unverified. Every other leg is a real release
+    # blocker — a Linux/macOS build failure, or a Windows DEFAULT-tier failure, must fail this
+    # workflow, not be silently swallowed the way §16.33 previously warned against doing at
+    # the job level for `ci.yml`'s `test-onnx` job.
+    continue-on-error: ${{ matrix.allow-failure == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            feature-set: default
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            feature-set: onnx
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            feature-set: default
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            feature-set: onnx
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            feature-set: default
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            feature-set: onnx
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            feature-set: default
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            feature-set: onnx
+            allow-failure: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-${{ matrix.feature-set }}
+          # ort-sys caches the downloaded native ONNX Runtime here; irrelevant but harmless
+          # for the `default` feature-set legs.
+          cache-directories: |
+            ~/.cache/ort.pyke.io
+            ~/Library/Caches/ort.pyke.io
+            ~/AppData/Local/ort.pyke.io
+
+      - name: Build (default feature set)
+        if: matrix.feature-set == 'default'
+        run: cargo build --release --locked --target ${{ matrix.target }} -p pc-cli
+
+      - name: Build (onnx feature set)
+        if: matrix.feature-set == 'onnx'
+        run: cargo build --release --locked --target ${{ matrix.target }} -p pc-cli --features pc-cli/onnx
+
+      - name: Stage archive (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="panel-ocr-${{ github.ref_name }}-${{ matrix.target }}-${{ matrix.feature-set }}"
+          mkdir -p "$stage"
+          cp "target/${{ matrix.target }}/release/panel-ocr" "$stage/"
+          cp README.md LICENSE "$stage/"
+          tar czf "${stage}.tar.gz" "$stage"
+          echo "ASSET_PATH=${stage}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Stage archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = "panel-ocr-${{ github.ref_name }}-${{ matrix.target }}-${{ matrix.feature-set }}"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/panel-ocr.exe" "$stage/"
+          Copy-Item README.md, LICENSE "$stage/"
+          Compress-Archive -Path $stage -DestinationPath "${stage}.zip"
+          echo "ASSET_PATH=${stage}.zip" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        # An allowed-to-fail Windows+onnx leg that DID fail has no archive to upload; skip
+        # rather than error the upload step itself, since the build failure already carries
+        # the signal (and, per the job's `continue-on-error`, does not fail this workflow).
+        if: always() && env.ASSET_PATH != ''
+        with:
+          name: panel-ocr-${{ matrix.target }}-${{ matrix.feature-set }}
+          path: ${{ env.ASSET_PATH }}
+          if-no-files-found: error
+
+  publish:
+    name: publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List staged assets
+        run: ls -la dist/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*
+          generate_release_notes: true
+          # The Windows+onnx leg is allowed to fail (see the build job); if it did, its
+          # archive is simply absent from `dist/` and every other platform's asset still
+          # publishes. Nothing here masks that absence — check the workflow run itself for
+          # which legs actually produced an artifact.
