@@ -98,8 +98,38 @@ jobs:
           New-Item -ItemType Directory -Path $stage | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/panel-ocr.exe" "$stage/"
           Copy-Item README.md, LICENSE "$stage/"
-          Compress-Archive -Path $stage -DestinationPath "${stage}.zip"
-          echo "ASSET_PATH=${stage}.zip" >> $env:GITHUB_ENV
+          Copy-Item scripts/windows/setup.bat "$stage/"
+          echo "STAGE_DIR=$stage" >> $env:GITHUB_ENV
+
+      - name: Smoke-test setup.bat (Windows, default leg only)
+        # Only the default leg, not onnx: this checks setup.bat's own file-writing logic
+        # (the only part that can't be exercised anywhere but a real cmd.exe), not the
+        # `models download` command it shells out to, which is exercised elsewhere. Feeds
+        # two scripted answers — blank line (accept the default cache dir) and "n" (skip
+        # the real ~90MB download) — since there's no config.toml yet on a fresh runner,
+        # matching the two-prompt path exactly.
+        if: runner.os == 'Windows' && matrix.feature-set == 'default'
+        shell: cmd
+        run: |
+          cd "%STAGE_DIR%"
+          (echo.& echo n) | setup.bat
+          if not exist "%APPDATA%\panel-ocr\config.toml" (
+            echo setup.bat did not write config.toml
+            exit /b 1
+          )
+          type "%APPDATA%\panel-ocr\config.toml"
+          findstr /c:"cache_dir = '" "%APPDATA%\panel-ocr\config.toml" >nul
+          if errorlevel 1 (
+            echo config.toml was written but has no cache_dir line
+            exit /b 1
+          )
+
+      - name: Compress archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path $env:STAGE_DIR -DestinationPath "$($env:STAGE_DIR).zip"
+          echo "ASSET_PATH=$($env:STAGE_DIR).zip" >> $env:GITHUB_ENV
 
       - uses: actions/upload-artifact@v4
         # An allowed-to-fail Windows+onnx leg that DID fail has no archive to upload; skip
