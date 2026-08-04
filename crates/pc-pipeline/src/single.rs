@@ -14,7 +14,7 @@ use crate::checkpoint;
 use crate::ctx::PipelineCtx;
 use crate::options::{Checkpointing, PipelineOptions};
 use crate::outcome::{ImageAnalytics, ImageOutcome, PipelineError, SkipReason};
-use pc_core::{ImageHandle, Output, Stage, StageError, Step};
+use pc_core::{ImageHandle, OcrAnalytic, Output, Stage, StageError, Step};
 use pc_denoise::{DenoiseDests, DenoiseInput, DenoiseOutput, DenoiseStage};
 use pc_detect::{DetectInput, DetectStage};
 use pc_export::{ExportInput, ExportSources, ExportStage};
@@ -106,6 +106,25 @@ pub fn cache_paths_for(
         })
 }
 
+/// §5 item 6's skip decision, declared per path rather than inferred from one field: the
+/// `clean` and `ocr` paths mean different things by an empty `text_boxes` (§16.34).
+///
+///   * `clean` (`performing_ocr == false`) — unchanged, bit for bit: `text_boxes.is_empty()`
+///     is exactly §5 item 6's trigger.
+///   * `ocr` with an OCR analytic present — §15's overrides move every OCR'd box out of
+///     `text_boxes` into `OcrAnalytic.removed` (§16.11 item 11), so `text_boxes` is empty *by
+///     design*. The population §5 item 6 counts is `OcrAnalytic.num_boxes`, already defined by
+///     §16.8 item 11 as "the number of tight boxes at entry to step 7 (pre-removal)" — no new
+///     field is added anywhere.
+///   * `ocr` with no analytic (no factory, or the pass never ran) — the pass never ran, so
+///     nothing was consumed and `text_boxes` is still the whole population; falls back to the
+///     `clean` reading.
+fn no_text_for(performing_ocr: bool, text_boxes_empty: bool, ocr: Option<&OcrAnalytic>) -> bool {
+    match (performing_ocr, ocr) {
+        (true, Some(ocr)) => ocr.num_boxes == 0,
+        _ => text_boxes_empty,
+    }
+}
 /// Everything stages 1–4 produced for one image — or for one strip segment (§16.14
 /// item 1) — before stage 5 turns it into user-facing files.
 #[derive(Debug)]
@@ -113,7 +132,7 @@ pub struct ChainOutputs {
     /// §12.3 step 2's availability set, ready for `pc_export`.
     pub sources: ExportSources,
     pub analytics: ImageAnalytics,
-    /// `true` when `PageData::text_boxes` was empty (§5.6's `NoTextDetected`).
+    /// The per-path §5 item 6 `no_text_for` decision for this image or strip segment.
     pub no_text: bool,
 }
 
@@ -222,7 +241,11 @@ pub fn run_stages(
         analytics.ocr = output.ocr_analytic.clone();
         output.page
     };
-    let no_text = page.text_boxes.is_empty();
+    let no_text = no_text_for(
+        options.performing_ocr,
+        page.text_boxes.is_empty(),
+        analytics.ocr.as_ref(),
+    );
 
     // §13.1: `panel-ocr ocr`'s job is "run OCR over the detected boxes and write a
     // CSV/TXT report" — stages 1–2 plus a report, and it has no `--output-dir` to write
@@ -601,5 +624,116 @@ fn cached_mask_output(
         text_layer: (extract_text && text_path.exists()).then(|| ImageHandle::from_path(text_path)),
         mask_data,
         analytics: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pc_core::{OcrAnalytic, Rect, RemovedBox};
+
+    /// An `OcrAnalytic` carrying the two fields these tests vary. `num_boxes` is §16.8
+    /// item 11's "number of tight boxes at entry to step 7 (pre-removal)"; `removed` is
+    /// the post-OCR survivor list §16.34 item 2 explicitly refuses to key the skip
+    /// decision on.
+    fn analytic(num_boxes: usize, removed: Vec<RemovedBox>) -> OcrAnalytic {
+        OcrAnalytic {
+            path: PathBuf::from("page01.png"),
+            num_boxes,
+            box_areas_ocred: Vec::new(),
+            box_areas_removed: Vec::new(),
+            removed,
+        }
+    }
+
+    fn a_removed_box() -> RemovedBox {
+        RemovedBox {
+            text: "ハロー".to_string(),
+            rect: Rect::new(18, 18, 85, 62),
+        }
+    }
+
+    /// §16.34 item 2 — the whole truth table of `no_text_for`, one row per line, each
+    /// expectation transcribed from item 2's doc comment rather than computed from the
+    /// function:
+    ///
+    /// | `performing_ocr` | `text_boxes_empty` | `ocr`             | expected | why (§16.34 item 2) |
+    /// |---|---|---|---|---|
+    /// | `false` | `true`  | `None`            | `true`  | `clean`, unchanged: §5 item 6's trigger |
+    /// | `false` | `true`  | `Some{num_boxes:2}` | `true` | `clean` **control**: the OCR filter discarded every box, so the page has nothing to mask and is still a skip — the predicate must not key off `ocr` being `Some` |
+    /// | `false` | `false` | `None`            | `false` | `clean`, boxes survive |
+    /// | `false` | `false` | `Some{num_boxes:2}` | `false` | same, with an analytic present |
+    /// | `true`  | `true`  | `Some{num_boxes:2}` | `false` | the defect row: §15's overrides emptied `text_boxes` by design, and 2 boxes entered step 7 |
+    /// | `true`  | `true`  | `Some{num_boxes:0}` | `true`  | the `ocr` path genuinely saw no boxes |
+    /// | `true`  | `true`  | `None`            | `true`  | the fallback arm: the pass never ran, so `text_boxes` is still the whole population |
+    ///
+    /// The `(false, false, _)` row of item 2's enumeration is expanded into both of its
+    /// `ocr` instantiations, which is strictly stronger than the single `_` row.
+    ///
+    /// What turns this red: reverting the call site to `text_boxes.is_empty()` fails row 5;
+    /// dropping the `performing_ocr` guard (keying on `ocr.is_some()` alone) fails row 2;
+    /// matching `(true, None)` to `false` fails row 7.
+    #[test]
+    fn no_text_for_matches_the_truth_table_declared_in_16_34_item_2() {
+        // clean path (`performing_ocr == false`): `text_boxes_empty` decides, alone.
+        assert!(
+            no_text_for(false, true, None),
+            "row 1: clean + empty text_boxes is §5 item 6's skip"
+        );
+        assert!(
+            no_text_for(false, true, Some(&analytic(2, Vec::new()))),
+            "row 2: clean + every box OCR-filtered away is still a skip (the control)"
+        );
+        assert!(
+            !no_text_for(false, false, None),
+            "row 3: clean + surviving boxes is not a skip"
+        );
+        assert!(
+            !no_text_for(false, false, Some(&analytic(2, Vec::new()))),
+            "row 4: clean + surviving boxes is not a skip, analytic or not"
+        );
+
+        // report path (`performing_ocr == true`): `OcrAnalytic::num_boxes` decides when an
+        // analytic exists, and `text_boxes_empty` decides when it does not.
+        assert!(
+            !no_text_for(true, true, Some(&analytic(2, vec![a_removed_box()]))),
+            "row 5: the defect — 2 boxes entered step 7, so the page HAS text"
+        );
+        assert!(
+            no_text_for(true, true, Some(&analytic(0, Vec::new()))),
+            "row 6: the ocr path saw zero boxes"
+        );
+        assert!(
+            no_text_for(true, true, None),
+            "row 7: no analytic — fall back to the clean reading of text_boxes"
+        );
+    }
+
+    /// §16.34 item 2's *rejected candidate*, pinned so it cannot be reintroduced: gating on
+    /// `ocr.removed.is_empty()` instead of `ocr.num_boxes == 0` "would report an OCR
+    /// **failure** as an **absence**".
+    ///
+    /// Both `removed` shapes are pinned to a hard-coded expectation rather than to each
+    /// other (a `f(a) == f(b)` pair would also hold for a predicate that returned the same
+    /// wrong value twice — cookbook rule 1). The `num_boxes == 0` row carries a non-empty
+    /// `removed`, a shape the pipeline never produces, asserted only to prove the predicate
+    /// ignores that field in the other direction too.
+    ///
+    /// What turns this red: implementing the rejected `removed.is_empty()` predicate — it
+    /// flips rows 1 and 3 below.
+    #[test]
+    fn no_text_for_ignores_the_removed_list_and_reads_num_boxes_only() {
+        assert!(
+            !no_text_for(true, true, Some(&analytic(2, Vec::new()))),
+            "an all-boxes-failed-OCR page (num_boxes 2, removed []) has text, not absence"
+        );
+        assert!(
+            !no_text_for(true, true, Some(&analytic(2, vec![a_removed_box()]))),
+            "the same num_boxes with a populated removed list reads the same way"
+        );
+        assert!(
+            no_text_for(true, true, Some(&analytic(0, vec![a_removed_box()]))),
+            "num_boxes == 0 reads as no-text regardless of removed"
+        );
     }
 }

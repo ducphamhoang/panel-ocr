@@ -41,5 +41,6 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 pc-testkit = { path = "../pc-testkit" }
+pc-ocr    = { path = "../pc-ocr", features = ["testkit"] }
 image      = { workspace = true }
 tempfile   = { workspace = true }

@@ -69,7 +69,8 @@ fn resolve_managed_model(
 }
 
 /// Apply the upstream `ocr` report-path overrides from §15.5.
-pub(crate) fn apply_report_overrides(profile: &mut Profile) {
+pub fn apply_report_overrides(profile: &mut Profile) {
+    profile.preprocessor.ocr_enabled = true;
     profile.preprocessor.ocr_blacklist_pattern = ".*".to_string();
     profile.preprocessor.ocr_max_size = 10_000_000_000;
 }
@@ -119,5 +120,34 @@ mod tests {
 
         assert_eq!(profile.preprocessor.ocr_blacklist_pattern, ".*");
         assert_eq!(profile.preprocessor.ocr_max_size, 10_000_000_000);
+    }
+
+    /// §16.34 item 3 — upstream's `run_ocr` sets **three** overrides
+    /// (`pcleaner/main.py:862-868`), and the port set only two: without
+    /// `profile.preprocessor.ocr_enabled = true` a profile that disabled OCR makes
+    /// `panel-ocr ocr` a second silent-empty-report path (no factory + `ocr_enabled ==
+    /// false` means the step-7 pass never runs per §16.8 item 3, `analytics.ocr` stays
+    /// `None`, and the run exits 0 having rendered `""`).
+    ///
+    /// The starting profile sets `ocr_enabled = false` explicitly — `Profile::default()`
+    /// already has it `true`, so building from the default would make this pass vacuously
+    /// (cookbook rule 1). The `assert!` above `apply_report_overrides` pins that premise.
+    ///
+    /// What turns this red: the third override being absent, exactly as at `HEAD`.
+    #[test]
+    fn report_profile_overrides_force_ocr_enabled_back_on() {
+        let mut profile = Profile::default();
+        profile.preprocessor.ocr_enabled = false;
+        assert!(
+            !profile.preprocessor.ocr_enabled,
+            "premise: this profile disables OCR, so the assertion below can fail"
+        );
+
+        apply_report_overrides(&mut profile);
+
+        assert!(
+            profile.preprocessor.ocr_enabled,
+            "§16.34 item 3: the report path forces ocr_enabled back to true"
+        );
     }
 }

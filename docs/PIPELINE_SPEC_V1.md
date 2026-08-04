@@ -837,7 +837,7 @@ From `DetectOutput.page`: `base_image` (for OCR crops), `raw_mask` (passed throu
 | **P5** | Padding tiers + `MaskingRegion` construction + `run()` wiring | simple |
 | **P6** | `pc-ocr`: `trait OcrEngine`/`OcrEngineFactory`, `MockOcrEngine` (scripted responses), blacklist-regex filter logic + analytics | simple |
 | **P7** | `pc-ocr`: manga-ocr ONNX backend (encoder/decoder sessions, greedy decode loop, vocab, preprocessing) — port from koharu `manga_ocr` — **"greedy decode loop" is SUPERSEDED by §16.30 item 4: upstream runs beam search (`num_beams=4`, `length_penalty=2.0`, `early_stopping=true`, `no_repeat_ngram_size=3`, `max_length=300`), measured at 12/12 against greedy's 10/12 on manga-ocr's own 12 published labels. Original wording kept per §16.19's convention. §16.30 item 3 also splits this task into P7 (`pc-ocr` only) plus a mandatory P8 (CLI/pipeline wiring, depends on P7); P8's own row is added by the P7/P8 task-breakdown plan, not by that ratification entry (§16.30 item 3(iii)).** | **heavy** |
-| **P8** | `pc-models` registry entries for the manga-ocr weights (§16.30 item 1's pin); `pc-cli`'s eager, image-independent `MangaOcrFactory` construction behind the `onnx` feature (fatal, verbatim-message refusal when the feature is absent, mirroring §16.12 item 2's detector precedent); `PipelineCtx::with_ocr` wiring into `run_clean` (gated on `profile.preprocessor.ocr_enabled`) and `run_ocr` (unconditional — that subcommand's purpose); `run_ocr`'s §15.5 report-path overrides (`ocr_blacklist_pattern = ".*"`, `ocr_max_size = 10^10`); removal of the two "v1 ships no OCR engine" `WARN`s this task's own existence makes false. Depends on P7 (§16.30 item 3, mandatory for v1.0, not optional follow-up). | simple |
+| **P8** | `pc-models` registry entries for the manga-ocr weights (§16.30 item 1's pin); `pc-cli`'s eager, image-independent `MangaOcrFactory` construction behind the `onnx` feature (fatal, verbatim-message refusal when the feature is absent, mirroring §16.12 item 2's detector precedent); `PipelineCtx::with_ocr` wiring into `run_clean` (gated on `profile.preprocessor.ocr_enabled`) and `run_ocr` (unconditional — that subcommand's purpose); `run_ocr`'s §15.5 report-path overrides (`ocr_blacklist_pattern = ".*"`, `ocr_max_size = 10^10` — **NARROWED by §16.34 item 4: a third override, `ocr_enabled = true`, is also required**); removal of the two "v1 ships no OCR engine" `WARN`s this task's own existence makes false. Depends on P7 (§16.30 item 3, mandatory for v1.0, not optional follow-up). | simple |
 
 Batching: `{P1, P2, P3, P4, P5}` one sequential call (all pure geometry/boilerplate on the same data structure); `{P6}` one call; `P7` isolated; `P8` one call, after `P7`.
 
@@ -1407,7 +1407,8 @@ All 10 items below were reviewed and decided by Fable (Senior Rust Engineer advi
 2. **`MaskRefineMode::Simple` for v1** (§8.3 step 5) — **DECIDED: ship Simple, do not port upstream's full `refine_mask`/`refine_undetected_mask`.** Verified the full algorithm (`textmask.py:18-214`): top-k grey/Otsu masks + XOR-minimizing merge + hole filling — real work, correctly flagged as the riskiest port in the project. Deciding evidence: the `demo_bubbles` fixtures live in `media/` (README demo assets) and are **never used by upstream's own test suite** — their exact producing version/profile is unverifiable. Porting the riskiest algorithm in the project to chase parity with fixtures of unknown provenance is a bad trade. **Consequence (not a contingency — the plan of record):** §10.7(B) item 15's upstream-image comparison is downgraded from a frozen gate to a **non-gating calibration report** (see §10.7(B) rewrite below); the frozen masking test is a regression lock against our own recorded-fixture pipeline output, calibrated by F2. `Annotation` mode remains the v1.5 door for a full refinement port.
 3. **Cleaned-image colour mode when a colour median meets a grayscale page** (§10.3 step 4) — **DECIDED: confirmed as specified**, with an upstream-accuracy correction. Upstream's base image is always 3-channel (`cv2.IMREAD_COLOR`, `ctd_interface.py:198`); its own `_clean.png` is RGB at `scale == 1` and is only restored to the original mode at export via `convert(original.mode)`. Our stage-level rule ("L if all medians achromatic, else RGB") is *export-equivalent*, not upstream-identical: since border-color computation is per-channel-symmetric, a grayscale page's medians are always exactly achromatic (r==g==b), and RGB→L is lossless in that case. Verified empirically against the `black_bubble` golden: its fill is exactly `(0,0,0)`, fully achromatic — confirming the premise that a colored fill would break this rule is false for all 7 demo_bubbles fixtures (all mode `L`). Implementation: composite in RGB internally, convert to `L` at write time when the rule says `L` — single code path, no branch duplication.
 4. **Tesseract deferred to v1.5** — **DECIDED: confirmed.** Verified `config.py:375` (`ocr_use_tesseract: bool = False` default) and `ocr/ocr.py:65-66` (when disabled, the factory returns `MangaOcr()` for every language). v1's manga-ocr-only OCR exactly matches upstream's own default-profile behavior; no correctness gap.
-5. **Fixture mapping correction** — **DECIDED: confirmed.** The CSV/TXT fixtures define the export-stage OCR report format (E4), not filter behavior. Clincher: `run_ocr` (the code path that produces this format) explicitly sets `ocr_blacklist_pattern = ".*"` and `ocr_max_size = 10**10` (`main.py:866-868`) — the filter is inert in that code path, so the fixtures cannot be filter-behavior tests.
+5. **Fixture mapping correction** — **DECIDED: confirmed.** **NARROWED by §16.34 item 3 — read it
+   before citing which overrides `run_ocr` applies.** The CSV/TXT fixtures define the export-stage OCR report format (E4), not filter behavior. Clincher: `run_ocr` (the code path that produces this format) explicitly sets `ocr_blacklist_pattern = ".*"` and `ocr_max_size = 10**10` (`main.py:866-868`) — the filter is inert in that code path, so the fixtures cannot be filter-behavior tests. (§16.34 item 3 adds the third override upstream also applies, `ocr_enabled = True`; it does not change this item's conclusion about the blacklist.)
 6. **Alpha-vs-luma noise mask** (§14.5) — **DECIDED: confirmed as a genuine upstream bug; use alpha.** Verified the exact mechanism: `denoiser.py:62` passes an RGBA `_combined_mask.png` crop into `generate_noise_mask`, which calls `grow_mask` (`image_ops.py`); `grow_mask`'s own docstring declares a mode-`"1"` (binary) input contract, but it receives RGBA and its first act, `mask.convert("L")`, takes RGB luma and silently discards alpha. A black fill `(0,0,0,255)` yields luma 0, so the mask vanishes regardless of full alpha coverage — this cannot be intentional; a mask's "is this pixel covered" signal must not depend on the *brightness* of its fill color. v1 uses alpha; the `black_bubble` denoise divergence from upstream is accepted (correct over identical).
 7. **Joint-channel RGB NLM for `colored_images = true`** (§14.7) — **DECIDED: deferral confirmed**, plus one addition. Verified `config.py:700`: `colored_images: bool = False` default, so v1's default path is unaffected. Addition: `pc-config` must emit a one-time `WARN` when a loaded profile sets `colored_images = true`, stating that v1 uses a joint-channel approximation and `color_filter_strength` is ignored until v1.5 — an opt-in setting silently behaving differently is not acceptable without a logged notice.
 8. **Nearest-neighbour mask upscale on export** (§14.8) — **DECIDED: confirmed, nearest uniformly.** Verified all five relevant upstream call sites: `image_export.py:205` (final_mask) NEAREST, `:221` (denoise_mask) **BILINEAR**, `:244` (inpainted_mask) NEAREST, plus `masker.py:107` and `denoiser.py:86` both NEAREST. Line 221 is the sole outlier across five sites operating on the same hard-edged fill-mask artifact; bilinear there manufactures interpolated colors that exist nowhere in the actual mask. Normalizing to nearest matches upstream's dominant, evident intent.
@@ -7077,6 +7078,197 @@ redefined at the start.
     **simple** and batchable with each other. `verbatim_paths.rs`'s documentation targets are
     **simple**. Nothing here is heavy: there is no model, no fixture re-recording and no
     numerical calibration in this task.
+
+## 16.34 `panel-ocr ocr` misclassifies OCR'd pages as `NoTextDetected` (joint architect + Senior Rust Engineer plan pass, 2026-08-04; user-reported against the packaged Windows `onnx` binary; **step-1a fresh-reader pass found five citation/attribution defects in the first transcription, corrected below — 2026-08-05**)
+
+**Status.** This entry transcribes a ratified bug-fix PLAN, not yet-implemented work. Both
+subagents independently reproduced the defect (the architect's `run_stages` probe and the
+engineer's `cargo test -p pc-pipeline --test x1_ocr_report_path`, both against today's `HEAD`)
+before proposing the same predicate. The first transcription of this plan overclaimed test
+coverage that does not exist and mis-cited three spec clauses; a fresh `fresh-reader` spawn
+caught all of it before commit (step 1a's purpose exactly), and this version corrects each
+finding rather than silently replacing the prior text — see the parenthetical items below.
+
+1. **The defect, in one sentence: `panel-ocr ocr` reports "no text detected" and an empty
+   CSV/TXT for every image that has any, because §15's report-path overrides intentionally empty
+   `PageData::text_boxes` and `pc-pipeline` reads that emptiness as absence.** Reproduced against
+   the real Windows `onnx` binary on a real manga page: `clean` (with OCR enabled) detects and
+   OCRs 8 boxes; `ocr` on the identical image with the identical profile reports
+   `0 completed, 1 skipped, 0 failed … no text detected` and writes an empty report. §15 item 5
+   and §16.11 item 11 already establish *why* `text_boxes` ends up empty there (every box is
+   OCR'd and moved into `OcrAnalytic.removed`, by design); what was never checked is that
+   `crates/pc-pipeline/src/single.rs`'s `no_text = page.text_boxes.is_empty()` (the one
+   `§5 item 6` trigger) cannot tell that intentional emptiness apart from the genuine one.
+
+2. **Fix: the skip decision is declared per-path in one named function, not inferred from
+   `text_boxes` alone.**
+
+   ```rust
+   /// §5 item 6's skip decision, declared per path rather than inferred from one field: the
+   /// `clean` and `ocr` paths mean different things by an empty `text_boxes` (§16.34).
+   ///
+   ///   * `clean` (`performing_ocr == false`) — unchanged, bit for bit: `text_boxes.is_empty()`
+   ///     is exactly §5 item 6's trigger.
+   ///   * `ocr` with an OCR analytic present — §15's overrides move every OCR'd box out of
+   ///     `text_boxes` into `OcrAnalytic.removed` (§16.11 item 11), so `text_boxes` is empty *by
+   ///     design*. The population §5.6 counts is `OcrAnalytic.num_boxes`, already defined by
+   ///     §16.8 item 11 as "the number of tight boxes at entry to step 7 (pre-removal)" — no new
+   ///     field is added anywhere.
+   ///   * `ocr` with no analytic (no factory, or the pass never ran) — the pass never ran, so
+   ///     nothing was consumed and `text_boxes` is still the whole population; falls back to the
+   ///     `clean` reading.
+   fn no_text_for(performing_ocr: bool, text_boxes_empty: bool, ocr: Option<&OcrAnalytic>) -> bool {
+       match (performing_ocr, ocr) {
+           (true, Some(ocr)) => ocr.num_boxes == 0,
+           _ => text_boxes_empty,
+       }
+   }
+   ```
+
+   Rejected candidate, named because it was on the table: gating on `ocr.removed.is_empty()`
+   instead of `ocr.num_boxes == 0`. Wrong — a page whose every box hit `StageError` in
+   `recognize()` (DEVIATION(9), fail-open) has `num_boxes > 0` and `removed == []`; that reading
+   would report an OCR **failure** as an **absence**, the same category error this entry fixes.
+
+   **What does not change, stated because each is a live constraint this fix must not cross:**
+   `outcome_for`, `ChainOutputs.no_text`'s call sites, `process_image`, and §16.14 item 2's
+   strip conjunction (`no_text` stays the conjunction over segments) are untouched — only the
+   value fed into the existing `no_text` slot changes, for the `performing_ocr` path only. The
+   OCR discard pass itself (`crates/pc-preprocess/src/ocr_filter.rs`) is untouched: §16.8 item 12
+   already closes the alternative fix ("make the pass keep boxes when `performing_ocr`") by
+   pinning that flag to step 2 only. `ImageOutcome::Skipped`'s shape (§16.12 item 12) is
+   untouched — it still carries no analytics field, which is exactly why the fix has to sit at
+   the `Completed`/`Skipped` classification and not downstream of it: once a page is misclassified
+   `Skipped`, its OCR data has nowhere to go. `ChainOutputs.no_text`'s doc comment at
+   `single.rs:116` ("`true` when `PageData::text_boxes` was empty") becomes false the moment this
+   lands and must be corrected in the same diff to name `no_text_for`'s three-way reading instead.
+
+3. **SUPERSEDES: §15 item 5** — upstream's `run_ocr` sets **three** overrides
+   (`pcleaner/main.py:862-868`, pinned commit `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`, quoted
+   verbatim): `profile.preprocessor.ocr_enabled = True`, `profile.preprocessor.ocr_max_size =
+   10**10`, and `profile.preprocessor.ocr_blacklist_pattern = ".*"`. The Rust port's
+   `apply_report_overrides` (`crates/pc-cli/src/ocr.rs`) sets only the last two. Item 5's
+   clincher sentence quotes only those two and is narrowed accordingly; its actual conclusion
+   (the CSV/TXT fixtures define report format, not filter behavior, because the blacklist is
+   inert on that path) is untouched by this addition — the third override does not change the
+   blacklist's behavior. §9.6's fixtures bullet also states the two-override fact without
+   enumerating a third and remains accurate for the same reason (its claim is about the
+   blacklist's inertness, not about the exhaustive override list); not marked. §16.11 item 11's
+   two-override mention is likewise unaffected, but its further claim that "every box is
+   'removed' and `removed` is the complete, ordered box list" holds only where every
+   `recognize()` call on a candidate box succeeds — item 5 below documents a `Completed` page
+   where a box survives OCR failure and is never removed at all, so `removed` there is *not* the
+   complete box list. That is a scope gap in item 11's "every", not a wrong override count, and
+   is not a reversal of item 11's actual point (reading only `removed` on the happy path is still
+   not a gap); recorded here rather than left as a silent "both remain accurate."
+
+   Without the third override, a profile with `ocr_enabled = false` makes `panel-ocr ocr` a
+   *second*, independent silent-empty-report path: `apply_report_overrides` never forces
+   `ocr_enabled`, so the step-7 OCR pass simply never runs — §16.8 item 12 pins that
+   `performing_ocr` alone gates only the strict-language drop in step 2 and does **not** by
+   itself enable the step-7 pass, which needs a factory **and** `ocr_enabled` (§16.8 item 3) —
+   `analytics.ocr` stays `None`, and `no_text_for`'s fallback arm (item 2 above) reads the
+   still-full `text_boxes` as "has text": `Completed` with an empty analytics slice, rendering
+   `""` at exit 0. §16.8 item 3's own stated rationale for requiring a factory **and**
+   `ocr_enabled` gate together is exactly this hazard ("an all-empty analytic is indistinguishable
+   from 'ran and found no candidates'"). Fix: `apply_report_overrides` also sets
+   `profile.preprocessor.ocr_enabled = true`.
+
+4. **SUPERSEDES: §9.5** — the P8 row there enumerates the two overrides in parenthetical form
+   ("`run_ocr`'s §15.5 report-path overrides (`ocr_blacklist_pattern = ".*"`,
+   `ocr_max_size = 10^10`)"), which item 3 narrows to name the third. Bare-section target per
+   §16.26 item 3(c)'s convention (a markdown-table row carries no `^N. ` item marker), so a
+   `§16.34` back-pointer anywhere in §9.5 satisfies the gate. **§13's row 31 is deliberately NOT
+   marked**, corrected from the first transcription of this entry, which claimed both rows
+   "name only two overrides": row 31's actual text is a bare pointer — "`run_ocr`'s §15.5
+   report-path overrides" — with no enumeration to narrow, so nothing there is stale. §13's own
+   claim that `run_ocr` wires the OCR factory *unconditionally* is about factory construction, not
+   about which profile fields get overridden, and stays true after this fix. Both rows' actual
+   task scope (P8, already shipped) is unaffected either way.
+
+5. **Open question, decided rather than left implicit — and the reachability claim in the first
+   transcription of this item was WRONG, corrected here rather than silently fixed: a
+   `Completed` page whose OCR pass ran but whose `removed` list is empty (every candidate box
+   failed OCR, had no engine for its language, or missed the canvas) renders a phantom header** —
+   `write_txt` emits `"path: \n"` with no lines, `write_csv` emits a bare header row, for a page
+   that produced no usable text. **This is reachable at today's `HEAD`, before any part of this
+   fix lands** — a page on which the OCR pass keeps every box via one of those three fail-open
+   paths already has a non-empty `text_boxes` today, so `no_text` is already `false` and the page
+   is already `Completed` carrying an analytic with `removed == []`; the fresh-reader pass
+   confirmed this with a standalone probe against `HEAD` (`MockOcrEngine::failing()`, 2 detected
+   boxes, `performing_ocr = true`): `num_boxes=2, removed=[]`, `ImageOutcome::Completed`, TXT
+   `"page01.png: \n"`, CSV header-only. This fix does not create the case or change whether it is
+   `Completed` — item 2's predicate still reads `num_boxes == 0` as false here, so the page stays
+   `Completed` exactly as it is today. **Decided: `pc-cli::ocr_report` skips an `OcrAnalytic`
+   whose `removed` is empty**, matching upstream's own per-box (not per-page) report shape
+   (`pcleaner/ocr/ocr.py`'s `format_output_plain` writes the path header only inside the per-box
+   loop, so a page contributing zero boxes contributes no header). One line in
+   `crates/pc-cli/src/lib.rs::ocr_report`; `pc_export::render_ocr_report` and both frozen writers
+   are untouched. This is a judgment call grounded in a *reading* of upstream, not a run of it
+   (provoking an all-boxes-fail page there needs a broken engine) — recorded as such rather than
+   silently promoted to a verified fact. Residual, recorded rather than fixed here: after this
+   change a page whose every box failed OCR still renders `""` while the batch summary counts it
+   `completed`; the per-box `WARN` `run_ocr_pass` already logs on engine failure is the only
+   signal, which is acceptable but is the mirror of the category error item 2 rejects and is
+   worth a reader noticing.
+
+6. **Tests. The first transcription of this item claimed two tests exist that do not — corrected
+   here to state only what is actually on disk, and what the implementation task must still add.**
+   Two files exist today, untracked pending this ratification, each demonstrated red against
+   `HEAD` (not green — no fix is implemented yet):
+   - `crates/pc-pipeline/tests/x1_ocr_report_path.rs` — four integration tests: an OCR run over 2
+     detected boxes completes with both boxes in `analytics.ocr.removed` (identity-checked
+     against a hand-derived vector, not just a count); a page with 0 detected boxes is still
+     `Skipped { NoTextDetected }` even under `performing_ocr`; a `clean`-path page whose OCR
+     filter discarded every box is still `Skipped` and still exported (the control that stops
+     this fix from widening past the report path — pins `g1_chain.rs`'s frozen
+     `a_page_without_text_is_skipped_but_still_exported` sibling behavior, grounded in
+     §5 item 6/§16.12 items 5 and 12); and the literal
+     batch-summary line `"1 completed, 0 skipped, 0 failed"` for the reproduced symptom. Measured
+     at `HEAD`: 2 passed (the two controls), 2 failed (the two bug rows), exactly as expected
+     pre-fix.
+   - `crates/pc-cli/tests/x1_ocr_report_rows.rs` — three integration tests driving the real
+     `apply_report_overrides` + `run_batch` + `ocr_report` composition (cookbook rule 12: the
+     defect lived in the join, not in any one piece): the CSV report carries one row per OCR'd
+     box for a page with text, against a hand-derived expected string; the TXT report carries
+     both recognised strings; a page with zero detected boxes renders `""`, not a bare header,
+     preserving §16.11 item 12's existing rule that "an empty `analytics` slice renders `\"\"`
+     for both formats (not a bare CSV header)" — **corrected citation: the first transcription
+     named item 11, which is the `removed`-is-the-complete-list clause, not this rule.** This file
+     does not compile at `HEAD` (`ocr_report` and `apply_report_overrides` are private), which is
+     itself expected pre-fix.
+   - **Not yet drafted, and must be added by the engineer before Codex implements — the first
+     transcription incorrectly claimed these already existed:** (a) a truth-table unit test over
+     `no_text_for` itself, covering all six `(performing_ocr, text_boxes_empty, ocr)` rows named
+     in item 2's doc comment, including the two rows no integration test reaches cheaply
+     (`performing_ocr = true` with no analytic; a `clean`-path page where every box was OCR-filtered
+     away, confirming `no_text_for` still returns the `clean` reading and does not accidentally
+     key off `ocr` being `Some`); (b) a test proving `apply_report_overrides` forces
+     `profile.preprocessor.ocr_enabled` back to `true` starting from a profile that set it
+     `false` — built from `false` rather than `Profile::default()`'s already-`true` value, so it
+     cannot pass vacuously (cookbook rule 1); (c) a test for item 5's decided behaviour: an
+     `OcrAnalytic` with `num_boxes > 0` and `removed == []` (an all-boxes-fail-open page) renders
+     `""`, not a bare header — the one case in this entire fix that changes previously-observable
+     output.
+   - `report_profile_overrides_disable_report_filtering` (`crates/pc-cli/src/ocr.rs`) is
+     **frozen and unedited** — it is a real instance of cookbook rule 1 (its name claims more
+     than "two struct fields hold the values I just assigned"), but the exit is addition, not
+     amendment (cookbook rule 8 exit 1): the tests above and the two still to be drafted gate the
+     seam it never reached.
+   - Not required as a CI gate: an `onnx`-tier end-to-end `panel-ocr ocr` smoke test needs real
+     manga-ocr weights and cannot run without them; the tests above use `MockDetector` +
+     `pc-ocr`'s test-kit OCR double and gate the defect without a model.
+
+7. **Task classification: simple, one Codex call, sequential within it.** Scope: `no_text_for` +
+   its call site + the corrected `ChainOutputs.no_text` doc comment (`crates/pc-pipeline`); then
+   the third override + the `ocr_report` empty-`removed` skip + `pub` visibility on `ocr_report`
+   and `apply_report_overrides` needed for the new integration tests + a `pc-ocr` test-kit
+   dev-dep in `crates/pc-cli/Cargo.toml` (`crates/pc-cli`, `crates/pc-preprocess` untouched). Not
+   split into two calls: `x1_ocr_report_rows.rs` cannot compile without the `pc-cli` half and
+   cannot go green without the `pc-pipeline` half. Must not be batched with any other task
+   touching `crates/pc-pipeline/src/single.rs` or `crates/pc-cli/src/lib.rs` (cookbook rule 11's
+   collision pattern). The three tests named in item 6 as not-yet-drafted must be written and
+   confirmed red before Codex touches source, per CLAUDE.md's TDD loop.
 
 ## 16. Summary of what v1 is NOT
 

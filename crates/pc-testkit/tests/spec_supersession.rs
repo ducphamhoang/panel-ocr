@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 23;
+const EXPECTED_PARSED_CLAIMS: usize = 25;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -95,6 +95,14 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.33", "16"),
     ("16.33", "16.12 item 21"),
     ("16.33", "16.22 item 1"),
+    // §16.34's two markers. `("16.34", "9.5")` is a BARE-SECTION target, deliberately so — §9.5's
+    // P8 row lives inside a markdown table, the same shape §16.30's `9.5`/`13` rows above already
+    // document; a back-pointer anywhere in §9.5 satisfies the gate. §13's row 31 is deliberately
+    // NOT superseded: unlike §9.5's row, it never enumerated the overrides it references (a bare
+    // pointer to §15.5), so nothing there is stale — the step-1a fresh-reader pass caught the
+    // first transcription's mistaken claim that both rows needed a marker.
+    ("16.34", "15 item 5"),
+    ("16.34", "9.5"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.

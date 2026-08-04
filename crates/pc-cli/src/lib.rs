@@ -441,12 +441,14 @@ fn render_analytics(summary: &pc_pipeline::BatchSummary) {
     }
 }
 
-fn ocr_report(summary: &pc_pipeline::BatchSummary, format: pc_export::ReportFormat) -> String {
+pub fn ocr_report(summary: &pc_pipeline::BatchSummary, format: pc_export::ReportFormat) -> String {
     let analytics = summary
         .outcomes
         .iter()
         .filter_map(|outcome| match outcome {
-            ImageOutcome::Completed { analytics, .. } => analytics.ocr.as_ref(),
+            ImageOutcome::Completed { analytics, .. } => {
+                analytics.ocr.as_ref().filter(|ocr| !ocr.removed.is_empty())
+            }
             _ => None,
         })
         .cloned()
