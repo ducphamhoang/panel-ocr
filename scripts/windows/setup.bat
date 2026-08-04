@@ -30,6 +30,7 @@ if exist "%CONFIG_FILE%" (
     echo   %CONFIG_FILE%
     echo.
     set /p OVERWRITE="Overwrite it? [y/N]: "
+    for /f "tokens=* delims= " %%A in ("%OVERWRITE%") do set "OVERWRITE=%%A"
     if /i not "%OVERWRITE%"=="y" (
         echo Leaving the existing config untouched. Nothing changed.
         pause
@@ -42,6 +43,12 @@ echo Where should panel-ocr store its cache and downloaded models?
 echo Press Enter to use the default:
 echo   %DEFAULT_DIR%
 set /p CACHE_DIR="Path: "
+rem `set /p` fed from a pipe (as this script's own CI smoke test does, and as some terminal
+rem emulators do) can yield a single space rather than a true empty string for a blank line -
+rem confirmed by this exact failure on windows-latest (release run 30912573913). Trim leading
+rem whitespace before the empty check, so both real keyboard Enter and a piped blank line take
+rem the same default-substitution path.
+for /f "tokens=* delims= " %%A in ("%CACHE_DIR%") do set "CACHE_DIR=%%A"
 if "%CACHE_DIR%"=="" set "CACHE_DIR=%DEFAULT_DIR%"
 
 if not exist "%CACHE_DIR%" (
@@ -72,6 +79,7 @@ echo   cache_dir = %CACHE_DIR%
 echo.
 
 set /p DOWNLOAD="Download the ONNX model weights now (~90 MB)? [Y/n]: "
+for /f "tokens=* delims= " %%A in ("%DOWNLOAD%") do set "DOWNLOAD=%%A"
 if /i "%DOWNLOAD%"=="n" (
     echo.
     echo Skipped. Run this later to fetch the models:
