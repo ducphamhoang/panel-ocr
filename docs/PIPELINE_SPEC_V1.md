@@ -3,7 +3,10 @@
 **Status:** Draft from Technical Architecture (Opus) — pending Senior Rust Engineer
 co-review (test code + disagreement check) per CLAUDE.md's Plan phase.
 **Scope:** v1 milestone only — CLI + detect → preprocess → mask → denoise → export
-**Fixed constraints:** everything in `docs/ARCHITECTURE_DECISIONS.md` (GPL-3, full-Rust/no-Python-runtime, `ort` 2.0.0-rc.12 pinned, CPU-only EP, TOML config, stage-based crates, fresh `clap` CLI, Linux + macOS, GUI/inpaint/PSD deferred)
+**Fixed constraints:** everything in `docs/ARCHITECTURE_DECISIONS.md` (GPL-3, full-Rust/no-Python-runtime, `ort` 2.0.0-rc.12 pinned, CPU-only EP, TOML config, stage-based crates, fresh `clap` CLI, Linux + macOS, GUI/inpaint/PSD deferred). The platform constraint here reads
+"Linux + macOS" for v1 only; Windows joins it at v1.1 per §16.33, and
+`docs/ARCHITECTURE_DECISIONS.md`'s "Platform support" section is the authority this line forwards
+to.
 
 ---
 
@@ -1376,6 +1379,8 @@ Fresh, idiomatic design per decision #6 — no docopt compatibility. Verbosity m
 
 18. **Rescaled-box clamp to image bounds — ratified by §16.27 item 9, which re-grounds it.** After truncating rescaled detector coordinates to `i32`, v1 clamps `x1,y1` to `>= 0` and `x2,y2` to `<= image_size`. Upstream does **not** do this: `grep -rn clip_coords` over the pinned checkout `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3` exits 1 (no hit in any file), and the only clamping in the vendored yolov5 helper is IoU arithmetic — `yolov5_utils.py:166` comments `.clamp(0)` and `:169` calls it, both inside `box_iou`'s intersection computation, and they are that file's only two occurrences of `clamp` or `clip`. So nothing upstream bounds these coordinates to the frame at any point — verified by grep, not inferred. v1 clamps because `run()` must produce a `PageDataRaw` that passes its own `validate()`, an invariant that is ours and has no upstream counterpart — which is what makes this a deliberate divergence and not the port it was previously described as. The clamp is unchanged in behaviour by that re-grounding: no relaxation, no `validate()` change, no deletion. The implementation site must carry `DEVIATION(18)` at the clamp in `crates/pc-detect/src/yolo.rs`, that file's doc comment must stop citing `clip_coords`, and so must the comment at `crates/pc-detect/tests/d5_yolo.rs:297`, which repeats the withdrawn citation at a second site. All three are **authorised by this entry** and are follow-up work at the time it lands; §16.27 item 9 enumerates them, with the reason the enumeration is explicit rather than summarised, rather than leaving them implicit.
 
+19. **Windows cache root is `%LOCALAPPDATA%`, not upstream's `%APPDATA%` — ratified by §16.33 item 3 (maintainer, 2026-08-04).** Upstream PanelCleaner, run as the tiebreak oracle, places **both** its cache and its config under `%APPDATA%` on Windows. v1.1 splits them: cache under `%LOCALAPPDATA%\panel-ocr`, config under `%APPDATA%\panel-ocr`. Reason: `%APPDATA%` roams with the user profile on a domain-joined machine, and a regenerable model/image cache — model weights are ~95 MB for the detector alone — must not be copied across the network on every logon. This is a deliberate divergence from measured upstream behaviour, not a port, which is why it is registered rather than left as prose. The implementation site is the Windows branch of the resolver in `crates/pc-cli/src/paths.rs` and must carry `DEVIATION(19)`; that comment **exists** as of 2026-08-04, at `crates/pc-cli/src/paths.rs:90` in `cache_dir`'s Windows arm — the register entry landed with the ratification and the site comment landed with the implementation, the same sequencing `DEVIATION(16)` went through — item 16 above still describes that comment as not yet added, which is stale: it exists at `crates/pc-cli/src/detector.rs:36` as of 2026-08-04. Correcting item 16's sentence is a separate, pre-existing matter and is not done by this item. Linux and macOS roots are unchanged by this item.
+
 Each of these must appear as a `// DEVIATION(n): ...` comment at the implementation site referencing this section, so a future parity investigation finds them immediately.
 
 **Not registered here: `UpstreamBoxOutsideFrame`.** §16.27 item 11 ratifies this as a decision
@@ -2439,7 +2444,17 @@ stage crate's API below was traced against the **already-implemented, frozen** s
     `strip::merged_strip_export`, and `pc_cli`'s `run_clean`, `run_ocr`, `run_profile`,
     `run_cache`, `run_models`.
 
-21. **Two hidden flags beyond §13.1's surface**, both `hide = true` so the documented
+21. **PARTLY SUPERSEDED by §16.33 item 3 — read it before citing this item's cache/config
+    default roots.** Exactly two things in this item are replaced there: the platform
+    enumeration for the default roots (Windows is added, with `%LOCALAPPDATA%` for cache and
+    `%APPDATA%` for config), and the second clause of the no-new-dependency parenthetical
+    ("and v1 is Linux + macOS only"). The `--cache-dir > config.cache_dir > platform default`
+    precedence, the single `paths::resolve_cache_root` funnel, the hidden-flag rationale, the
+    recovery-command-from-resolved-state rule, the POSIX single-quote rule and the non-UTF-8
+    `Path::display()` limitation all stand unchanged. §16.33 item 6 adds a PowerShell quoting
+    flavor beside the POSIX rule for Windows hosts; it does not alter the POSIX rule.
+
+    **Two hidden flags beyond §13.1's surface**, both `hide = true` so the documented
     surface is unchanged: `--detector <SPEC>` (item 2) and `--cache-dir <DIR>`. The
     latter is accepted by `clean`/`ocr` and by every `models` and `cache` subcommand,
     so `models download --cache-dir DIR` and `cache clear --models --cache-dir DIR`
@@ -2452,7 +2467,9 @@ stage crate's API below was traced against the **already-implemented, frozen** s
     `~/Library/Caches/panel-ocr` (macOS), falling back to `./.panel-ocr-cache` when
     neither `$XDG_CACHE_HOME` nor `$HOME` is set. No new third-party dependency is
     taken for this (`dirs` is not in `[workspace.dependencies]` and v1 is Linux +
-    macOS only). The recovery suggestion is derived from the resolved cache root used
+    macOS only — the second half of that parenthetical is superseded by §16.33 item 3,
+    which adds the Windows row; `dirs` still stays out of the manifest).
+    The recovery suggestion is derived from the resolved cache root used
     by the failing operation, not from the presence of a `--cache-dir` flag. General
     rule: a suggested recovery command must be computed from the state the failing
     operation actually used, not from the flags it happened to receive, because a
@@ -3615,6 +3632,15 @@ because it is a **scope change**, not a gap-fill.
    `ort/src/ep/directml.rs` gates `supported_by_platform()` on
    `cfg!(target_os = "windows")`. TensorRT/NVRTX need `libnvinfer.so.10`, which no `ort`
    distribution ships.
+
+   **The DirectML sentence above is RE-GROUNDED by §16.33 item 11 — read it before citing this
+   paragraph.** Its argument ("the provider requires Windows") was vacuous only while Windows was
+   not a target, and Windows becomes a supported platform at v1.1, so per §16.23 item 4's mirror
+   rule it cannot carry forward unqualified. The **verdict is unchanged** — DirectML stays v2 —
+   and so is the TensorRT/NVRTX sentence, whose reason is platform-independent. The replacement
+   ground is item 2's non-CPU-provider carve-out plus the absence of any Windows GPU CI runner.
+   Nothing else in this item changes: CUDA still ships at v1.5 opt-in, and CoreML, `.pt`/torch
+   loading and multi-device dispatch stay v2.
 
 2. **CARVE-OUT to §5 item 7 (line 461), which is the clause CUDA actually violates.** §5
    item 7 requires *"identical inputs + identical config must produce identical outputs …
@@ -6554,6 +6580,504 @@ does not exist yet, as expected.
    by pc-detect's own self-dev-dependency on itself with bench-tuning enabled, which is a separate,
    known, out-of-scope fact, not a defect this gate is meant to catch.
 
+## 16.33 Windows becomes a supported platform at v1.1 (maintainer ratification, 2026-08-04; joint architect + Senior Rust Engineer plan pass)
+
+**Status, stated first because it changes how to read the rest: this entry transcribes a PLAN and
+its ratifications, not accomplished work.** At the time it lands, no source-side implementation
+exists — `Platform`, `EnvSource`/`ProcessEnv`/`MapEnv`/`DirEnv`, `Shell`, `resolve_editor`, the
+new `.gitattributes` rows and the CI matrix row are all owed by the TDD task that follows.
+Recorded this way rather than as fact, following §16.27 item 9's precedent of enumerating
+authorised follow-up work explicitly instead of leaving it implicit.
+
+The item-15 test files are written first, and their status was **measured on 2026-08-04**, not
+assumed — the first version of this preamble claimed none of the seven compiled, which was wrong
+for four of them:
+
+| file | status against today's source |
+|---|---|
+| `crates/pc-cli/tests/x1_platform_paths.rs` | does not compile (`E0432`: no `Platform`/`DirEnv`/`MapEnv`/`ProcessEnv` in `paths`) |
+| `crates/pc-cli/tests/x1_shell_quoting.rs` | does not compile (`E0432`: no `Platform`/`Shell` in `paths`) |
+| `crates/pc-cli/tests/x1_editor.rs` | does not compile (`E0432`: no `Platform`/`MapEnv`, no `resolve_editor`) |
+| `crates/pc-testkit/tests/platform_claim_sites.rs` | compiles; 4 pass, 2 fail (four sites do not yet cite §16.33) |
+| `crates/pc-testkit/tests/eol_normalisation.rs` | compiles; 6 pass, 1 fail (the seven `-text` rows are not in `.gitattributes` yet) |
+| `crates/pc-testkit/tests/ci_matrix.rs` | compiles; 4 pass, 1 fail (`ci.yml`'s default tier lists no Windows runner) |
+| `crates/pc-testkit/tests/verbatim_paths.rs` | compiles; **all pass**, because both documents it gates were written by this entry |
+
+`verbatim_paths.rs` being green on arrival is worth stating plainly rather than glossing: it is
+currently a gate against *future* drift and it proves nothing about undone work. Its own history is
+the reason to distrust an all-green documentation gate — its first version passed a mutation that
+reverted E1 (see the file's `RATIFIED_RESOLUTION_ROWS` doc comment), and it was rewritten to match
+whole table rows because of it.
+
+**This preamble does not exempt anything from CLAUDE.md's commit bar, and cannot.** That document
+governs when work is committable; this one cannot grant itself a waiver from it. The plain fact is
+only that tests-written-first leave `cargo test --workspace` non-building (four `E0432`s across the
+three files above — `x1_editor.rs` raises two, one for its `paths` imports and one for
+`resolve_editor`)
+and `clippy` failing the same way, for the documented reason that the interface in item 5 does not
+exist yet. Nothing from this pass is committed in that state: the commit happens after the TDD loop
+below, once Codex's implementation makes the workspace green again — the normal
+tests-first → implement → verify → commit sequence, with the bar applied at the end of it, not
+redefined at the start.
+
+1. **What was ratified, and what needed no ruling.** Three open escalations from the plan were
+   decided by the maintainer on 2026-08-04; three were already settled by independent convergence
+   of the two Opus subagents and are recorded here rather than re-argued. There was **no
+   architect/Rust-Engineer disagreement on any design shape** — both passes independently
+   produced a pure platform-parameterized resolver over an injectable environment, no `dirs`
+   dependency, and a shell-flavor enum with a target-parameterized constructor plus a host
+   constant — so Fable was not convened, and this is a consensus transcription, which is
+   precisely the class §16.24's process notes and CLAUDE.md step 1a treat as the least-adversarial
+   and therefore most defect-prone.
+
+   | escalation | subject | disposition |
+   |---|---|---|
+   | E1 | cache/config root on Windows | **RATIFIED (maintainer):** `%LOCALAPPDATA%` for cache, `%APPDATA%` for config — the OS-convention split. Registered as §14 item 19 / `DEVIATION(19)`; see item 3. |
+   | E2 | shell flavor for pasted recovery commands | Settled by convergence: PowerShell only. `cmd.exe` explicitly out of scope; see item 6. |
+   | E3 | XDG precedence | Settled by convergence: XDG variables are honoured first on **every** platform, Windows included; see item 4. |
+   | E4 | `xtask` scope on Windows | **RATIFIED (maintainer):** compile plus its non-model tests only; see item 9. |
+   | E5 | editor fallback | Accepted as scoped: `notepad.exe` on Windows only; see item 7. |
+   | E6 | `onnx` feature tier on Windows | **RATIFIED (maintainer):** ship the default tier now regardless of the `ort` Windows linking issue; see item 10. |
+
+2. **The platform-claim-site enumeration — measured on 2026-08-04, and the measurement itself
+   found a defect in how it was first taken.** Cookbook rule 14 requires enumerating every reader
+   of a shared claim and recording the enumeration. The shared claim here is "this project targets
+   Linux and macOS". A line-based `grep -rn "Linux + macOS"` over the tracked tree returns **7**
+   hits and **misses an eighth**: §16.12 item 21's claim wraps across two physical lines
+   (`... and v1 is Linux +` / `macOS only). ...`), so no line contains the phrase. Re-running the
+   scan over whitespace-flattened file text returns **8**. The wrapped one is the single most
+   important site in the list, because it is the clause that fixes the cache and config roots.
+   That is why `crates/pc-testkit/tests/platform_claim_sites.rs` (item 15) flattens whitespace
+   before scanning and carries a synthetic wrapped-claim control: the naive form of this check was
+   measurably blind to the site that mattered most.
+
+   The eight occurrences sit in **five** files. The table below has seven rows because it is keyed
+   by *location within a file*, not by file — `docs/PIPELINE_SPEC_V1.md` carries three of them in
+   three different places, and `README.md` carries two in one row. Counted three ways, so no reader
+   has to guess which number is which: **8** occurrences, **7** locations, **5** files. (The gate in
+   `crates/pc-testkit/tests/platform_claim_sites.rs` holds **6** files, which is a fourth number and
+   deliberately not any of these three: it adds `docs/ARCHITECTURE_DECISIONS.md`, which carried zero
+   occurrences of the claim and is included on the separate ground given below.)
+
+   | location | occurrence(s) | what it governs |
+   |---|---|---|
+   | `docs/PIPELINE_SPEC_V1.md` line 6 | 1 | the "Fixed constraints" preamble, which forwards to `docs/ARCHITECTURE_DECISIONS.md` |
+   | `docs/PIPELINE_SPEC_V1.md` §16.12 item 21 | 1 (wrapped) | the cache/config default roots and the "no new third-party dependency" argument |
+   | `docs/PIPELINE_SPEC_V1.md` §16 out-of-scope list | 1 | the global out-of-scope bullet |
+   | `README.md` lines 68, 99 | 2 | the user-facing platform statement and the roadmap checkbox |
+   | `.github/workflows/ci.yml` line 8 | 1 | the CI matrix comment, which cites `docs/ARCHITECTURE_DECISIONS.md` |
+   | `crates/pc-cli/src/paths.rs` line 3 | 1 | the module doc justifying hand-rolled directory discovery |
+   | `crates/pc-cli/tests/x1_args.rs` line 363 | 1 | the doc comment justifying the `unix` gate on the paste-safety test (the comment's own prose says `#[cfg(unix)]`; the attribute is actually `#[cfg(all(feature = "onnx", unix))]`) |
+
+   Two of those sites — the spec preamble and `ci.yml` — cite `docs/ARCHITECTURE_DECISIONS.md`
+   for the platform list, and that file **had no platform-support section at all**: its "Fixed
+   constraints" role was asserted by its readers and never discharged by the document. This pass
+   adds one (`docs/ARCHITECTURE_DECISIONS.md`, "Platform support"), so both citations resolve to
+   real text. That absence is itself the reason the claim drifted across five files with no single
+   owner. It is also why `platform_claim_sites.rs` gates six files rather than the five measured
+   ones: a gate on the citers that left the cited authority free to stay silent would protect the
+   wrong end.
+
+   `crates/pc-cli/tests/x1_args.rs` is a FROZEN test file. **This entry authorises a
+   COMMENT-ONLY edit there** — adding a `§16.33` pointer to the doc comment at line 363, whose
+   stated justification stops being true at v1.1. That justification, **re-flowed** (in the source it
+   wraps across a `///` line break after `macOS`, so this is not a byte-verbatim quotation):
+   "v1 is Linux + macOS only, so a POSIX shell is always present". No assertion, no `#[cfg]` attribute, no test name and no fixture in that
+   file may change: the test stays `#[cfg(all(feature = "onnx", unix))]` and keeps asserting
+   exactly what it asserts today. Recorded as an authorisation rather than done silently, because
+   cookbook rule 8's three exits from a frozen test do not include "the comment went stale".
+
+3. **E1 — RATIFIED: the OS-convention split, and it is a deliberate divergence from upstream.**
+
+   **SUPERSEDES: §16.12 item 21**
+
+   The scope of what is replaced, quoted verbatim rather than paraphrased — **as item 21 read
+   before this entry**, since this entry also amends the live clause in place with a forward
+   reference, so a character-compare against today's §16.12 item 21 will differ from the quotation
+   below by exactly that inserted reference: *"Default cache
+   location: `$XDG_CACHE_HOME/panel-ocr` (Linux) or `~/Library/Caches/panel-ocr` (macOS), falling
+   back to `./.panel-ocr-cache` when neither `$XDG_CACHE_HOME` nor `$HOME` is set. No new
+   third-party dependency is taken for this (`dirs` is not in `[workspace.dependencies]` and v1 is
+   Linux + macOS only)."* Three things in that quotation change: the
+   enumeration of platforms gains Windows; the parenthetical's reason for taking no dependency
+   loses its second clause while keeping its first; and the fallback-trigger clause — *"falling back
+   to `./.panel-ocr-cache` when neither `$XDG_CACHE_HOME` nor `$HOME` is set"* — becomes
+   platform-dependent, because on Windows the second variable consulted before that fallback is
+   `%LOCALAPPDATA%` and `HOME` is deliberately not consulted at all (item 5's flagged paragraph). The
+   `./.panel-ocr-cache` destination itself is unchanged on every platform; only the condition that
+   reaches it differs. Everything else in item 21 — the
+   `--cache-dir > config.cache_dir > platform default` precedence, the single
+   `paths::resolve_cache_root` funnel, the hidden-flag rationale, the
+   recovery-command-from-resolved-state rule, and the non-UTF-8 `Path::display()` limitation —
+   stands unchanged and is not touched by this entry. Widening any of those would be a separate
+   step needing its own argument.
+
+   Upstream PanelCleaner was run as the tiebreak oracle (cookbook rule 3). Its measured behaviour
+   places **both** its cache and its config under `%APPDATA%` on Windows. v1.1 does **not** follow
+   that: cache goes to `%LOCALAPPDATA%`, config to `%APPDATA%`, which is the split Windows itself
+   specifies (`%APPDATA%` roams with the user profile; a regenerable model/image cache must not).
+   This is therefore a deliberate divergence and is registered as **§14 item 19**, with a
+   `// DEVIATION(19): ...` comment required at the Windows branch of the resolver in
+   `crates/pc-cli/src/paths.rs`. That comment exists as of 2026-08-04, at
+   `crates/pc-cli/src/paths.rs:90` in `cache_dir`'s Windows arm — the register entry landed with
+   this ratification and the site comment landed with the implementation, which is the sequencing
+   `DEVIATION(16)` also went through: §14 item 16 records it, and the comment has since been added
+   at `crates/pc-cli/src/detector.rs:36`. **Pre-existing defect, noted rather than fixed here:**
+   §14 item 16's own sentence still says "the concurrent implementation pass has not added that
+   comment yet", and §16.13's note near line 3154 says the same; both are stale as of 2026-08-04,
+   verified by grepping for `DEVIATION(16)`. Those are two other entries' text and are not amended
+   by this one — the citation above deliberately does not lean on that stale sentence.
+
+   `dirs` stays out of `[workspace.dependencies]`. The first half of item 21's parenthetical
+   ("no new third-party dependency is taken for this") is unchanged and is the half that carries
+   the decision; the second half ("and v1 is Linux + macOS only") was a supporting reason, not the
+   conclusion, and its loss does not disturb the conclusion. Distinguishing the two is the point
+   of quoting the clause instead of restating it.
+
+4. **E3 — settled: XDG variables win on every platform, Windows included.** If `XDG_CACHE_HOME`
+   is set, the cache root is `$XDG_CACHE_HOME/panel-ocr` on Linux, on macOS **and** on Windows;
+   likewise `XDG_CONFIG_HOME` for config. Neither Opus pass argued for restricting XDG to Linux,
+   and both gave the same reason: the variables are the project's only mechanism for a user or a
+   test harness to relocate the roots without a CLI flag, and making that mechanism
+   platform-conditional would make the resolver's own tests platform-conditional too. The two
+   variables are independent: `XDG_CACHE_HOME` set with `XDG_CONFIG_HOME` unset yields an
+   XDG-derived cache root and a platform-derived config root.
+
+5. **The interface Codex implements, pinned here so the tests in item 15 have something exact to
+   compile against.** All of it lives in `crates/pc-cli/src/paths.rs` except `resolve_editor`
+   (item 7), which lives in `crates/pc-cli/src/lib.rs`.
+
+   ```rust
+   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   pub enum Platform { Linux, MacOs, Windows }
+
+   impl Platform {
+       /// The platform this binary was compiled for.
+       pub const HOST: Platform = /* cfg! cascade */;
+   }
+
+   /// An injectable environment lookup. The resolver takes one of these instead of
+   /// reading `std::env` directly, which is what makes every platform's branch
+   /// reachable from a test on any host.
+   pub trait EnvSource {
+       /// `None` for an unset variable AND for one set to the empty string — the
+       /// empty-is-unset rule the current `env_path` helper already applies.
+       fn var(&self, key: &str) -> Option<std::ffi::OsString>;
+   }
+
+   /// Reads the real process environment via `std::env::var_os`.
+   pub struct ProcessEnv;
+
+   /// A fixed table, for tests. Public because the resolver's tests are integration
+   /// tests and cannot reach a private double.
+   #[derive(Debug, Default, Clone)]
+   pub struct MapEnv(/* private */);
+   impl MapEnv { pub fn from_pairs(pairs: &[(&str, &str)]) -> Self; }
+
+   /// A platform plus an environment, and nothing else. No process state, no `cfg!`.
+   pub struct DirEnv<'a> { /* private */ }
+   impl<'a> DirEnv<'a> {
+       pub fn new(platform: Platform, env: &'a dyn EnvSource) -> Self;
+       pub fn cache_dir(&self) -> PathBuf;
+       pub fn config_dir(&self) -> PathBuf;
+       pub fn config_path(&self) -> PathBuf; // config_dir().join(CONFIG_FILE_NAME)
+   }
+   ```
+
+   The three existing free functions keep their exact names, signatures and public paths, and
+   become one-line host-bound wrappers (`DirEnv::new(Platform::HOST, &ProcessEnv).cache_dir()` and
+   so on): `paths::default_cache_dir`, `paths::default_config_dir`, `paths::default_config_path`.
+   That is a hard requirement, not a convenience — `crates/pc-cli/tests/x1_args.rs`'s frozen
+   `the_cache_directory_is_overridable` calls two of them, and `paths::resolve_cache_root`'s
+   signature is fixed by §16.12 item 21's single-funnel rule.
+
+   Cache root, in order, first match wins:
+
+   | platform | order |
+   |---|---|
+   | Linux | `$XDG_CACHE_HOME/panel-ocr` → `$HOME/.cache/panel-ocr` → `./.panel-ocr-cache` |
+   | macOS | `$XDG_CACHE_HOME/panel-ocr` → `$HOME/Library/Caches/panel-ocr` → `./.panel-ocr-cache` |
+   | Windows | `$XDG_CACHE_HOME/panel-ocr` → `%LOCALAPPDATA%\panel-ocr` → `./.panel-ocr-cache` |
+
+   Config root, in order, first match wins:
+
+   | platform | order |
+   |---|---|
+   | Linux | `$XDG_CONFIG_HOME/panel-ocr` → `$HOME/.config/panel-ocr` → `./.panel-ocr` |
+   | macOS | `$XDG_CONFIG_HOME/panel-ocr` → `$HOME/Library/Application Support/panel-ocr` → `./.panel-ocr` |
+   | Windows | `$XDG_CONFIG_HOME/panel-ocr` → `%APPDATA%\panel-ocr` → `./.panel-ocr` |
+
+   The Linux and macOS rows are today's behaviour, unchanged, transcribed so the table is complete
+   rather than a diff. `panel-ocr` and `config.toml` remain the existing `APP_DIR_NAME` and
+   `CONFIG_FILE_NAME` constants, and the final component of every non-fallback row is produced by
+   `.join(APP_DIR_NAME)`, which item 13 depends on.
+
+   **One interface detail settled by this transcription rather than by the ratification, and
+   flagged as such: on Windows the resolver consults neither `HOME` nor `USERPROFILE`.** The
+   ratification fixed the two Windows variables and said nothing about either, so both exclusions
+   are this transcription's judgment call. They have separate reasons and an earlier draft gave only
+   the first, which left `USERPROFILE` excluded with no argument at all:
+
+   - **`HOME`**: MSYS2, Cygwin and Git-for-Windows all set it to a POSIX-shaped path that is not
+     where a Windows application's data belongs. Consulting it would put the cache in a location
+     that depends on which terminal launched the binary.
+   - **`USERPROFILE`**: it is a Windows-native path (`C:\Users\<name>`), so the MSYS2 argument does
+     not apply to it. The reason is different: the only way to use it here would be to rebuild
+     `%USERPROFILE%\AppData\Local` by hand, which hard-codes a layout Windows treats as
+     relocatable — `LocalAppData` and `RoamingAppData` are known folders that can be redirected by
+     policy or by a roaming-profile setup, and `%LOCALAPPDATA%`/`%APPDATA%` are how the OS reports
+     where they actually are. Reconstructing the path would therefore risk writing somewhere
+     Windows itself does not use, while adding a code path no test on a Linux CI host can validate
+     against a real redirected profile. This reasoning is from the documented known-folder model,
+     not from a measurement on a Windows host — no Windows host was available to this pass.
+
+   Falling through to `./.panel-ocr-cache` when
+   `%LOCALAPPDATA%` is genuinely absent is the same last-resort the other two platforms already
+   take when `$HOME` is absent, so this adds no new failure mode. **Reversal path, if the maintainer
+   disagrees with either exclusion:** it is one extra fallback step in the Windows row of one table
+   (cache, config, or both), plus the corresponding row in `crates/pc-cli/tests/x1_platform_paths.rs`
+   — which, per cookbook rule 8, means the frozen test goes back to the two architects jointly
+   rather than being edited in place. The two exclusions are independent and either can be reversed
+   without the other.
+
+6. **E2 — settled: PowerShell is the only Windows shell whose quoting is implemented, and
+   `cmd.exe` is out of scope with the reason recorded.**
+
+   ```rust
+   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   pub enum Shell { Posix, PowerShell }
+   impl Shell {
+       pub const HOST: Shell = Shell::for_target(Platform::HOST);
+       pub const fn for_target(platform: Platform) -> Shell;
+       pub fn quote(self, path: &Path) -> String;
+   }
+   ```
+
+   `for_target` maps Linux and macOS to `Posix` and Windows to `PowerShell`. `Posix` keeps
+   today's exact rule from §16.12 item 21, quoted verbatim so it is visibly unchanged: *"wrap the
+   path in single quotes and represent each embedded single quote as `'\''` (close quote, escaped
+   literal quote, reopen quote)"*. `PowerShell` wraps in single quotes and doubles each embedded
+   single quote (`''`); a PowerShell single-quoted string is fully literal, so no other character
+   needs escaping. `crates/pc-cli/src/models.rs`'s `shell_quote` is replaced by
+   `Shell::HOST.quote(...)` at its one call site.
+
+   `cmd.exe` is out of scope because it has **no** quoting rule that round-trips an arbitrary
+   path: `%VAR%` expansion happens before quote processing, so a path containing a literal `%`
+   cannot be expressed at all, and `^`-escaping is context-dependent on whether the line goes
+   through a pipe. A recovery command exists only to be pasted verbatim (§16.12 item 21's own
+   justification), so emitting one we cannot guarantee round-trips would be worse than emitting
+   the PowerShell form. The consequence, stated rather than discovered: a user who pastes the
+   suggestion into `cmd.exe` may get a wrong path for a `%`-containing cache root. That is a
+   documented limitation of the same class as item 21's non-UTF-8 `Path::display()` limitation.
+
+   `Shell` lives in `crates/pc-cli/src/paths.rs`, alongside `Platform` — pinned explicitly because
+   `crates/pc-cli/tests/x1_shell_quoting.rs` imports `pc_cli::paths::Shell` and is frozen, so
+   putting the enum anywhere else satisfies the prose while breaking the test.
+
+   Two limits of the gating, so nobody reads more into green than is there. First, "the enum has
+   exactly two variants and no `Cmd`" is **not** asserted by any test in this pass, so `cmd.exe`
+   staying out of scope rests on this text alone. Note what that does *not* claim: a mechanical gate
+   is possible — a non-wildcard `match` over `Shell` in a test would make adding a `Cmd` variant a
+   compile error (`E0004`, non-exhaustive patterns), which is a real and cheap gate. The accurate
+   statement is that `x1_shell_quoting.rs` as drafted contains no such exhaustive match, so today
+   nothing catches a third variant; an earlier draft of this item claimed no gate was *possible*,
+   which was wrong. Second, the existing round-trip-through-a-real-shell oracle
+   (`the_models_download_suggestion_is_paste_safe_for_hostile_cache_paths` in
+   `crates/pc-cli/tests/x1_args.rs`) is `#[cfg(all(feature = "onnx", unix))]` — the full attribute,
+   as item 2 states it — and stays so; the PowerShell round-trip oracle is a new test that runs only
+   on a Windows host, and off Windows the PowerShell rule is checked against a hard-coded literal
+   table instead. Item 15 names which is which.
+
+7. **E5 — accepted as scoped: `notepad.exe` is the Windows fallback, and only on Windows.**
+
+   ```rust
+   /// `$EDITOR` when set, else the platform's fallback, else `None`.
+   pub fn resolve_editor(platform: Platform, env: &dyn EnvSource) -> Option<std::ffi::OsString>;
+   ```
+
+   | platform | `$EDITOR` set | `$EDITOR` unset or empty |
+   |---|---|---|
+   | Linux | that value | `None` |
+   | macOS | that value | `None` |
+   | Windows | that value | `Some("notepad.exe")` |
+
+   `$VISUAL` is deliberately **not** consulted: today's `profile edit` reads `EDITOR` only, and
+   adding a second variable is a behaviour change on Linux and macOS that nothing asked for.
+   `None` keeps today's exact rendered error, `"$EDITOR is not set"`.
+
+   **Two Linux/macOS cases DO change, and saying otherwise was wrong.** An earlier draft of this
+   item claimed the Linux and macOS surfaces were "byte-identical to before". They are not. Today's
+   call site is `crates/pc-cli/src/lib.rs:196`,
+   `std::env::var("EDITOR").context("$EDITOR is not set")?`, and reading it against item 5's
+   `EnvSource::var` contract gives three cases, not one:
+
+   | `EDITOR` | today | v1.1 on Linux/macOS | same? |
+   |---|---|---|---|
+   | genuinely unset | `Err(NotPresent)` → `"$EDITOR is not set"` | `None` → `"$EDITOR is not set"` | yes |
+   | set to `""` | `Ok("")` → spawns `""` → `"failed to start $EDITOR"` | `None` → `"$EDITOR is not set"` | **no** |
+   | set to non-UTF-8 bytes | `Err(NotUnicode)` → `"$EDITOR is not set"` | `Some(bytes)` → spawn attempted | **no** |
+
+   Both changes are deliberate and both are improvements, which is why they are kept rather than
+   worked around; but they are behaviour changes and are recorded as such, because
+   `crates/pc-cli/tests/x1_editor.rs` freezes the empty-`EDITOR` case and a frozen test resting on a
+   false "nothing changes" claim is exactly what cookbook rule 8 is for. The empty case: `EDITOR=""`
+   is common in stripped environments, and `"$EDITOR is not set"` describes it far better than a
+   failure to launch a program named the empty string. The non-UTF-8 case: today's message is
+   actively wrong — the variable *is* set — and item 5's `OsString`-valued contract means the value
+   no longer has to be discarded to be used, since `Command::new` takes an `OsStr`. Neither case is
+   reachable from `x1_args.rs` or any other frozen test outside `x1_editor.rs`, checked by grepping
+   the tracked tree for `EDITOR` on 2026-08-04.
+
+8. **End-of-line normalisation is a Windows correctness hazard for digest-pinned text artifacts,
+   and it is measured.** Git-for-Windows defaults to `core.autocrlf=true`, which rewrites LF to
+   CRLF in the working tree for any file Git considers text. Seven committed **text** artifacts
+   have their exact bytes pinned by a SHA-256 digest recorded in a `PROVENANCE.json`, verified by
+   `verify_committed_artifact` in `crates/pc-testkit/tests/recorded_provenance.rs`. Enumerated by
+   reading every `tests/fixtures/recorded/*/PROVENANCE.json` record whose `output` is not an image
+   or model file, on 2026-08-04 — none of the seven carries an end-of-line attribute today
+   (`git ls-files --eol` reports `attr/` empty for all seven):
+
+   1. `tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_detector_blocks.json`
+   2. `tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01#raw.json`
+   3. `tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upstream_oracle.json`
+   4. `tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upstream_group_output_equality.json`
+   5. `tests/fixtures/recorded/model_signature/comictextdetector.signature.json`
+   6. `tests/fixtures/recorded/ocr_model_signature/encoder_model.signature.json`
+   7. `tests/fixtures/recorded/ocr_model_signature/decoder_model.signature.json`
+
+   Every one of them must be `-text` in `.gitattributes`, the same treatment
+   `crates/pc-ocr/assets/vocab.txt` already has under §16.30 item 2. Without it, a Windows
+   checkout fails seven digest checks for a reason that has nothing to do with any of the code
+   under test, which is the worst possible first impression of a new platform. The `-text` marker
+   is kept **narrow** — scoped to digest-pinned artifacts, not applied as a blanket `* -text` —
+   so that its presence on a file continues to mean "these bytes are pinned"; a blanket rule would
+   make the marker uninformative and would silence the gate in item 15 by construction.
+   `.gitattributes` glob syntax note, since one filename needs it: `#` is only a comment
+   introducer at the start of a line, so `...E01P01#raw.json` needs no escaping mid-pattern.
+
+9. **E4 — RATIFIED: on Windows, `xtask` must compile and its non-model tests must pass; nothing
+   more.** `xtask` is a workspace member (§16.13 item 2), so `cargo test --workspace
+   --all-targets` on a Windows runner already compiles it and runs its unit tests — 67 of them
+   were discovered by `cargo test -p xtask --bins -- --list` on 2026-08-04. Its
+   Python-subprocess-dependent paths — fixture recording (`xtask/src/record.rs`), golden
+   calibration (`xtask/src/calibrate.rs`), the interpreter probe (`xtask/src/env.rs`) and the
+   model-signature recorders — stay **maintainer-local, Linux and macOS only**, documented as
+   such rather than silently untested. A scan of every `#[test]` body in `xtask/src/*.rs` on
+   2026-08-04 found none that spawns a Python interpreter or any subprocess, so the 67 are
+   expected to be platform-neutral already; that is an expectation about today's bodies, not a
+   guarantee, and the CI Windows job is what will settle it. CI must not invoke `cargo xtask` on
+   the Windows runner, and item 15's `ci_matrix.rs` asserts it does not.
+
+10. **E6 — RATIFIED: the default feature tier ships on Windows now, and the `onnx` tier is
+    allowed to be a documented partial.** The plan flagged W6: `ort` 2.0.0-rc.12's Windows
+    linking behaviour is unverified by this project and may not resolve within reasonable
+    iteration. The decision is to ship the default tier regardless. If W6 does not close, the
+    result is a **ratified, explicitly documented partial** — default tier supported on Windows,
+    `onnx` tier on Windows deferred or best-effort — and not a release blocker and not a silent
+    gap. The binding mechanical consequence: the `onnx` CI tier must never make Windows a
+    *required* check unless that is separately ratified. `ci_matrix.rs` asserts the default
+    `test` job's operating-system set as a set (Windows present) and asserts the implication for
+    the `test-onnx` job: if it lists a Windows runner at all, that job carries
+    `continue-on-error: true`.
+
+11. **The DirectML rejection is re-grounded, because the ground it stood on was that Windows was
+    not a target.**
+
+    **SUPERSEDES: §16.22 item 1**
+
+    The scope of what is replaced is one paragraph of that item, quoted verbatim: *"DirectML is
+    rejected on read evidence rather than packaging preference: `ort/src/ep/directml.rs` gates
+    `supported_by_platform()` on `cfg!(target_os = "windows")`. TensorRT/NVRTX need
+    `libnvinfer.so.10`, which no `ort` distribution ships."* Item 1's **decision** — CUDA at
+    v1.5 opt-in; CoreML, DirectML, `.pt`/torch loading and multi-device dispatch at v2 — is
+    untouched, and so is the TensorRT/NVRTX sentence, whose reason (no distribution ships the
+    library) is platform-independent. What changes is only the DirectML *justification*: an
+    argument that a provider is unavailable because it requires Windows is vacuous only while
+    Windows is not a target, and §16.23 item 4's mirror rule forbids carrying a
+    vacuous-for-this-version argument silently into a version where it is no longer vacuous.
+
+    The replacement ground, which reaches the same verdict from evidence that does not depend on
+    the platform list: DirectML is a **non-CPU execution provider**, so §16.22 item 2's carve-out
+    is what applies to it. §16.22 item 2 holds §5 item 7's determinism guarantee
+    ("identical inputs + identical config must produce identical outputs … regardless of thread
+    count") unconditionally for the CPU execution provider only, and requires any other provider
+    to be quarantined from CI, fixtures, recordings and every gate. DirectML would therefore need
+    its own quarantine, its own opt-in surface and its own measurement of run-to-run and
+    cross-provider divergence — the three things §16.22 items 3, 4 and 5 spell out for CUDA and
+    none of which exist for DirectML — and there is **no Windows GPU CI runner** on which any of
+    it could be verified. v1.1 ships the CPU execution provider on a third platform. It adds no
+    execution provider. DirectML stays at v2 on that basis.
+
+12. **The global out-of-scope bullet moves.**
+
+    **SUPERSEDES: §16**
+
+    The bullet's full text, quoted verbatim: *"**Windows support** — v2 (Linux + macOS only)."*
+    It is replaced by a v1.1 statement in the same list. Nothing else in §16's out-of-scope list
+    is touched by this entry — in particular the GPU-execution-provider bullet keeps CoreML and
+    DirectML at v2, which item 11 re-grounds rather than moves.
+
+    **The gate's granularity here is section-wide, not line-level.** The supersession cross-check
+    row for this claim is `("16.33", "16")`, and `§16` is the whole summary section, so a back-pointer
+    anywhere within its span satisfies it — not specifically the one at the out-of-scope bullet. That
+    is ratified §16.26 item 3(c) leniency ("a bare `§N` target with no item scopes to the whole
+    section"), documented at the constant in `crates/pc-testkit/tests/spec_supersession.rs`
+    rather than a defect, but it means the gate would stay green if the marker migrated off the
+    bullet a reader actually lands on, which is the failure mode the cross-check exists to prevent.
+    Worth knowing before treating this row as strong evidence; the other two rows this entry adds
+    name numbered `§16.x` subsections and are correspondingly tighter.
+
+13. **Cross-check of the frozen assertion, stated explicitly instead of left implicit.**
+    `crates/pc-cli/tests/x1_args.rs`'s frozen `the_cache_directory_is_overridable` asserts
+    `paths::default_cache_dir().ends_with("panel-ocr")` and
+    `paths::default_config_path().ends_with("config.toml")`. Both survive E1, and the reason is
+    structural rather than lucky: `Path::ends_with` compares whole trailing components, every
+    non-fallback row of item 5's two tables ends in `.join(APP_DIR_NAME)`, and `config_path` is
+    `config_dir().join(CONFIG_FILE_NAME)`. So `%LOCALAPPDATA%\panel-ocr` satisfies it on a
+    Windows host, where `\` is a component separator, exactly as `$HOME/.cache/panel-ocr` does on
+    Linux.
+
+    The one case that does **not** satisfy it is the last-resort relative fallback
+    (`./.panel-ocr-cache`, whose final component is `.panel-ocr-cache`) — and that is a
+    **pre-existing** conditionality of the frozen assertion, identical on all three platforms and
+    not introduced by E1: on Linux today, an environment with neither `XDG_CACHE_HOME` nor `HOME`
+    already fails it. E1 adds a third platform to that shape without changing it. Recorded here
+    because a DEVIATION that quietly changed the meaning of a frozen assertion would be the exact
+    defect cookbook rule 8 exists to catch, and "we checked and it still holds" is only useful if
+    it says *why*.
+
+14. **Sequencing: contiguous, and before GPU-1.** Both Opus passes independently placed the
+    Windows work as one contiguous block ahead of the v1.5 GPU task. The reason is that the GPU
+    task's own quarantine design has to know how many platforms it is quarantining from, and item
+    11's re-grounding is a prerequisite for it rather than a side note: a GPU plan drafted while
+    §16.22 item 1 still justified the DirectML rejection by "it needs Windows" would inherit an
+    argument this entry retires. Splitting the Windows block would also mean a CI matrix that
+    lists a Windows runner before the resolver can pass on it, which is a red required check for
+    however long the split lasts.
+
+15. **The tests, written first, and what each one traces to.** Seven new files; each names the
+    requirement in this entry it verifies. Their measured status against today's source is in this
+    entry's status preamble and is **not** uniform: three do not compile, three compile with one or
+    two failures each, and `verbatim_paths.rs` is fully green because this entry wrote both
+    documents it gates. Do not read this table as an all-red list.
+
+    | file | verifies |
+    |---|---|
+    | `crates/pc-testkit/tests/platform_claim_sites.rs` | item 2 — every enumerated claim site carries a `§16.33` pointer, with a synthetic wrapped-claim control for the measured line-based blindness |
+    | `crates/pc-cli/tests/x1_platform_paths.rs` | items 3, 4, 5 — the two resolution tables, per platform and per environment state, including that Windows cache is `%LOCALAPPDATA%` and Windows config is `%APPDATA%` when the two differ |
+    | `crates/pc-testkit/tests/verbatim_paths.rs` | items 3, 5, 9 — the ratified path literals and the E4 scope sentence appear verbatim in this entry and in `docs/ARCHITECTURE_DECISIONS.md`, so code and documentation cannot drift apart the way they did in item 2 |
+    | `crates/pc-cli/tests/x1_shell_quoting.rs` | item 6 — `Shell::for_target`'s mapping and both quoting rules; PowerShell against a hard-coded literal table everywhere, and against a real `pwsh` round trip on a Windows host |
+    | `crates/pc-cli/tests/x1_editor.rs` | item 7 — all six cells of the editor table |
+    | `crates/pc-testkit/tests/eol_normalisation.rs` | item 8 — each of the seven digest-pinned text artifacts is `-text` per `git check-attr`, and the marker stays narrow |
+    | `crates/pc-testkit/tests/ci_matrix.rs` | items 9, 10 — the default `test` job's operating-system set, the `onnx` tier implication, and that the Windows job does not invoke `cargo xtask` |
+
+    Task classification, per CLAUDE.md's plan requirement: the resolver plus the quoting and
+    editor changes are **simple** and may be batched into one Codex call, because they share one
+    file and one injectable-environment shape. The `.gitattributes` and `ci.yml` changes are
+    **simple** and batchable with each other. `verbatim_paths.rs`'s documentation targets are
+    **simple**. Nothing here is heavy: there is no model, no fixture re-recording and no
+    numerical calibration in this task.
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:
@@ -6562,7 +7086,7 @@ Global out-of-scope list, so Codex has one place to check before building anythi
 - **PSD / layered export** (`LayeredExport`, per-image and bulk PSD, `koharu-psd` port) — v1.5.
 - **GUI** (`egui`, staleness-aware recompute, OCR review window, `Output`-driven image viewer) — v2.
 - **GPU execution providers**: **CUDA — v1.5, opt-in** (§16.22; `device = "cuda"`, quarantined from every gate/fixture/recording, requires user-provided CUDA 12 + cuDNN 9 runtime libraries). CoreML, DirectML, `.pt`/torch loading and multi-device dispatch — v2.
-- **Windows support** — v2 (Linux + macOS only).
+- ~~**Windows support** — v2 (Linux + macOS only).~~ **SUPERSEDED by §16.33 item 12 — read it before citing this bullet.** Windows is a **supported platform at v1.1**: default feature tier on all three platforms; the `onnx` tier on Windows is a ratified best-effort partial (§16.33 item 10). The GPU-execution-provider bullet above is unchanged — CoreML and DirectML stay v2, and §16.33 item 11 re-grounds the DirectML part of that without moving it.
 - **Legacy INI config import** — v1.5 (`pc-config` is TOML-only in v1).
 - **Tesseract / non-Japanese OCR engines**, OCR review/edit workflows, OCR result *parsers* (import) — v1.5+.
 - **Font-rendering-dependent debug visualizations**: `_raw_boxes.png`, `_boxes.png`, `_boxes_final.png`, `_mask_fitments.png`, `_std_devs.png` — v1.5. (v1 debug artifacts are limited to `_box_mask.png`, `_cut_mask.png`, `_with_masks.png`, none of which need text.)

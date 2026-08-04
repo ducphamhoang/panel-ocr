@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 20;
+const EXPECTED_PARSED_CLAIMS: usize = 23;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -82,6 +82,19 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.32", "16.19 item 10"),
     ("16.32", "14 item 15"),
     ("16.32", "4.5"),
+    // §16.33's three markers. `("16.33", "16")` is a BARE-SECTION target and deliberately so: the
+    // superseded text is a bullet in §16's markdown-style out-of-scope list, which carries no
+    // `^N. ` item marker, so no item-scoped anchor exists to name. That is ratified §16.26 item
+    // 3(c) leniency, the same class as §16.30's `9.5` and `13` rows above, with the same
+    // consequence: a back-pointer anywhere in §16 satisfies the gate, so the bullet-level
+    // precision of that annotation is a convention this constant cannot enforce.
+    //
+    // §16 is also the LAST section in the file, so its span runs to EOF. Nothing else can be
+    // appended after it without landing inside that span; a future §16.34 must be inserted BEFORE
+    // §16, exactly as §16.33 was.
+    ("16.33", "16"),
+    ("16.33", "16.12 item 21"),
+    ("16.33", "16.22 item 1"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.

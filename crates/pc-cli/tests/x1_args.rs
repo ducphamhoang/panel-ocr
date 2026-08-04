@@ -361,7 +361,7 @@ fn a_missing_explicit_model_path_is_not_answered_with_a_download_suggestion() {
 /// quoting in the test would only prove the test agrees with itself — the same circularity
 /// §16.13 item 4 rules out for reference fixtures. So the test hands the emitted segment to a
 /// real shell and asserts the shell recovers the original path exactly. v1 is Linux + macOS
-/// only, so a POSIX shell is always present; `#[cfg(unix)]` keeps the file compiling anyway.
+/// only, so a POSIX shell is always present (§16.33); `#[cfg(unix)]` keeps the file compiling anyway.
 ///
 /// One assertion catches every failure mode at once: a broken or unterminated quote makes
 /// `sh` exit non-zero, and word splitting, globbing, parameter expansion and command

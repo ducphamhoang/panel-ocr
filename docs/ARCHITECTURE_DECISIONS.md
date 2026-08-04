@@ -78,6 +78,68 @@ isn't necessary here.
 7. **GUI scope/timing**: CLI-first for v1 (fully usable standalone, as
    PanelCleaner's own CLI is); `egui` GUI is a separate v2 milestone.
 
+## Platform support
+
+This section exists because two places cited this document as the authority for the
+platform list and this document did not have one: `docs/PIPELINE_SPEC_V1.md`'s
+"Fixed constraints" line and `.github/workflows/ci.yml`'s matrix comment
+("Per ARCHITECTURE_DECISIONS.md: Linux + macOS only"). The claim had eight
+occurrences across five files and no owner, which is how it drifted — and this
+document, cited by two of those five, was not one of them, because it said nothing
+about platforms at all. Ratified and enumerated in `docs/PIPELINE_SPEC_V1.md` §16.33.
+
+| milestone | supported platforms |
+|---|---|
+| v1 | Linux, macOS |
+| v1.1 | Linux, macOS, **Windows** |
+
+**Windows, from v1.1 (§16.33):**
+
+- **Default feature tier is supported on all three platforms.** The `onnx` feature tier
+  on Windows is a ratified best-effort partial: it ships if `ort` 2.0.0-rc.12 links
+  cleanly there, and is deferred with the gap documented if it does not. It is never a
+  required CI check on Windows unless that is separately ratified (§16.33 item 10).
+- **Cache and config roots follow the OS convention, not upstream.** XDG variables win
+  first on every platform. Otherwise: cache is `%LOCALAPPDATA%\panel-ocr`, config is
+  `%APPDATA%\panel-ocr`. Upstream PanelCleaner uses `%APPDATA%` for both; the split is a
+  deliberate divergence registered as §14 item 19 / `DEVIATION(19)`, because `%APPDATA%`
+  roams and a regenerable cache must not. No `dirs` dependency is taken — the resolver is
+  hand-rolled and platform-parameterized so every branch is testable from any host.
+  - **Not ratified, and flagged as such:** that the Windows resolver consults neither `HOME`
+    nor `USERPROFILE` is a transcription-level judgment call, not part of the maintainer's
+    ratification, which fixed the two `%..%` variables and said nothing about either. Read
+    §16.33 item 5's flagged paragraph — which carries the argument and the reversal path —
+    rather than treating this line as settled. Do not cite this bullet as the authority for
+    it.
+- **PowerShell is the only Windows shell whose quoting is implemented.** `cmd.exe` is out
+  of scope: `%VAR%` expansion precedes quote processing, so no `cmd.exe` quoting rule
+  round-trips a path containing a literal `%`, and a recovery command exists only to be
+  pasted verbatim.
+- **`$EDITOR` falls back to `notepad.exe` on Windows only.** `$VISUAL` is not consulted on
+  any platform. Two Linux/macOS cases do change: an empty `EDITOR` now reports
+  `"$EDITOR is not set"` instead of failing to launch the empty string, and a non-UTF-8
+  `EDITOR` is now used instead of being reported as unset (§16.33 item 7 tabulates all
+  three cases).
+- **Digest-pinned text fixtures are `-text` in `.gitattributes`.** Git-for-Windows
+  defaults to `core.autocrlf=true`, which would rewrite the bytes of seven SHA-256-pinned
+  JSON artifacts on checkout and fail their digest checks for reasons unrelated to any
+  code under test. The marker is kept narrow, so its presence keeps meaning "these bytes
+  are pinned".
+
+**`xtask` scope on Windows, ratified (§16.33 item 9):** `xtask` must compile, and its
+non-model unit tests must pass. Its Python-subprocess-dependent paths — fixture recording,
+golden calibration, the interpreter probe, and the model-signature recorders — are
+**maintainer-local, Linux and macOS only**, and are documented as untested on Windows
+rather than silently assumed to work. CI does not invoke `cargo xtask` on the Windows
+runner.
+
+**GPU execution providers are unaffected by Windows support.** v1.1 ships the CPU
+execution provider on a third platform and adds no execution provider. DirectML stays v2:
+it is a non-CPU provider, so §16.22 item 2's carve-out from the determinism guarantee
+applies, it would need its own quarantine from every gate/fixture/recording, and there is
+no Windows GPU CI runner on which to verify any of it (§16.33 item 11 — which replaces the
+earlier justification that DirectML was rejected *because* it requires Windows).
+
 ## Pipeline architecture pattern
 
 Stage-based (pipeline/ETL-style), not feature-first: each pipeline stage
@@ -95,5 +157,7 @@ actual CLI binary against golden fixture files.
 ## Milestones
 
 - **v1**: CLI + detect + preprocess + mask + denoise + export (parity core).
+- **v1.1**: Windows support (see "Platform support"). No new pipeline stage, no new
+  execution provider.
 - **v1.5**: LaMa inpainting + PSD export.
 - **v2**: `egui` GUI with incremental/staleness-aware recompute.

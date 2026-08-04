@@ -65,7 +65,9 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-Requires Rust 1.94.1+ (pinned via `rust-toolchain.toml`). CPU-only, Linux + macOS for v1.
+Requires Rust 1.94.1+ (pinned via `rust-toolchain.toml`). CPU-only. Supported platforms: Linux,
+macOS and Windows — Windows landed in v1.1 for the default feature tier; v1 shipped Linux + macOS
+only, and the optional `onnx` tier on Windows is still deferred (§16.33).
 
 ## Roadmap
 
@@ -78,6 +80,11 @@ Requires Rust 1.94.1+ (pinned via `rust-toolchain.toml`). CPU-only, Linux + macO
 - [x] Pipeline orchestrator + CLI, batch processing, checkpointing, per-image error isolation
 - [x] Fixture recording + golden calibration tooling, with real OpenCV/PIL parity gates
       wherever the build environment allows
+
+### v1.1 — done
+- [x] Windows support for the default feature tier — config/cache root discovery, shell quoting and
+      editor launching (§16.33). The optional `onnx` tier is not yet attempted on Windows CI; that
+      partial is deferred by §16.33 item 10, not claimed as working.
 
 ### Near-term — completing v1's promise
 - [ ] **Real ONNX text detector** (`pc-models` for model provisioning/download, `pc-detect`'s
@@ -96,7 +103,6 @@ Requires Rust 1.94.1+ (pinned via `rust-toolchain.toml`). CPU-only, Linux + macO
 
 ### v2
 - [ ] `egui`-based GUI, with incremental/staleness-aware recompute
-- [ ] Windows support (v1/v1.5 are Linux + macOS only)
 
 ## Contributing
 

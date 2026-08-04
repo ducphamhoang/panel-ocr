@@ -5,7 +5,10 @@ on:
     branches: [main]
   pull_request:
 
-# Per ARCHITECTURE_DECISIONS.md: Linux + macOS only. Windows is a v2 concern (§16).
+# Per docs/ARCHITECTURE_DECISIONS.md: the DEFAULT feature tier is supported on Linux, macOS and
+# Windows as of v1.1 (§16.33 item 10), which is why the `test` job's matrix carries all three
+# runners. The `onnx` tier on Windows is a ratified best-effort partial and is DEFERRED — not
+# attempted here at all — so `test-onnx` stays on Linux + macOS (§16.33 item 10; see §16.33).
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -42,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.94.1
@@ -57,6 +60,10 @@ jobs:
   test-onnx:
     name: test (onnx, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # No Windows leg: §16.33 item 10 permits the onnx tier on Windows to be DEFERRED, and that is
+    # the shape chosen here. Every leg listed below is therefore a REQUIRED check, exactly as it was
+    # before v1.1 — adding a Windows leg as an advisory (`continue-on-error`) job must not be done
+    # by putting `continue-on-error` at this job level, which would downgrade ubuntu and macos too.
     strategy:
       fail-fast: false
       matrix:

@@ -21,9 +21,18 @@ pub use args::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use paths::{EnvSource, Platform};
 use pc_pipeline::{Checkpointing, ImageOutcome, PipelineCtx, PipelineOptions, EXIT_FATAL, EXIT_OK};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+
+/// Resolve `$EDITOR` when set, else the platform's fallback, else `None`.
+pub fn resolve_editor(platform: Platform, env: &dyn EnvSource) -> Option<std::ffi::OsString> {
+    env.var("EDITOR").or_else(|| match platform {
+        Platform::Windows => Some(std::ffi::OsString::from("notepad.exe")),
+        Platform::Linux | Platform::MacOs => None,
+    })
+}
 
 /// Dispatch a parsed command line and return the process exit code (§5.5).
 ///
@@ -193,7 +202,8 @@ pub fn run_profile(command: ProfileCommand) -> Result<i32> {
             let path = config
                 .profile_path(name)
                 .with_context(|| format!("no profile named `{name}` in the app config"))?;
-            let editor = std::env::var("EDITOR").context("$EDITOR is not set")?;
+            let editor = resolve_editor(paths::Platform::HOST, &paths::ProcessEnv)
+                .context("$EDITOR is not set")?;
             let status = std::process::Command::new(editor)
                 .arg(path)
                 .status()

@@ -1,6 +1,8 @@
 //! CLI-owned model-path resolution and download presentation (spec §6 and §8.3).
 
 use crate::args::DetectorSpec;
+#[cfg(feature = "onnx")]
+use crate::paths::Shell;
 use anyhow::Result;
 use pc_core::StageError;
 use std::path::{Path, PathBuf};
@@ -127,15 +129,6 @@ pub fn resolve_detector_model(
 }
 
 #[cfg(feature = "onnx")]
-/// Quote a path using POSIX single-quote rules so a pasted suggestion is safe and
-/// round-trips to the original path. Everything inside single quotes is literal;
-/// an embedded single quote is represented as '\'' by closing the quote, escaping
-/// the literal quote, and reopening it.
-fn shell_quote(path: &Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
-}
-
-#[cfg(feature = "onnx")]
 #[doc(hidden)]
 /// Build the recovery command for the managed model cache.
 ///
@@ -154,7 +147,7 @@ pub fn models_download_command(resolved_cache_root: Option<&Path>) -> String {
     } else {
         format!(
             "panel-ocr models download --cache-dir {}",
-            shell_quote(cache_root)
+            Shell::HOST.quote(cache_root)
         )
     }
 }

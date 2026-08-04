@@ -1,3 +1,10 @@
 # crates/pc-ocr/assets/vocab.txt is a hash-pinned vendored file (§16.30 item 2, Fable ruling).
 # -text prevents eol normalization from silently rewriting the pinned bytes on checkout/commit.
 crates/pc-ocr/assets/vocab.txt -text
+tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_detector_blocks.json -text
+tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01#raw.json -text
+tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upstream_oracle.json -text
+tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upstream_group_output_equality.json -text
+tests/fixtures/recorded/model_signature/comictextdetector.signature.json -text
+tests/fixtures/recorded/ocr_model_signature/encoder_model.signature.json -text
+tests/fixtures/recorded/ocr_model_signature/decoder_model.signature.json -text
