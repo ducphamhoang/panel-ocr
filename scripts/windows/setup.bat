@@ -30,8 +30,10 @@ if exist "%CONFIG_FILE%" (
     echo   %CONFIG_FILE%
     echo.
     set /p OVERWRITE="Overwrite it? [y/N]: "
-    for /f "tokens=* delims= " %%A in ("%OVERWRITE%") do set "OVERWRITE=%%A"
-    if /i not "%OVERWRITE%"=="y" (
+    rem First character only, not full-string equality: `set /p` can leave a trailing
+    rem artifact (space, CR) after piped input, same class of quirk as the CACHE_DIR trim
+    rem below, and a yes/no answer only ever needs its first character checked anyway.
+    if /i not "%OVERWRITE:~0,1%"=="y" (
         echo Leaving the existing config untouched. Nothing changed.
         pause
         exit /b 0
@@ -79,8 +81,10 @@ echo   cache_dir = %CACHE_DIR%
 echo.
 
 set /p DOWNLOAD="Download the ONNX model weights now (~90 MB)? [Y/n]: "
-for /f "tokens=* delims= " %%A in ("%DOWNLOAD%") do set "DOWNLOAD=%%A"
-if /i "%DOWNLOAD%"=="n" (
+rem First character only - see the OVERWRITE check above for why. Confirmed necessary by
+rem this exact failure mode on windows-latest (release run 30913311788): a trailing artifact
+rem after piped "n" made the full-string comparison miss, and the script downloaded anyway.
+if /i "%DOWNLOAD:~0,1%"=="n" (
     echo.
     echo Skipped. Run this later to fetch the models:
     echo   "%EXE%" models download

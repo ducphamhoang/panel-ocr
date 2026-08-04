@@ -112,7 +112,18 @@ jobs:
         shell: cmd
         run: |
           cd "%STAGE_DIR%"
-          (echo.& echo n) | setup.bat
+          (echo.& echo n) | setup.bat > smoke_output.txt 2>&1
+          type smoke_output.txt
+          rem Assert the "n" answer was actually honoured, not just supplied: run
+          rem 30913311788 fed this same input and the script downloaded anyway, because a
+          rem trailing artifact after piped "n" made a full-string comparison miss. This
+          rem also keeps the smoke test fast (no real ~90MB download) and, unlike that run,
+          rem actually exercises the skip branch it claims to.
+          findstr /c:"Skipped. Run this later to fetch the models:" smoke_output.txt >nul
+          if errorlevel 1 (
+            echo expected the download to be skipped for input "n" but it was not
+            exit /b 1
+          )
           if not exist "%APPDATA%\panel-ocr\config.toml" (
             echo setup.bat did not write config.toml
             exit /b 1
