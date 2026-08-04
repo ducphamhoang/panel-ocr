@@ -34,9 +34,12 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
             feature-set: default
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            feature-set: onnx
+          # No x86_64-apple-darwin + onnx leg: confirmed on 2026-08-04 (run 30908406221) that
+          # `ort` does not ship a prebuilt ONNX Runtime binary for this target at all — only
+          # aarch64-apple-darwin (Apple Silicon) — so this combination cannot build, ever,
+          # without vendoring a custom ONNX Runtime build. Not "unverified"; confirmed
+          # unsupported. Omitted rather than marked allow-failure, since allow-failure implies
+          # "might work" and this doesn't.
           - os: macos-latest
             target: aarch64-apple-darwin
             feature-set: default
