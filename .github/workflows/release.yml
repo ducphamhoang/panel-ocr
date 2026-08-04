@@ -112,7 +112,15 @@ jobs:
         shell: cmd
         run: |
           cd "%STAGE_DIR%"
-          (echo.& echo n) | setup.bat > smoke_output.txt 2>&1
+          (echo.& echo n) > answers.txt
+          echo --- answers.txt content ---
+          type answers.txt
+          echo --- end answers.txt ---
+          rem Redirecting from a real file, not piping a live compound command into a .bat -
+          rem the latter is a known unreliable idiom for feeding a batch script's `set /p`
+          rem chain (confirmed here: DEBUG_DOWNLOAD_RAW=[] on runs 30913311788/30914139361,
+          rem meaning the second answer never reached `set /p` via the pipe at all).
+          setup.bat < answers.txt > smoke_output.txt 2>&1
           type smoke_output.txt
           rem Assert the "n" answer was actually honoured, not just supplied: run
           rem 30913311788 fed this same input and the script downloaded anyway, because a
