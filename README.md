@@ -7,9 +7,10 @@ purely as architectural inspiration, not a dependency; panel-ocr stands on its o
 
 Licensed **GPL-3.0-only**, same as PanelCleaner.
 
-## Status: v1 complete
+## Status: v1 + v1.1 complete
 
-Every v1 pipeline stage is implemented, tested, and wired into a working CLI:
+Every v1 pipeline stage is implemented, tested, and wired into a working CLI, including a
+real ONNX text detector and a real manga-ocr OCR pass — not just mocks:
 
 ```
 panel-ocr clean <images...> [--detector mock|replay:<dir>|onnx] [options...]
@@ -19,14 +20,16 @@ panel-ocr cache ...
 panel-ocr models ...
 ```
 
-~700 tests passing across the workspace, `clippy --all-features -D warnings` and
-`cargo fmt --check` both clean.
+1,023 tests passing on the default feature tier (1,040 with the optional `onnx` tier
+enabled), 0 failed; `clippy --all-features -D warnings` and `cargo fmt --check` both clean.
 
-**One real gap today**: there's no bundled ONNX text-detector model yet, so `--detector
-onnx` fails fast with a clear message rather than silently doing nothing. Use `--detector
+**The real detector/OCR backend is opt-in, not the default.** `--detector onnx` and
+`panel-ocr ocr` need two things: the binary built with `--features pc-cli/onnx` (the
+default build stays runnable with no model files and no ONNX Runtime, per spec §7.2), and
+the model weights fetched once via `panel-ocr models download`. Without either, `--detector
 mock` (produces no detections, useful for exercising the rest of the pipeline) or
-`--detector replay:<dir>` (replays a previously recorded detection) until a model-download
-path lands. See [Roadmap](#roadmap).
+`--detector replay:<dir>` (replays a previously recorded detection) remain the zero-setup
+defaults. GPU acceleration is not available yet — see [Roadmap](#roadmap).
 
 ## Architecture
 
@@ -86,23 +89,22 @@ only, and the optional `onnx` tier on Windows is still deferred (§16.33).
       editor launching (§16.33). The optional `onnx` tier is not yet attempted on Windows CI; that
       partial is deferred by §16.33 item 10, not claimed as working.
 
-### Near-term — completing v1's promise
-- [ ] **Real ONNX text detector** (`pc-models` for model provisioning/download, `pc-detect`'s
-      `ort`-backed inference session). This is the one piece of v1 that exists as a
-      well-defined contract (`TextDetector` trait, `--detector onnx` flag already wired)
-      but has no real backing implementation yet — `--detector mock`/`replay:<dir>` are
-      the working substitutes today.
-  - [ ] Fixture recording for the detector boundary once real weights exist
-        (`cargo xtask record-fixtures --only detector`), unblocking the 4 tests
-        currently `#[ignore]`d pending this.
-  - [ ] GPU execution provider as an optional build feature (CPU-only is the v1 baseline).
-
-### v1.5
+### v1.5 — ratified sequence (§16.24 item 5), not started
+- [ ] GPU-1: device config, policy resolver, fatal-refusal wiring (no CUDA linkage yet)
+- [ ] GPU-2: the `cuda` feature itself, opt-in and quarantined from every gate/fixture/
+      recording (§16.22) — CPU stays the only execution provider covered by
+      determinism guarantees
+- [ ] Legacy INI config import + Lab-space non-local-means denoising (batched)
 - [ ] LaMa inpainting (fill masked regions with generated content instead of a flat color)
 - [ ] PSD / layered export
+- [ ] DBNet line-polygon synthesis (highest-risk item in v1.5; forces a second F1
+      detector-fixture re-record + re-sign when it lands)
+- [ ] `Mask RefineMode::Annotation`
 
 ### v2
 - [ ] `egui`-based GUI, with incremental/staleness-aware recompute
+- [ ] Additional ONNX execution providers (CoreML, DirectML), torch `.pt` model loading,
+      multi-device dispatch (§16.22 item 1)
 
 ## Contributing
 
