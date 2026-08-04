@@ -81,10 +81,11 @@ echo   cache_dir = %CACHE_DIR%
 echo.
 
 set /p DOWNLOAD="Download the ONNX model weights now (~90 MB)? [Y/n]: "
-echo DEBUG_DOWNLOAD_RAW=[%DOWNLOAD%]
-rem First character only - see the OVERWRITE check above for why. Confirmed necessary by
-rem this exact failure mode on windows-latest (release run 30913311788): a trailing artifact
-rem after piped "n" made the full-string comparison miss, and the script downloaded anyway.
+rem First character only, so typing "no" or "N" works the same as "n" - matches the
+rem OVERWRITE check above. (The CI smoke test's own earlier failures to exercise this
+rem branch, runs 30913311788/30914139361/30914731704, turned out to be about how the test
+rem fed input - piping a live command into a .bat drops later lines - not a bug here; see
+rem release.yml's smoke-test step for that history.)
 if /i "%DOWNLOAD:~0,1%"=="n" (
     echo.
     echo Skipped. Run this later to fetch the models:
