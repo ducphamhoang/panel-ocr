@@ -40,12 +40,21 @@ fn render(sections: &[Section]) -> String {
     rendered
 }
 
-pub fn run(out: Option<&std::path::Path>, configured_detector: Option<&str>) -> Result<()> {
+pub fn run(
+    out: Option<&std::path::Path>,
+    configured_detector: Option<&str>,
+    device_policy: &pc_core::device::DevicePolicy,
+) -> Result<()> {
+    crate::device::ensure_recording_policy(
+        device_policy,
+        crate::device::RecordingSession::CalibrateGoldens,
+    )?;
     let target = out
         .map(|path| path.to_path_buf())
         .unwrap_or_else(|| paths::docs_root().join("GOLDEN_CALIBRATION.md"));
     let prior_measurements = previous_demo_bubbles_has_real_measurements_at(&target);
-    let body = render_document_with_detector(configured_detector, prior_measurements)?;
+    let body =
+        render_document_with_detector(configured_detector, prior_measurements, device_policy)?;
     std::fs::write(&target, &body).with_context(|| format!("writing {}", target.display()))?;
     if prior_measurements && document_has_blocked_demo_bubbles(&body) {
         eprintln!("WARNING: {DEMO_BUBBLES_DOWNGRADE_WARNING}");
@@ -64,18 +73,21 @@ fn render_document() -> Result<String> {
         None,
         false,
         Ok(crate::env::ModelResolution::OnnxFeatureDisabled),
+        &pc_core::device::DevicePolicy::cpu(),
     )
 }
 
 fn render_document_with_detector(
     configured_detector: Option<&str>,
     prior_demo_bubbles_measurements: bool,
+    device_policy: &pc_core::device::DevicePolicy,
 ) -> Result<String> {
     let demo_resolution = crate::env::resolve_detector_model(configured_detector);
     render_document_with_demo_resolution(
         configured_detector,
         prior_demo_bubbles_measurements,
         demo_resolution,
+        device_policy,
     )
 }
 
@@ -83,12 +95,16 @@ fn render_document_with_demo_resolution(
     _configured_detector: Option<&str>,
     prior_demo_bubbles_measurements: bool,
     demo_resolution: Result<crate::env::ModelResolution>,
+    device_policy: &pc_core::device::DevicePolicy,
 ) -> Result<String> {
     let statuses: Vec<_> = TRACKED_TESTS.iter().map(tracked_status).collect();
     let (nlm, nlm_ok) = section_nlm()?;
     let (area, area_ok) = section_inter_area()?;
-    let (demo_bubbles_section, demo_bubbles_status) =
-        section_demo_bubbles_with_resolution(demo_resolution, prior_demo_bubbles_measurements);
+    let (demo_bubbles_section, demo_bubbles_status) = section_demo_bubbles_with_resolution(
+        demo_resolution,
+        prior_demo_bubbles_measurements,
+        device_policy,
+    );
     let detector_section = match detector_box_counts() {
         Ok(facts) => section_detector_box_counts(&facts),
         Err(error) => section_detector_box_counts_blocked(&error),
@@ -711,11 +727,12 @@ enum DemoBubbleStatus {
 fn section_demo_bubbles_with_resolution(
     resolution: Result<crate::env::ModelResolution>,
     prior_demo_bubbles_measurements: bool,
+    device_policy: &pc_core::device::DevicePolicy,
 ) -> (Section, DemoBubbleStatus) {
     match resolution {
         Ok(crate::env::ModelResolution::Ready { model_path }) => {
             #[cfg(feature = "onnx")]
-            match measure_demo_bubbles(&model_path) {
+            match measure_demo_bubbles(&model_path, device_policy) {
                 Ok(measurements) => (
                     section_demo_bubbles_from_measurements(&measurements),
                     DemoBubbleStatus::Measured,
@@ -730,7 +747,7 @@ fn section_demo_bubbles_with_resolution(
             }
             #[cfg(not(feature = "onnx"))]
             {
-                let _ = model_path;
+                let _ = (model_path, device_policy);
                 let reason = "detector model resolution unexpectedly reached inference while the ONNX feature is disabled".to_string();
                 (
                     section_demo_bubbles_blocked(&reason, prior_demo_bubbles_measurements),
@@ -903,7 +920,10 @@ fn section_demo_bubbles_from_measurements(measurements: &[DemoBubbleMeasurement]
 }
 
 #[cfg(feature = "onnx")]
-fn measure_demo_bubbles(model_path: &Path) -> Result<Vec<DemoBubbleMeasurement>> {
+fn measure_demo_bubbles(
+    model_path: &Path,
+    device_policy: &pc_core::device::DevicePolicy,
+) -> Result<Vec<DemoBubbleMeasurement>> {
     pc_models::verify_sha256(model_path, pc_models::COMIC_TEXT_DETECTOR.sha256)
         .map_err(|error| anyhow!(format_error_with_paths(error, &[model_path])))
         .with_context(|| "verifying the detector model before constructing the ONNX session")?;
@@ -914,12 +934,14 @@ fn measure_demo_bubbles(model_path: &Path) -> Result<Vec<DemoBubbleMeasurement>>
 
     #[cfg(feature = "onnx")]
     {
-        let detector = pc_detect::onnx::OnnxDetector::from_path_with_config(
-            model_path,
-            &TextDetectorConfig::default(),
-        )
-        .map_err(|error| anyhow!(error.to_string()))
-        .with_context(|| "constructing the ONNX detector")?;
+        let config = TextDetectorConfig::default();
+        crate::device::ensure_recording_policy(
+            device_policy,
+            crate::device::RecordingSession::CalibrateGoldens,
+        )?;
+        let detector = pc_detect::onnx::OnnxDetector::from_path_with_config(model_path, &config)
+            .map_err(|error| anyhow!(error.to_string()))
+            .with_context(|| "constructing the ONNX detector")?;
 
         Ok(pc_testkit::paths::DEMO_BUBBLES
             .iter()
@@ -1474,6 +1496,7 @@ mod tests {
         let section = section_demo_bubbles_with_resolution(
             Ok(crate::env::ModelResolution::OnnxFeatureDisabled),
             false,
+            &pc_core::device::DevicePolicy::cpu(),
         )
         .0;
         assert!(section.body.contains("BLOCKED"));
@@ -1488,6 +1511,7 @@ mod tests {
         let section = section_demo_bubbles_with_resolution(
             Ok(crate::env::ModelResolution::OnnxFeatureDisabled),
             true,
+            &pc_core::device::DevicePolicy::cpu(),
         )
         .0;
         assert!(section.body.contains("WARNING"));
@@ -1672,8 +1696,12 @@ mod tests {
 
     #[test]
     fn blocked_demo_bubbles_status_reaches_the_verdict() {
-        let document = render_document_with_detector(Some("not-a-detector-spec"), false)
-            .expect("malformed detector remains a document");
+        let document = render_document_with_detector(
+            Some("not-a-detector-spec"),
+            false,
+            &pc_core::device::DevicePolicy::cpu(),
+        )
+        .expect("malformed detector remains a document");
         assert!(
             document.contains("| demo_bubbles masking calibration report | §10.7(B)15 | BLOCKED —")
         );

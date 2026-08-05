@@ -134,6 +134,16 @@ for index in range(warmup + reps):
 print(f"ORACLE_RESULT {statistics.median(durations):.6f} {tensor_digest}")
 "#;
 
+fn report_resolved_device() -> anyhow::Result<()> {
+    let policy = pc_core::device::resolve(
+        pc_core::device::Device::Cpu,
+        pc_core::device::DeviceSupport::compiled(),
+    )
+    .map_err(|refusal| anyhow::anyhow!(refusal.message()))?;
+    println!("{}", policy.report());
+    Ok(())
+}
+
 #[cfg(not(feature = "onnx"))]
 pub fn run(
     _detector: Option<&std::path::Path>,
@@ -142,6 +152,7 @@ pub fn run(
     _variants: &str,
     _out: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
+    report_resolved_device()?;
     println!("SKIPPED: xtask was built without the ONNX feature");
     Ok(())
 }
@@ -156,6 +167,7 @@ pub fn run(
 ) -> anyhow::Result<()> {
     use anyhow::{bail, Context};
 
+    report_resolved_device()?;
     if reps < 3 {
         bail!("--reps must be at least 3 so median/min/max are meaningful");
     }

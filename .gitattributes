@@ -13,3 +13,8 @@ tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01_upst
 tests/fixtures/recorded/model_signature/comictextdetector.signature.json -text
 tests/fixtures/recorded/ocr_model_signature/encoder_model.signature.json -text
 tests/fixtures/recorded/ocr_model_signature/decoder_model.signature.json -text
+tests/fixtures/recorded/detector/PROVENANCE.json -text
+tests/fixtures/recorded/inter_area/PROVENANCE.json -text
+tests/fixtures/recorded/model_signature/PROVENANCE.json -text
+tests/fixtures/recorded/nlm/PROVENANCE.json -text
+tests/fixtures/recorded/ocr_model_signature/PROVENANCE.json -text

@@ -39,3 +39,8 @@ sha2       = { workspace = true }
 # Falsifying `provenance_is_current`'s four conditions needs a throwaway workspace tree; the
 # alternative is mutating `tests/fixtures/recorded/`, which is the corruption those gates detect.
 tempfile = { workspace = true }
+
+[lints.clippy]
+# The frozen G1-D test deliberately mutates one config instance after `default()` so it can prove
+# `recorded_session_pins` observes that exact instance rather than a replacement literal.
+field-reassign-with-default = "allow"
