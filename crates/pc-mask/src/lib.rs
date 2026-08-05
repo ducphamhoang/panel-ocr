@@ -143,14 +143,38 @@ pub fn run(input: MaskInput) -> Result<MaskOutput, StageError> {
         .masking_regions
         .iter()
         .filter_map(|region| {
-            fit_region(
+            let report = fit::fit_region_scored(
                 &base,
                 &cut,
                 &box_mask,
                 region.masking,
                 region.reference,
                 &config,
-            )
+            )?;
+            if report.fitment.failed() {
+                let greedy_deviation = report.candidate_deviations[report.greedy_index];
+                if config.mask_fallback_to_lowest_deviation {
+                    let lowest_deviation = report
+                        .candidate_deviations
+                        .iter()
+                        .copied()
+                        .min_by(f64::total_cmp)
+                        .expect("candidate selection scores at least one candidate");
+                    tracing::warn!(
+                        greedy_deviation,
+                        lowest_deviation,
+                        "mask fitting failed even with lowest-deviation rescue"
+                    );
+                } else {
+                    tracing::warn!(greedy_deviation, "mask fitting failed");
+                }
+            } else {
+                tracing::debug!(
+                    candidate_deviations = ?report.candidate_deviations,
+                    "mask fitting succeeded"
+                );
+            }
+            Some(report.fitment)
         })
         .collect::<Vec<_>>();
     let combined = build_combined_mask(&fitments, page.image_size);

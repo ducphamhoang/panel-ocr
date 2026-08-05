@@ -211,6 +211,49 @@ fn from_profile_round_trips_through_text() {
     assert_eq!(reparsed.warnings(), &[]);
 }
 
+#[test]
+// spec §16.35 items 4 and 8: `[masker] mask_fallback_to_lowest_deviation` round-trips
+// through both from-scratch serialization and in-place `toml_edit` updates. This mirrors
+// the v1.5 device-key gate while keeping the two config-surface tasks in separate calls.
+fn masker_fallback_round_trips_through_text_and_set_profile() {
+    let mut original = Profile::default();
+    original.masker.mask_fallback_to_lowest_deviation = false;
+    let text = ProfileDocument::from_profile(&original).to_toml_string();
+    assert!(
+        text.contains("mask_fallback_to_lowest_deviation = false"),
+        "the wire value must be a TOML boolean: {text}"
+    );
+    assert!(
+        !ProfileDocument::parse(&text)
+            .unwrap()
+            .profile()
+            .masker
+            .mask_fallback_to_lowest_deviation
+    );
+
+    let mut doc = ProfileDocument::parse(DEFAULT_PROFILE_TOML).unwrap();
+    assert!(doc.profile().masker.mask_fallback_to_lowest_deviation);
+    let mut edited = doc.profile().clone();
+    edited.masker.mask_fallback_to_lowest_deviation = false;
+    doc.set_profile(&edited).unwrap();
+
+    // Read through toml_edit rather than depending on column alignment in the shipped file.
+    assert_eq!(
+        doc.document()["masker"]["mask_fallback_to_lowest_deviation"].as_bool(),
+        Some(false),
+        "got: {}",
+        doc.to_toml_string()
+    );
+    let out = doc.to_toml_string();
+    assert!(
+        out.contains("mask_selection_fast"),
+        "neighbouring [masker] keys must survive: {out}"
+    );
+    let reparsed = ProfileDocument::parse(&out).unwrap();
+    assert!(!reparsed.profile().masker.mask_fallback_to_lowest_deviation);
+    assert_eq!(reparsed.warnings(), &[]);
+}
+
 // ------------------------------------------------------------------ on disk
 
 #[test]

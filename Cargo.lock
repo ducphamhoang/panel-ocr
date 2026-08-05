@@ -2401,6 +2401,7 @@ dependencies = [
  "pc-core",
  "pc-denoise",
  "pc-detect",
+ "pc-imageops",
  "pc-mask",
  "pc-models",
  "pc-preprocess",

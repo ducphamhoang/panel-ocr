@@ -151,7 +151,60 @@ fn masker_defaults() {
     assert_eq!(m.mask_max_standard_deviation, 15.0);
     assert_eq!(m.mask_improvement_threshold, 0.1);
     assert!(!m.mask_selection_fast);
+    assert!(m.mask_fallback_to_lowest_deviation);
     assert_eq!(m.debug_mask_color, [108, 30, 240, 127]);
+}
+
+#[test]
+// spec §16.35 items 4 and 8: this is a registered [masker] key in the shipped default
+// document. The literal registry/document checks are separate from
+// `default_toml_equals_default_profile`: that equality stays green if all three surfaces
+// accidentally omit the key together.
+fn the_mask_fallback_key_is_registered_and_ships_as_true() {
+    let (_, masker_keys) = Profile::TABLES
+        .iter()
+        .find(|(table, _)| *table == "masker")
+        .expect("[masker] must be in the key registry");
+    assert!(
+        masker_keys.contains(&"mask_fallback_to_lowest_deviation"),
+        "the fallback must be a known [masker] key: {masker_keys:?}"
+    );
+
+    let doc = ProfileDocument::parse(DEFAULT_PROFILE_TOML).unwrap();
+    let text_value = doc.document()["masker"]["mask_fallback_to_lowest_deviation"]
+        .as_bool()
+        .expect("the shipped fallback value must be a TOML boolean");
+    assert!(text_value);
+    assert!(doc.profile().masker.mask_fallback_to_lowest_deviation);
+    assert_eq!(doc.warnings(), &[]);
+}
+
+#[test]
+// spec §16.35 item 4's DEVIATION(21) control: false is accepted by deserialization AND
+// by config-load validation. The stage, not the loader, decides how the flag changes
+// candidate selection.
+fn mask_fallback_false_loads_and_validates() {
+    let doc = ProfileDocument::parse("[masker]\nmask_fallback_to_lowest_deviation = false\n")
+        .expect("the documented compatibility value must load and validate");
+    assert!(!doc.profile().masker.mask_fallback_to_lowest_deviation);
+    assert_eq!(doc.warnings(), &[]);
+    doc.profile()
+        .validate()
+        .expect("mask_fallback_to_lowest_deviation = false is valid");
+}
+
+#[test]
+// The key is boolean at the config boundary; a string that merely looks boolean must not
+// silently fall back to true, and the load error must identify the key the user mistyped.
+fn a_non_boolean_mask_fallback_value_fails_load_naming_the_key() {
+    let error = ProfileDocument::parse("[masker]\nmask_fallback_to_lowest_deviation = \"false\"\n")
+        .expect_err("a string is not a boolean config value");
+    assert!(
+        error
+            .to_string()
+            .contains("mask_fallback_to_lowest_deviation"),
+        "error must name the key: {error}"
+    );
 }
 
 // ----------------------------------------------------------------- [denoiser]

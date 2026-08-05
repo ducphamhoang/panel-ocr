@@ -24,6 +24,7 @@ pc-core    = { path = "../crates/pc-core" }
 pc-config  = { path = "../crates/pc-config" }
 pc-denoise = { path = "../crates/pc-denoise" }
 pc-detect  = { path = "../crates/pc-detect", features = ["testkit"] }
+pc-imageops = { path = "../crates/pc-imageops" }
 pc-preprocess = { path = "../crates/pc-preprocess" }
 pc-mask    = { path = "../crates/pc-mask" }
 pc-models  = { path = "../crates/pc-models" }

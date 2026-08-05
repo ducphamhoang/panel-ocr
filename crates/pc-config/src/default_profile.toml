@@ -43,6 +43,7 @@ off_white_max_threshold      = 240
 mask_max_standard_deviation  = 15.0
 mask_improvement_threshold   = 0.1
 mask_selection_fast          = false
+mask_fallback_to_lowest_deviation = true  # §10.3 step 10 / §16.35; DEVIATION(21)
 debug_mask_color             = [108, 30, 240, 127]
 
 [denoiser]
