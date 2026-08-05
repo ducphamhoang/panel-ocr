@@ -47,6 +47,220 @@ pub struct Selected {
     pub median_color: [u8; 3],
 }
 
+// ---------------------------------------------------------------------------------------
+// §16.35 item 7 -- T1 STUBS ONLY. Signatures and derives are frozen with the `q0`/`q1`/`q2`
+// suites; every body below is `todo!()` and is Codex's job to implement (task T1). Nothing
+// here is wired into `select_candidate` or `fit_region` yet, so the frozen `m4_fit.rs` and
+// `m56_run.rs` traces are untouched.
+// ---------------------------------------------------------------------------------------
+
+/// §16.35 item 7 -- one scored candidate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Scored {
+    pub index: usize,
+    pub std_deviation: f64,
+    pub median_color: [u8; 3],
+}
+
+impl From<Scored> for Selected {
+    fn from(scored: Scored) -> Selected {
+        Selected {
+            index: scored.index,
+            std_deviation: scored.std_deviation,
+            median_color: scored.median_color,
+        }
+    }
+}
+
+/// §16.35 item 7 -- everything §10.3 step 9's loop learned. `deviations` holds exactly the
+/// candidates that were scored, in candidate order, so a fast-mode run that broke early
+/// reports a shorter vector.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Selection {
+    /// §10.3 step 9's ratchet pick.
+    pub greedy: Scored,
+    /// The lowest-`std_deviation` candidate among those scored; lowest index on an
+    /// exact-equal tie (§16.35 item 5).
+    pub lowest: Scored,
+    pub deviations: Vec<f64>,
+}
+
+/// §16.35 item 7 -- the fail-safe predicate of §10.3 step 10, named once so it has exactly
+/// one call site.
+pub fn fit_accepted(std_deviation: f64, mask_max_standard_deviation: f64) -> bool {
+    std_deviation <= mask_max_standard_deviation
+}
+
+/// §16.35 item 7 -- §10.3 step 9's loop, reporting everything it scored.
+pub fn select_candidate_with_fallback<F>(
+    count: usize,
+    fast: bool,
+    improvement_threshold: f64,
+    scorer: F,
+) -> Result<Selection, BlankMask>
+where
+    F: FnMut(usize) -> Result<BorderStats, BlankMask>,
+{
+    assert!(
+        count > 0,
+        "candidate selection needs at least one candidate"
+    );
+
+    let mut scorer = scorer;
+
+    let mut greedy: Option<Scored> = None;
+    let mut lowest: Option<Scored> = None;
+    let mut deviations = Vec::with_capacity(count);
+
+    for index in 0..count {
+        let stats = scorer(index)?;
+        deviations.push(stats.std_deviation);
+        let scored = Scored {
+            index,
+            std_deviation: stats.std_deviation,
+            median_color: stats.median_color,
+        };
+
+        let accept = match greedy {
+            None => true,
+            Some(current) => {
+                scored.std_deviation <= current.std_deviation * (1.0 - improvement_threshold)
+            }
+        };
+        if accept {
+            greedy = Some(scored);
+        }
+
+        if lowest
+            .map(|current| scored.std_deviation < current.std_deviation)
+            .unwrap_or(true)
+        {
+            lowest = Some(scored);
+        }
+
+        if fast && stats.std_deviation == 0.0 {
+            break;
+        }
+    }
+
+    Ok(Selection {
+        greedy: greedy.expect("count > 0 always accepts candidate 0"),
+        lowest: lowest.expect("count > 0 always scores candidate 0"),
+        deviations,
+    })
+}
+
+/// §16.35 item 1's rescue policy. `enabled = false` reproduces today's `select_candidate`
+/// output bit for bit (the `DEVIATION(21)` control, §16.35 item 4).
+pub fn resolve_fallback(
+    selection: &Selection,
+    mask_max_standard_deviation: f64,
+    enabled: bool,
+) -> Scored {
+    if !enabled || fit_accepted(selection.greedy.std_deviation, mask_max_standard_deviation) {
+        selection.greedy
+    } else if fit_accepted(selection.lowest.std_deviation, mask_max_standard_deviation) {
+        selection.lowest
+    } else {
+        selection.greedy
+    }
+}
+
+/// §16.35 item 7 -- the diagnostic that travels beside `Fitment` instead of inside it
+/// (`Fitment` itself gains no fields).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FitReport {
+    pub fitment: Fitment,
+    /// The deviations of exactly the candidates that were scored, in candidate order.
+    pub candidate_deviations: Vec<f64>,
+    /// §10.3 step 9's ratchet pick, reported even when the rescue overrode it.
+    pub greedy_index: usize,
+    pub rescued: bool,
+}
+
+/// §16.35 item 7 -- `fit_region` becomes a thin wrapper over this.
+pub fn fit_region_scored(
+    base: &crate::border::BaseCanvas,
+    cut: &BinaryMask,
+    box_mask: &BinaryMask,
+    masking: Rect,
+    reference: Rect,
+    config: &MaskerConfig,
+) -> Option<FitReport> {
+    let image_size = base.dimensions();
+    if reference.to_crop(image_size).is_none() || masking.to_crop(image_size).is_none() {
+        tracing::warn!(
+            ?masking,
+            ?reference,
+            ?image_size,
+            "skipping degenerate or out-of-canvas masking region"
+        );
+        return None;
+    }
+
+    let x_offset = masking.x1 - reference.x1;
+    let y_offset = masking.y1 - reference.y1;
+    let base_crop = base
+        .crop(reference)
+        .expect("reference was validated against the base canvas");
+    let crop_size = base_crop.dimensions();
+    let precise_cut = cut.crop_into(masking, crop_size, (x_offset, y_offset));
+    if precise_cut.is_blank() {
+        tracing::warn!(
+            ?masking,
+            ?reference,
+            "skipping masking region with a blank precise cut"
+        );
+        return None;
+    }
+
+    let box_candidate = box_mask.crop_into(masking, crop_size, (x_offset, y_offset));
+    let candidates = build_candidates(&precise_cut, box_candidate, config);
+    let selection = match select_candidate_with_fallback(
+        candidates.len(),
+        config.mask_selection_fast,
+        config.mask_improvement_threshold,
+        |index| {
+            border_std_deviation(
+                &base_crop,
+                &candidates[index].mask,
+                config.off_white_max_threshold,
+                config.allow_colored_masks,
+            )
+        },
+    ) {
+        Ok(selection) => selection,
+        Err(BlankMask) => {
+            tracing::warn!(
+                ?masking,
+                ?reference,
+                "skipping masking region with an edgeless candidate"
+            );
+            return None;
+        }
+    };
+
+    let selected = selection.greedy;
+    let chosen = &candidates[selected.index];
+    let mask = fit_accepted(selected.std_deviation, config.mask_max_standard_deviation)
+        .then(|| chosen.mask.clone());
+
+    Some(FitReport {
+        fitment: Fitment {
+            mask,
+            median_color: selected.median_color,
+            coords: (reference.x1, reference.y1),
+            std_deviation: selected.std_deviation,
+            candidate_index: selected.index,
+            thickness: chosen.thickness,
+            masking_rect: masking,
+        },
+        candidate_deviations: selection.deviations,
+        greedy_index: selection.greedy.index,
+        rescued: false,
+    })
+}
+
 /// spec §10.3 step 9 -- candidate selection, as a pure policy over a scorer (§16.9
 /// item 9), so the rule can be tested on canned deviations and the fast-mode early
 /// break can be observed directly.
