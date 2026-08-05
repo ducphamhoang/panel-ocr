@@ -1235,22 +1235,29 @@ fn detector_box_counts() -> Result<BoxCountFacts> {
 
 fn detector_box_counts_under(recorded_root: &Path) -> Result<BoxCountFacts> {
     let ours_path = recorded_root.join(format!("detector/{DETECTOR_STEM}_detector_blocks.json"));
-    let ours: Vec<RawBlock> = serde_json::from_slice(
-        &std::fs::read(&ours_path)
-            .with_context(|| format!("reading {}", paths::display_relative(&ours_path)))?,
-    )
-    .with_context(|| {
-        format!(
-            "parsing {} as Vec<RawBlock>",
-            paths::display_relative(&ours_path)
-        )
-    })?;
+    let ours: Vec<RawBlock> =
+        serde_json::from_slice(&std::fs::read(&ours_path).map_err(|error| {
+            anyhow!(
+                "reading {}: {}",
+                paths::display_relative(&ours_path),
+                paths::display_io_error(&error)
+            )
+        })?)
+        .with_context(|| {
+            format!(
+                "parsing {} as Vec<RawBlock>",
+                paths::display_relative(&ours_path)
+            )
+        })?;
 
     let raw_path = recorded_root.join(format!("detector/{DETECTOR_STEM}#raw.json"));
-    let page: PageDataRaw = serde_json::from_slice(
-        &std::fs::read(&raw_path)
-            .with_context(|| format!("reading {}", paths::display_relative(&raw_path)))?,
-    )
+    let page: PageDataRaw = serde_json::from_slice(&std::fs::read(&raw_path).map_err(|error| {
+        anyhow!(
+            "reading {}: {}",
+            paths::display_relative(&raw_path),
+            paths::display_io_error(&error)
+        )
+    })?)
     .with_context(|| {
         format!(
             "parsing {} as PageDataRaw",
@@ -1260,16 +1267,20 @@ fn detector_box_counts_under(recorded_root: &Path) -> Result<BoxCountFacts> {
 
     let upstream_path =
         recorded_root.join(format!("detector/{DETECTOR_STEM}_upstream_oracle.json"));
-    let upstream: oracle::UpstreamOracle = serde_json::from_slice(
-        &std::fs::read(&upstream_path)
-            .with_context(|| format!("reading {}", paths::display_relative(&upstream_path)))?,
-    )
-    .with_context(|| {
-        format!(
-            "parsing {} as UpstreamOracle",
-            paths::display_relative(&upstream_path)
-        )
-    })?;
+    let upstream: oracle::UpstreamOracle =
+        serde_json::from_slice(&std::fs::read(&upstream_path).map_err(|error| {
+            anyhow!(
+                "reading {}: {}",
+                paths::display_relative(&upstream_path),
+                paths::display_io_error(&error)
+            )
+        })?)
+        .with_context(|| {
+            format!(
+                "parsing {} as UpstreamOracle",
+                paths::display_relative(&upstream_path)
+            )
+        })?;
 
     let expectations = authored_expectations();
     validate_authored_mechanisms(&expectations)?;

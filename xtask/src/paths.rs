@@ -30,12 +30,13 @@ pub fn scratch_dir() -> std::io::Result<PathBuf> {
 /// workspace into a repo-relative one, so `PROVENANCE.json` is committable and
 /// reviewable rather than carrying one machine's home directory.
 pub fn relativize_manifest(value: &mut serde_json::Value) {
-    let root = workspace_root().display().to_string();
+    let root = pc_testkit::paths::slash_separated(&workspace_root());
     let prefix = format!("{root}/");
     fn walk(value: &mut serde_json::Value, prefix: &str) {
         match value {
             serde_json::Value::String(text) => {
-                if let Some(rest) = text.strip_prefix(prefix) {
+                let portable = text.replace('\\', "/");
+                if let Some(rest) = portable.strip_prefix(prefix) {
                     *text = rest.to_string();
                 }
             }
@@ -50,8 +51,15 @@ pub fn relativize_manifest(value: &mut serde_json::Value) {
 /// Path relative to the workspace root when possible — log lines that paste into a
 /// `git add` are worth the three lines this costs.
 pub fn display_relative(path: &Path) -> String {
-    path.strip_prefix(workspace_root())
-        .unwrap_or(path)
-        .display()
-        .to_string()
+    pc_testkit::paths::slash_separated(path.strip_prefix(workspace_root()).unwrap_or(path))
+}
+
+/// Keep user-facing diagnostics stable across host operating systems for the common missing-file
+/// case used by generated reports and their tests.
+pub fn display_io_error(error: &std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        "No such file or directory".into()
+    } else {
+        error.to_string()
+    }
 }

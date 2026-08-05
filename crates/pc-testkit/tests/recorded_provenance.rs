@@ -280,12 +280,9 @@ fn collect_recorded_files(directory: &Path, relative: &Path, files: &mut Vec<Str
         if file_type.is_dir() {
             collect_recorded_files(&entry_path, &entry_relative, files);
         } else {
-            files.push(
-                Path::new(RECORDED_PREFIX)
-                    .join(entry_relative)
-                    .display()
-                    .to_string(),
-            );
+            files.push(paths::slash_separated(
+                &Path::new(RECORDED_PREFIX).join(entry_relative),
+            ));
         }
     }
 }
@@ -373,11 +370,11 @@ fn recorded_provenance_declared_digests_are_covered() {
     let mut expected_exempt_paths = groups
         .iter()
         .map(|group| {
-            Path::new(RECORDED_PREFIX)
-                .join(group.file_name().expect("recorded group must have a name"))
-                .join("PROVENANCE.json")
-                .display()
-                .to_string()
+            paths::slash_separated(
+                &Path::new(RECORDED_PREFIX)
+                    .join(group.file_name().expect("recorded group must have a name"))
+                    .join("PROVENANCE.json"),
+            )
         })
         .collect::<Vec<_>>();
     expected_exempt_paths.push(format!("{RECORDED_PREFIX}/.gitkeep"));

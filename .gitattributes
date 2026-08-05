@@ -1,3 +1,8 @@
+crates/pc-config/src/default_profile.toml -text
+.claude/agents/*.md -text
+tests/fixtures/upstream/ocr_output/good_detected_text.csv -text
+tests/fixtures/upstream/ocr_output/good_detected_text.txt -text
+docs/GOLDEN_CALIBRATION.md -text
 # crates/pc-ocr/assets/vocab.txt is a hash-pinned vendored file (§16.30 item 2, Fable ruling).
 # -text prevents eol normalization from silently rewriting the pinned bytes on checkout/commit.
 crates/pc-ocr/assets/vocab.txt -text

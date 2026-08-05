@@ -25,6 +25,19 @@ use pc_testkit::paths;
 use std::collections::BTreeSet;
 use std::path::Path;
 
+/// Every other committed text artifact whose bytes are compared exactly by a test. These are not
+/// digest-pinned provenance outputs, so they need a separate list rather than being folded into
+/// the provenance-derived seven above.
+const BYTE_EXACT_NON_PROVENANCE_ARTIFACTS: &[&str] = &[
+    "crates/pc-config/src/default_profile.toml",
+    ".claude/agents/architect.md",
+    ".claude/agents/fable-adjudicator.md",
+    ".claude/agents/fresh-reader.md",
+    ".claude/agents/rust-engineer.md",
+    "tests/fixtures/upstream/ocr_output/good_detected_text.csv",
+    "tests/fixtures/upstream/ocr_output/good_detected_text.txt",
+    "docs/GOLDEN_CALIBRATION.md",
+];
 /// Every committed TEXT artifact whose exact bytes a `PROVENANCE.json` record pins with an
 /// `output_sha256`. Enumerated on 2026-08-04 by reading every
 /// `tests/fixtures/recorded/*/PROVENANCE.json` and taking each record whose `output` is not an image
@@ -106,7 +119,10 @@ fn the_digest_pinned_text_artifact_count_is_pinned() {
 // `.gitattributes` is the next pipeline step.
 fn every_digest_pinned_text_artifact_is_declared_binary_for_end_of_line_purposes() {
     let mut unprotected = Vec::new();
-    for relative in DIGEST_PINNED_TEXT_ARTIFACTS {
+    for relative in DIGEST_PINNED_TEXT_ARTIFACTS
+        .iter()
+        .chain(BYTE_EXACT_NON_PROVENANCE_ARTIFACTS)
+    {
         let state = text_attribute(relative);
         if state != "unset" {
             unprotected.push(format!("{relative} => text: {state}"));

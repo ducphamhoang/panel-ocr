@@ -28,6 +28,11 @@ use std::path::Path;
 /// Payloads that are shell-dangerous AND legal in a path on the platform under test. Every one is
 /// harmless if executed, deliberately: an unquoted `$( )` or backtick would be run by the shell in
 /// the round-trip tests below, so nothing here may have a side effect.
+///
+/// `#[cfg(unix)]` because its only consumer is the POSIX-only round trip below, and an unused
+/// constant is a `-D warnings` clippy failure on Windows — the same reasoning already applied to
+/// `HOSTILE_WINDOWS_SEGMENTS` below.
+#[cfg(unix)]
 const HOSTILE_POSIX_SEGMENTS: &[&str] = &[
     "space dir",            // word splitting
     "it's-a-cache",         // the case naive quoting gets wrong

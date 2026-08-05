@@ -560,10 +560,16 @@ fn validate_digest(violations: &mut Vec<Violation>, at: &str, field: &'static st
 
 fn validate_path(violations: &mut Vec<Violation>, at: &str, field: &'static str, path: &str) {
     let parsed = Path::new(path);
+    // Provenance paths are serialized repository paths, not host-native paths. On Windows,
+    // Path::new("/home/...").is_absolute() is false for a root-relative path, so inspect the
+    // portable slash spelling as well as the native parser.
+    let portable = path.replace('\\', "/");
+    let has_drive_root =
+        portable.len() >= 3 && portable.as_bytes()[1] == b':' && portable.as_bytes()[2] == b'/';
     if parsed.is_absolute()
-        || parsed
-            .components()
-            .any(|component| component == std::path::Component::ParentDir)
+        || portable.starts_with('/')
+        || has_drive_root
+        || portable.split('/').any(|component| component == "..")
     {
         violations.push(Violation::NonRelativePath {
             at: at.to_owned(),

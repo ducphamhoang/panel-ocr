@@ -8,6 +8,11 @@
 use pc_core::{MaskData, PageDataRaw};
 use std::path::{Path, PathBuf};
 
+/// Render a path using the forward-slash form used by recorded manifests and other portable
+/// repository data, regardless of the host platform's native separator.
+pub fn slash_separated(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
 /// `<repo>` -- the cargo workspace root.
 pub fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -246,7 +251,9 @@ pub fn relativize_mask_data(mask: &mut MaskData, root: &Path) -> Vec<PathBuf> {
 
 fn relativize_handle_path(path: &mut Option<PathBuf>, root: &Path, residue: &mut Vec<PathBuf>) {
     let Some(current) = path.as_ref() else { return };
-    if current.is_relative() {
+    // Windows treats /fixtures/... as root-relative rather than absolute. Recorded paths use
+    // POSIX spelling, so has_root is the portable rootedness check needed for both platforms.
+    if !current.has_root() {
         return; // already relative: idempotent, mirroring `rebase`'s idempotence on absolutes
     }
     match current.strip_prefix(root) {
