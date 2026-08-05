@@ -11,6 +11,7 @@
 
 mod bench;
 mod calibrate;
+mod device;
 mod env;
 mod mask_sweep;
 mod model_signature;
@@ -20,6 +21,7 @@ mod record;
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
+use pc_core::device::{resolve, Device, DeviceSupport};
 use record::{Group, Outcome};
 use std::path::PathBuf;
 
@@ -39,6 +41,9 @@ enum Command {
     Probe,
     /// Task F1 (§7.2): record reference fixtures from the real third-party tools.
     RecordFixtures {
+        /// Execution device. Committed recordings are restricted to CPU.
+        #[arg(long, default_value = "cpu", value_parser = parse_device)]
+        device: Device,
         /// Restrict to these groups (default: all). Unavailable groups are reported, not run.
         #[arg(long, value_delimiter = ',')]
         only: Vec<Group>,
@@ -66,6 +71,9 @@ enum Command {
     },
     /// Task F2 (§7.3): measure the goldens and write `docs/GOLDEN_CALIBRATION.md`.
     CalibrateGoldens {
+        /// Execution device. Committed calibration is restricted to CPU.
+        #[arg(long, default_value = "cpu", value_parser = parse_device)]
+        device: Device,
         /// Write somewhere other than `docs/GOLDEN_CALIBRATION.md`.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -112,6 +120,7 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Probe => probe(),
         Command::RecordFixtures {
+            device,
             only,
             python,
             detector,
@@ -121,6 +130,9 @@ fn main() -> Result<()> {
             ocr_decoder,
             force,
         } => {
+            device::ensure_recording_request(device)?;
+            let policy = resolve(device, DeviceSupport::compiled())
+                .map_err(|refusal| anyhow::anyhow!(refusal.message()))?;
             let groups = if only.is_empty() {
                 Group::ALL.to_vec()
             } else {
@@ -139,6 +151,7 @@ fn main() -> Result<()> {
                 model_signature.as_deref(),
                 (ocr_encoder.as_deref(), ocr_decoder.as_deref()),
                 force,
+                &policy,
             )?;
             summarize(&results);
             let failed = results
@@ -150,8 +163,15 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::CalibrateGoldens { out, detector } => {
-            calibrate::run(out.as_deref(), detector.as_deref())
+        Command::CalibrateGoldens {
+            device,
+            out,
+            detector,
+        } => {
+            device::ensure_recording_request(device)?;
+            let policy = resolve(device, DeviceSupport::compiled())
+                .map_err(|refusal| anyhow::anyhow!(refusal.message()))?;
+            calibrate::run(out.as_deref(), detector.as_deref(), &policy)
         }
         Command::MaskSweep(args) => mask_sweep::run(args),
         Command::BenchDetector {
@@ -174,6 +194,16 @@ fn main() -> Result<()> {
             warmup,
             raw_out,
         } => bench::run_child(&detector, &label, reps, warmup, &raw_out),
+    }
+}
+
+fn parse_device(value: &str) -> std::result::Result<Device, String> {
+    match value {
+        "cpu" => Ok(Device::Cpu),
+        "cuda" => Ok(Device::Cuda),
+        _ => Err(format!(
+            "invalid device `{value}`; expected `cpu` or `cuda`"
+        )),
     }
 }
 

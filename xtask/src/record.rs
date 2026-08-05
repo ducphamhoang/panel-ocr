@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const DETECTOR_STEM: &str = "ja_Pepper-and-Carrot_by-David-Revoy_E01P01";
-const DETECTOR_EXECUTION_PROVIDER: &str = "cpu";
 const DETECTOR_PAGE_RECORDED: &str =
     "tests/fixtures/recorded/detector/ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg";
 
@@ -75,6 +74,7 @@ pub const NLM_BUBBLES: &[&str] = &["nightmare", "ray"];
 pub const INTER_AREA_TARGET: (u32, u32) = (500, 4000);
 pub const INTER_AREA_REFERENCE: &str = "inter_area/long_strip_inter_area_500x4000.png";
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     groups: &[Group],
     python: Option<&Path>,
@@ -83,6 +83,7 @@ pub fn run(
     model_signature_path: Option<&Path>,
     ocr_model_paths: (Option<&Path>, Option<&Path>),
     force: bool,
+    device_policy: &pc_core::device::DevicePolicy,
 ) -> Result<Vec<(Group, Outcome)>> {
     let needs_python = groups.iter().any(|group| {
         matches!(group, Group::Nlm | Group::InterArea | Group::FindEdges)
@@ -123,9 +124,13 @@ pub fn run(
             },
             Group::Detector => match detector_backend_status(detector)? {
                 DetectorStatus::Ready { model_path } => match &tooling {
-                    Some(tooling) => {
-                        record_detector_dispatch(tooling, detector_upstream, &model_path, force)
-                    }
+                    Some(tooling) => record_detector_dispatch(
+                        tooling,
+                        detector_upstream,
+                        &model_path,
+                        force,
+                        device_policy,
+                    ),
                     None => Ok(Outcome::Skipped {
                         reason: NO_PYTHON_HELP.into(),
                     }),
@@ -496,14 +501,15 @@ fn record_detector_dispatch(
     upstream_checkout: Option<&Path>,
     model: &Path,
     force: bool,
+    device_policy: &pc_core::device::DevicePolicy,
 ) -> Result<Outcome> {
     #[cfg(feature = "onnx")]
     {
-        record_detector(tooling, upstream_checkout, model, force)
+        record_detector(tooling, upstream_checkout, model, force, device_policy)
     }
     #[cfg(not(feature = "onnx"))]
     {
-        let _ = (tooling, upstream_checkout, model, force);
+        let _ = (tooling, upstream_checkout, model, force, device_policy);
         bail!("detector recording requires xtask's `onnx` feature")
     }
 }
@@ -514,15 +520,6 @@ fn with_verified_model<T>(model: &Path, inference: impl FnOnce() -> Result<T>) -
     pc_models::verify_sha256(model, pc_models::COMIC_TEXT_DETECTOR.sha256)
         .with_context(|| format!("verifying detector model {}", model.display()))?;
     inference()
-}
-
-fn ensure_cpu_execution_provider(execution_provider: &str) -> Result<()> {
-    if execution_provider != DETECTOR_EXECUTION_PROVIDER {
-        bail!(
-            "detector recording refuses execution provider `{execution_provider}`; only `cpu` is ratified (§16.22 item 5(b))"
-        );
-    }
-    Ok(())
 }
 
 /// Build the canonical detector provenance from a fully normalised manifest. This function does
@@ -602,6 +599,7 @@ fn record_detector(
     upstream_checkout: Option<&Path>,
     model: &Path,
     force: bool,
+    device_policy: &pc_core::device::DevicePolicy,
 ) -> Result<Outcome> {
     let out_dir = paths::recorded_root().join("detector");
     let planned = detector_plan(&out_dir, DETECTOR_STEM);
@@ -653,9 +651,12 @@ fn record_detector(
         // in here rather than keeping a second copy, `page` above already IS that file — no copy
         // needed, and copying a file onto itself would risk truncating it via the same inode.
 
-        ensure_cpu_execution_provider(DETECTOR_EXECUTION_PROVIDER)?;
-
         let config = pc_config::TextDetectorConfig::default();
+        let session_pins = crate::device::recorded_session_pins(device_policy, &config);
+        crate::device::ensure_recording_policy(
+            device_policy,
+            crate::device::RecordingSession::DetectorFixture,
+        )?;
         let detector = pc_detect::onnx::OnnxDetector::from_path_with_config(model, &config)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let decoded = image::open(&page)
@@ -789,9 +790,9 @@ fn record_detector(
             "backend": "ort",
             "decoded_rgb_digest": decoded_rgb_digest,
             "decoded_from": "input_page",
-            "execution_provider": DETECTOR_EXECUTION_PROVIDER,
-            "intra_threads": 0,
-            "inter_threads": 0,
+            "execution_provider": session_pins.execution_provider,
+            "intra_threads": session_pins.intra_threads,
+            "inter_threads": session_pins.inter_threads,
             "pad_value": pc_detect::onnx::PAD_VALUE,
             "panel_ocr_commit": panel_ocr_commit,
             "profile_non_default": {},

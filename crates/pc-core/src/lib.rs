@@ -15,6 +15,7 @@
 //! resolved during the Rust Engineer's foundational-test pass.
 
 pub mod analytics;
+pub mod device;
 pub mod error;
 pub mod geometry;
 pub mod image_handle;

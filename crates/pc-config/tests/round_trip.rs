@@ -254,6 +254,56 @@ fn masker_fallback_round_trips_through_text_and_set_profile() {
     assert_eq!(reparsed.warnings(), &[]);
 }
 
+#[test]
+// spec §16.36 item 1: `[general] device` round-trips through `toml_edit` like every other
+// key -- written as the snake_case wire spelling `"cuda"` (the file-format contract, not
+// the Rust variant name), edited in place without disturbing the rest of the document,
+// and read back as the same typed value. Without this, `profile edit`/`profile set` could
+// serialise a device the loader cannot read, or silently reset it to cpu.
+fn general_device_round_trips_through_text_and_set_profile() {
+    use pc_core::device::Device;
+
+    let mut original = Profile::default();
+    original.general.device = Device::Cuda;
+    let text = ProfileDocument::from_profile(&original).to_toml_string();
+    assert!(
+        text.contains(r#"device = "cuda""#),
+        "the wire spelling is snake_case `cuda`: {text}"
+    );
+    assert_eq!(
+        ProfileDocument::parse(&text)
+            .unwrap()
+            .profile()
+            .general
+            .device,
+        Device::Cuda
+    );
+
+    // in-place edit of the shipped document, comments and neighbours preserved
+    let mut doc = ProfileDocument::parse(DEFAULT_PROFILE_TOML).unwrap();
+    assert_eq!(doc.profile().general.device, Device::Cpu);
+    let mut edited = doc.profile().clone();
+    edited.general.device = Device::Cuda;
+    doc.set_profile(&edited).unwrap();
+
+    // read through `toml_edit`, not by substring: the shipped document is
+    // column-aligned, so the emitted line is not literally `device = "cuda"`.
+    assert_eq!(
+        doc.document()["general"]["device"].as_str(),
+        Some("cuda"),
+        "got: {}",
+        doc.to_toml_string()
+    );
+    let out = doc.to_toml_string();
+    assert!(
+        out.contains("max_threads"),
+        "the neighbouring [general] keys must survive: {out}"
+    );
+    let reparsed = ProfileDocument::parse(&out).unwrap();
+    assert_eq!(reparsed.profile().general.device, Device::Cuda);
+    assert_eq!(reparsed.warnings(), &[]);
+}
+
 // ------------------------------------------------------------------ on disk
 
 #[test]

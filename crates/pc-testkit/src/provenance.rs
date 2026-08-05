@@ -14,7 +14,7 @@ pub const PROVENANCE_FILE_NAME: &str = "PROVENANCE.json";
 pub const RECORDED_PREFIX: &str = "tests/fixtures/recorded";
 pub const SCRATCH_PREFIX: &str = "target/xtask-scratch/";
 pub const DETECTOR_GROUP: &str = "detector";
-pub const REQUIRED_EXECUTION_PROVIDER: &str = "cpu";
+pub const REQUIRED_EXECUTION_PROVIDER: &str = pc_core::device::Device::Cpu.as_str();
 
 /// Bare model filenames a record may name as `source` with no committed artifact to hash
 /// (spec §16.31 item 3). ENUMERATED, not pattern-matched: a broad suffix exemption would

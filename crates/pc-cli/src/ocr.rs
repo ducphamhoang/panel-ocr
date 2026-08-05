@@ -1,6 +1,7 @@
 //! `--ocr-enabled`'s effect: constructing an `OcrEngineFactory` (spec §16.30/§16.31).
 
 use pc_config::Profile;
+use pc_core::device::Device;
 use pc_core::StageError;
 use std::path::Path;
 #[cfg(feature = "onnx")]
@@ -17,19 +18,33 @@ session are not linked in). Rebuild with `--features onnx`, or disable OCR \
 /// no per-image lazy resolution -- unlike the detector, `OcrEngineFactory::engine_for`
 /// takes no image path, so there is nothing to bind lazily).
 pub fn build_factory(cache_root: &Path) -> Result<Box<dyn pc_ocr::OcrEngineFactory>, StageError> {
+    build_factory_for_device(cache_root, Device::Cpu)
+}
+
+pub fn build_factory_for_device(
+    cache_root: &Path,
+    device: Device,
+) -> Result<Box<dyn pc_ocr::OcrEngineFactory>, StageError> {
     #[cfg(not(feature = "onnx"))]
     {
-        let _ = cache_root;
+        let _ = (cache_root, device);
         Err(StageError::Model(ONNX_UNAVAILABLE.to_string()))
     }
     #[cfg(feature = "onnx")]
     {
+        pc_core::device::resolve(device, pc_core::device::DeviceSupport::compiled())
+            .map_err(|refusal| StageError::Model(refusal.message()))?;
+
         let models_dir = crate::paths::models_dir(cache_root);
         let encoder_path =
             resolve_managed_model(&pc_models::MANGA_OCR_ENCODER, &models_dir, cache_root)?;
         let decoder_path =
             resolve_managed_model(&pc_models::MANGA_OCR_DECODER, &models_dir, cache_root)?;
-        let engine = pc_ocr::manga::MangaOcrEngine::from_paths(&encoder_path, &decoder_path)?;
+        let engine = pc_ocr::manga::MangaOcrEngine::from_paths_for_device(
+            &encoder_path,
+            &decoder_path,
+            device,
+        )?;
         Ok(Box::new(pc_ocr::manga::MangaOcrFactory::new(engine)))
     }
 }

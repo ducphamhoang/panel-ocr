@@ -7,6 +7,9 @@
 
 use crate::args::DetectorSpec;
 use pc_config::TextDetectorConfig;
+use pc_core::device::Device;
+#[cfg(feature = "onnx")]
+use pc_core::device::DeviceSupport;
 use pc_core::StageError;
 use pc_detect::{MockDetector, ReplayDetector, TextDetector};
 use pc_pipeline::{DetectorProvider, SharedDetector};
@@ -53,6 +56,7 @@ struct OnnxProvider {
     cache_root: PathBuf,
     intra_threads: usize,
     inter_threads: usize,
+    device: Device,
     outcome: OnceLock<Result<Arc<dyn TextDetector>, String>>,
     initializing: Mutex<()>,
     // Deliberate test instrumentation proving failed initialization is attempted once.
@@ -69,6 +73,7 @@ impl OnnxProvider {
         profile_override: Option<&Path>,
         cache_root: &Path,
         detector_config: &TextDetectorConfig,
+        device: Device,
     ) -> Self {
         Self {
             cli_override: cli_override.map(Path::to_path_buf),
@@ -76,6 +81,7 @@ impl OnnxProvider {
             cache_root: cache_root.to_path_buf(),
             intra_threads: detector_config.intra_threads,
             inter_threads: detector_config.inter_threads,
+            device,
             outcome: OnceLock::new(),
             initializing: Mutex::new(()),
             #[cfg(test)]
@@ -90,6 +96,13 @@ impl OnnxProvider {
         {
             self.attempts
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        pc_core::device::resolve(self.device, DeviceSupport::compiled())
+            .map_err(|refusal| refusal.message())?;
+
+        #[cfg(test)]
+        {
             if let Some(init_hook) = &self.init_hook {
                 return init_hook();
             }
@@ -185,6 +198,7 @@ mod tests {
                 None,
                 cache.path(),
                 &TextDetectorConfig::default(),
+                Device::Cpu,
             ));
             let barrier = Arc::new(Barrier::new(4));
 
@@ -226,8 +240,13 @@ mod tests {
     fn panicking_initialization_is_latched_across_threads() {
         for _ in 0..25 {
             let cache = tempfile::tempdir().unwrap();
-            let mut provider =
-                OnnxProvider::new(None, None, cache.path(), &TextDetectorConfig::default());
+            let mut provider = OnnxProvider::new(
+                None,
+                None,
+                cache.path(),
+                &TextDetectorConfig::default(),
+                Device::Cpu,
+            );
             provider.init_hook = Some(Box::new(|| panic!("initialization exploded")));
             let provider = Arc::new(provider);
             let barrier = Arc::new(Barrier::new(4));
@@ -320,12 +339,19 @@ pub fn build_provider(
     profile_override: Option<&Path>,
     cache_root: &Path,
     detector_config: &TextDetectorConfig,
+    device: Device,
 ) -> Result<Box<dyn DetectorProvider>, StageError> {
     match spec {
         DetectorSpec::Onnx => {
             #[cfg(not(feature = "onnx"))]
             {
-                let _ = (cli_override, profile_override, cache_root, detector_config);
+                let _ = (
+                    cli_override,
+                    profile_override,
+                    cache_root,
+                    detector_config,
+                    device,
+                );
                 Err(StageError::Model(ONNX_UNAVAILABLE.to_string()))
             }
             #[cfg(feature = "onnx")]
@@ -335,6 +361,7 @@ pub fn build_provider(
                     profile_override,
                     cache_root,
                     detector_config,
+                    device,
                 )))
             }
         }
@@ -342,3 +369,6 @@ pub fn build_provider(
         DetectorSpec::Replay(dir) => Ok(Box::new(ReplayProvider::new(dir.clone()))),
     }
 }
+
+#[cfg(all(test, feature = "onnx"))]
+mod g1_c_tests;

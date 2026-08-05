@@ -86,6 +86,7 @@ pub fn run_clean(args: CleanArgs) -> Result<i32> {
         args.profile_path.as_deref(),
         &config,
     )?;
+    let device = profile.general.device;
     let cache_root = paths::resolve_cache_root(args.cache_dir.as_deref(), &config);
     let provider = detector::build_provider(
         &args.detector,
@@ -93,9 +94,10 @@ pub fn run_clean(args: CleanArgs) -> Result<i32> {
         profile.text_detector.model_path(),
         &cache_root,
         &profile.text_detector,
+        device,
     )?;
     let ocr_factory = if profile.preprocessor.ocr_enabled {
-        Some(ocr::build_factory(&cache_root)?)
+        Some(ocr::build_factory_for_device(&cache_root, device)?)
     } else {
         None
     };
@@ -126,14 +128,16 @@ pub fn run_ocr(args: OcrArgs) -> Result<i32> {
         &config,
     )?;
     ocr::apply_report_overrides(&mut profile);
+    let device = profile.general.device;
     let cache_root = paths::resolve_cache_root(args.cache_dir.as_deref(), &config);
-    let ocr_factory = ocr::build_factory(&cache_root)?;
+    let ocr_factory = ocr::build_factory_for_device(&cache_root, device)?;
     let provider = detector::build_provider(
         &args.detector,
         None,
         profile.text_detector.model_path(),
         &cache_root,
         &profile.text_detector,
+        device,
     )?;
     let cache_dir = paths::image_cache_dir(&cache_root);
     let options = PipelineOptions {

@@ -4,7 +4,7 @@
 
 use crate::{decode, onnx, post, preprocess, vocab, OcrEngine, OcrEngineFactory};
 use image::DynamicImage;
-use pc_core::{Language, StageError};
+use pc_core::{device::Device, Language, StageError};
 use std::path::Path;
 
 #[derive(Debug)]
@@ -14,8 +14,16 @@ pub struct MangaOcrEngine {
 
 impl MangaOcrEngine {
     pub fn from_paths(encoder: &Path, decoder: &Path) -> Result<Self, StageError> {
+        Self::from_paths_for_device(encoder, decoder, Device::Cpu)
+    }
+
+    pub fn from_paths_for_device(
+        encoder: &Path,
+        decoder: &Path,
+        device: Device,
+    ) -> Result<Self, StageError> {
         Ok(Self {
-            sessions: onnx::MangaOcrSessions::from_paths(encoder, decoder)?,
+            sessions: onnx::MangaOcrSessions::from_paths_for_device(encoder, decoder, device)?,
         })
     }
 }

@@ -37,6 +37,11 @@ const BYTE_EXACT_NON_PROVENANCE_ARTIFACTS: &[&str] = &[
     "tests/fixtures/upstream/ocr_output/good_detected_text.csv",
     "tests/fixtures/upstream/ocr_output/good_detected_text.txt",
     "docs/GOLDEN_CALIBRATION.md",
+    "tests/fixtures/recorded/detector/PROVENANCE.json",
+    "tests/fixtures/recorded/inter_area/PROVENANCE.json",
+    "tests/fixtures/recorded/model_signature/PROVENANCE.json",
+    "tests/fixtures/recorded/nlm/PROVENANCE.json",
+    "tests/fixtures/recorded/ocr_model_signature/PROVENANCE.json",
 ];
 /// Every committed TEXT artifact whose exact bytes a `PROVENANCE.json` record pins with an
 /// `output_sha256`. Enumerated on 2026-08-04 by reading every
