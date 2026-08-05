@@ -7,6 +7,7 @@
 use clap::Parser;
 use pc_cli::args::{Cli, Command, DetectorSpec};
 use pc_cli::{detector, logging, paths};
+use pc_core::device::Device;
 use pc_pipeline::SaveOnly;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -144,6 +145,7 @@ fn only_the_mock_and_replay_providers_can_be_built_in_v1() {
         None,
         cache_root.path(),
         &pc_config::TextDetectorConfig::default(),
+        Device::Cpu,
     )
     .err()
     .expect("onnx must not be buildable in v1");
@@ -158,6 +160,7 @@ fn only_the_mock_and_replay_providers_can_be_built_in_v1() {
         None,
         cache_root.path(),
         &pc_config::TextDetectorConfig::default(),
+        Device::Cpu,
     )
     .is_ok());
     assert!(
@@ -167,6 +170,7 @@ fn only_the_mock_and_replay_providers_can_be_built_in_v1() {
             None,
             cache_root.path(),
             &pc_config::TextDetectorConfig::default(),
+            Device::Cpu,
         )
         .is_ok(),
         "a replay provider builds; a missing fixture is a per-image error (§16.12 item 3)"
@@ -241,6 +245,7 @@ fn onnx_provider_defers_model_resolution_to_first_use() {
         None,
         cache_root.path(),
         &pc_config::TextDetectorConfig::default(),
+        Device::Cpu,
     )
     .expect("construction must not resolve, so it cannot fail on a missing model");
 
@@ -270,6 +275,7 @@ fn onnx_provider_defers_model_resolution_to_first_use() {
         None,
         cache_root.path(),
         &pc_config::TextDetectorConfig::default(),
+        Device::Cpu,
     )
     .is_ok());
 }

@@ -2,6 +2,8 @@
 //!
 //! This module owns manga-ocr ONNX session construction and inference.
 
+#[cfg(feature = "onnx")]
+use pc_core::device::{Device, DeviceSupport};
 use pc_core::StageError;
 use std::path::Path;
 
@@ -66,6 +68,17 @@ pub struct MangaOcrSessions {
 #[cfg(feature = "onnx")]
 impl MangaOcrSessions {
     pub fn from_paths(encoder: &Path, decoder: &Path) -> Result<Self, StageError> {
+        Self::from_paths_for_device(encoder, decoder, Device::Cpu)
+    }
+
+    pub fn from_paths_for_device(
+        encoder: &Path,
+        decoder: &Path,
+        device: Device,
+    ) -> Result<Self, StageError> {
+        pc_core::device::resolve(device, DeviceSupport::compiled())
+            .map_err(|refusal| StageError::Model(refusal.message()))?;
+
         // Both pre-flights must happen before any ort call. In particular, this preserves the
         // encoder-specific error when both paths are absent and keeps garbage decoder bytes from
         // obscuring a missing encoder.
