@@ -80,6 +80,7 @@ impl Profile {
                 "mask_max_standard_deviation",
                 "mask_improvement_threshold",
                 "mask_selection_fast",
+                "mask_fallback_to_lowest_deviation",
                 "debug_mask_color",
             ],
         ),
@@ -309,6 +310,7 @@ pub struct MaskerConfig {
     pub mask_max_standard_deviation: f64,
     pub mask_improvement_threshold: f64,
     pub mask_selection_fast: bool,
+    pub mask_fallback_to_lowest_deviation: bool,
     /// RGBA.
     pub debug_mask_color: [u8; 4],
 }
@@ -324,6 +326,7 @@ impl Default for MaskerConfig {
             mask_max_standard_deviation: 15.0,
             mask_improvement_threshold: 0.1,
             mask_selection_fast: false,
+            mask_fallback_to_lowest_deviation: true,
             debug_mask_color: [108, 30, 240, 127],
         }
     }
