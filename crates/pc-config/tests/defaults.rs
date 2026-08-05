@@ -9,6 +9,10 @@ use pc_config::{
     MaskRefineMode, OcrLanguageSetting, Profile, ProfileDocument, ReadingOrder,
     DEFAULT_PROFILE_TOML,
 };
+// spec §16.36 item 2: `Device` lives in `pc_core::device`, NOT in `pc-config` -- so that
+// `pc-ocr` (which depends on `pc-core` only) can name it without gaining a `pc-config`
+// edge that §16.5 item 1's dependency list does not mandate.
+use pc_core::device::Device;
 
 #[test]
 // spec §6: the literal default TOML block parses, validates, and equals the
@@ -70,6 +74,74 @@ fn general_defaults() {
     assert!(g.merge_after_split);
     assert_eq!(g.max_threads, 0);
     assert!(!g.always_cache_masks);
+    // §16.36 item 1 + §16.22 item 5(a): the device key lives in [general] and defaults
+    // to cpu -- "cuda" must be explicit, never auto-detected (DEVIATION(22)).
+    assert_eq!(g.device, Device::Cpu);
+}
+
+#[test]
+// spec §16.36 item 1: `device` must be a REGISTERED [general] key in the SHIPPED default
+// profile, otherwise every `profile new` WARNs at the user about its own output. The key
+// is named as a literal string here on purpose: `table_registry_matches_default_document`
+// compares the registry against the document, so it stays green if BOTH lack `device`.
+// The text value is read out of the `toml_edit` document, an oracle independent of the
+// serde layer that produces `profile().general.device`.
+fn the_general_device_key_is_registered_and_ships_as_cpu() {
+    let (_, general_keys) = Profile::TABLES
+        .iter()
+        .find(|(table, _)| *table == "general")
+        .expect("[general] must be in the key registry");
+    assert!(
+        general_keys.contains(&"device"),
+        "`device` must be a known [general] key: {general_keys:?}"
+    );
+
+    let doc = ProfileDocument::parse(DEFAULT_PROFILE_TOML).unwrap();
+    let text_value = doc.document()["general"]["device"]
+        .as_str()
+        .expect("[general] device must be a TOML string in the shipped default profile");
+    assert_eq!(text_value, "cpu");
+    assert_eq!(doc.profile().general.device, Device::Cpu);
+    assert_eq!(doc.warnings(), &[]);
+}
+
+#[test]
+// spec §16.36 item 6 + §16.5 item 3's ratified split: config ACCEPTS `device = "cuda"`
+// (parses AND validates); the refusal belongs at session creation (§16.36 items 3-4), not
+// at config load -- otherwise `--detector replay`/`mock` runs, which create no session at
+// all, would break for a device nothing in them ever uses. Mirrors
+// `annotation_refine_mode_loads_successfully`.
+fn cuda_device_loads_successfully() {
+    let doc = ProfileDocument::parse("[general]\ndevice = \"cuda\"\n")
+        .expect("config accepts cuda; session creation is what refuses it");
+    assert_eq!(doc.profile().general.device, Device::Cuda);
+    assert_eq!(doc.warnings(), &[]);
+    // Accepting the value means accepting it in `validate()` too, not only in
+    // `Deserialize` -- `ProfileDocument::parse` runs both, this pins the second.
+    doc.profile()
+        .validate()
+        .expect("device = \"cuda\" is a valid profile in every build");
+}
+
+#[test]
+// spec §16.36 item 1: `cpu | cuda` is the closed documented set. A v2 device name
+// (CoreML/DirectML are v2 per §16's out-of-scope list) must fail the LOAD naming the key,
+// rather than silently degrading to the cpu default -- §14 item 7's "an opt-in setting
+// must not silently behave differently". Mirrors `unknown_enum_value_fails_load`.
+fn unsupported_device_values_fail_load_naming_the_key() {
+    for bad in ["mps", "directml", "coreml", "CPU"] {
+        let err = ProfileDocument::parse(&format!("[general]\ndevice = \"{bad}\"\n"))
+            .expect_err("an undocumented device must not load");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("general.device"),
+            "`{bad}`: error must name the key: {msg}"
+        );
+        assert!(
+            msg.contains("cpu") && msg.contains("cuda"),
+            "`{bad}`: error must name the accepted spellings: {msg}"
+        );
+    }
 }
 
 #[test]

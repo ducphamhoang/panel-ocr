@@ -10,6 +10,7 @@ long_strip_aspect_ratio      = 0.33
 merge_after_split            = true
 max_threads                  = 0         # 0 = all cores
 always_cache_masks           = false
+device                       = "cpu"     # cpu | cuda (needs a build with the `cuda` feature: §16.22, §16.36)
 
 [text_detector]
 model_path                   = ""        # empty = use managed cache

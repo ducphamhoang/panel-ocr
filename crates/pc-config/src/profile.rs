@@ -6,7 +6,7 @@
 //! and preserved rather than silently dropped.
 
 use crate::error::ConfigError;
-use pc_core::Language;
+use pc_core::{device::Device, Language};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -38,6 +38,7 @@ impl Profile {
                 "merge_after_split",
                 "max_threads",
                 "always_cache_masks",
+                "device",
             ],
         ),
         (
@@ -137,6 +138,7 @@ pub struct GeneralConfig {
     /// `0` = all cores (§4.5).
     pub max_threads: usize,
     pub always_cache_masks: bool,
+    pub device: Device,
 }
 
 impl Default for GeneralConfig {
@@ -153,6 +155,7 @@ impl Default for GeneralConfig {
             merge_after_split: true,
             max_threads: 0,
             always_cache_masks: false,
+            device: Device::Cpu,
         }
     }
 }
