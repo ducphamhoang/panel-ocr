@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 25;
+const EXPECTED_PARSED_CLAIMS: usize = 27;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -103,6 +103,12 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // first transcription's mistaken claim that both rows needed a marker.
     ("16.34", "15 item 5"),
     ("16.34", "9.5"),
+    // §16.35's single marker: the mask-quality-polish rescue tier amends the failure-threshold
+    // clause (step 10 has no `^N. ` item marker at the section level it lives in, so `step 10`
+    // resolves to the whole §10.3 span per the `step N` fallback documented above).
+    ("16.35", "10.3 step 10"),
+    // §16.36's single marker: pins the device config key's section, previously unstated.
+    ("16.36", "8.3 step 3"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
