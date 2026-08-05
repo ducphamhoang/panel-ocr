@@ -4,8 +4,9 @@
 //! **Precision rule (§15.9): `f64` only, no `f32` in this module.** The comparison
 //! `dev_i <= best_dev * (1 - threshold)` decides which mask candidate paints the page.
 //!
-//! `select_candidate` holds the policy and `fit_region` the wiring around it (task M4);
-//! both signatures are frozen with the tests.
+//! `select_candidate_with_fallback` holds the scored selection policy;
+//! `select_candidate` is its compatibility wrapper, while `fit_region_scored` and
+//! `fit_region` wire selection and the optional lowest-deviation rescue into fitting.
 
 use crate::border::{border_std_deviation, BlankMask, BorderStats};
 use crate::grow::build_candidates;
@@ -16,9 +17,9 @@ use pc_imageops::BinaryMask;
 /// spec §10.3 step 11.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fitment {
-    /// `None` when the best candidate's border deviation exceeded
-    /// `mask_max_standard_deviation` -- the box is left uncleaned, but it is still
-    /// reported (§10.3 step 10).
+    /// `None` when the selected (greedy or rescued) candidate's border deviation still
+    /// exceeded `mask_max_standard_deviation` -- the box is left uncleaned, but it is
+    /// still reported (§10.3 step 10).
     pub mask: Option<BinaryMask>,
     /// Populated even on the failure path (§16.9 item 12).
     pub median_color: [u8; 3],
@@ -39,7 +40,8 @@ impl Fitment {
     }
 }
 
-/// What [`select_candidate`] picked.
+/// The greedy candidate returned by [`select_candidate`]; rescue-aware fitting uses
+/// [`Selection`] and [`resolve_fallback`] to choose its final [`Scored`] candidate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Selected {
     pub index: usize,
@@ -48,10 +50,10 @@ pub struct Selected {
 }
 
 // ---------------------------------------------------------------------------------------
-// §16.35 item 7 -- T1 STUBS ONLY. Signatures and derives are frozen with the `q0`/`q1`/`q2`
-// suites; every body below is `todo!()` and is Codex's job to implement (task T1). Nothing
-// here is wired into `select_candidate` or `fit_region` yet, so the frozen `m4_fit.rs` and
-// `m56_run.rs` traces are untouched.
+// §16.35 item 7 -- scored selection and lowest-deviation rescue. `fit_region_scored` and
+// `fit_region` use this path; `select_candidate` is a thin compatibility wrapper over it.
+// P1-P4 (§16.35 item 2) preserve the outcomes captured by the frozen `m4_fit.rs` and
+// `m56_run.rs` traces for every already-passing region.
 // ---------------------------------------------------------------------------------------
 
 /// §16.35 item 7 -- one scored candidate.
@@ -150,8 +152,8 @@ where
     })
 }
 
-/// §16.35 item 1's rescue policy. `enabled = false` reproduces today's `select_candidate`
-/// output bit for bit (the `DEVIATION(21)` control, §16.35 item 4).
+/// §16.35 item 1's rescue policy. `enabled = false` reproduces `select_candidate`'s
+/// greedy output bit for bit (§16.35 item 4).
 pub fn resolve_fallback(
     selection: &Selection,
     mask_max_standard_deviation: f64,
@@ -160,6 +162,8 @@ pub fn resolve_fallback(
     if !enabled || fit_accepted(selection.greedy.std_deviation, mask_max_standard_deviation) {
         selection.greedy
     } else if fit_accepted(selection.lowest.std_deviation, mask_max_standard_deviation) {
+        // DEVIATION(21): retrying with the lowest already-scored candidate when the greedy
+        // pick fails the fail-safe has no upstream equivalent; see §14 item 21 and §16.35.
         selection.lowest
     } else {
         selection.greedy
@@ -240,7 +244,12 @@ pub fn fit_region_scored(
         }
     };
 
-    let selected = selection.greedy;
+    let selected = resolve_fallback(
+        &selection,
+        config.mask_max_standard_deviation,
+        config.mask_fallback_to_lowest_deviation,
+    );
+    let rescued = selected.index != selection.greedy.index;
     let chosen = &candidates[selected.index];
     let mask = fit_accepted(selected.std_deviation, config.mask_max_standard_deviation)
         .then(|| chosen.mask.clone());
@@ -257,7 +266,7 @@ pub fn fit_region_scored(
         },
         candidate_deviations: selection.deviations,
         greedy_index: selection.greedy.index,
-        rescued: false,
+        rescued,
     })
 }
 
@@ -283,38 +292,13 @@ pub fn select_candidate<F>(
     count: usize,
     fast: bool,
     improvement_threshold: f64,
-    mut scorer: F,
+    scorer: F,
 ) -> Result<Selected, BlankMask>
 where
     F: FnMut(usize) -> Result<BorderStats, BlankMask>,
 {
-    assert!(
-        count > 0,
-        "candidate selection needs at least one candidate"
-    );
-
-    let mut best: Option<Selected> = None;
-    for index in 0..count {
-        let stats = scorer(index)?;
-        let accept = match &best {
-            None => true,
-            Some(current) => {
-                stats.std_deviation <= current.std_deviation * (1.0 - improvement_threshold)
-            }
-        };
-        if accept {
-            best = Some(Selected {
-                index,
-                std_deviation: stats.std_deviation,
-                median_color: stats.median_color,
-            });
-        }
-        if fast && stats.std_deviation == 0.0 {
-            break;
-        }
-    }
-
-    Ok(best.expect("count > 0 always accepts candidate 0"))
+    select_candidate_with_fallback(count, fast, improvement_threshold, scorer)
+        .map(|s| s.greedy.into())
 }
 
 /// spec §10.3 step 3 -- fit one masking region.
@@ -333,9 +317,10 @@ where
 ///  6. growth candidates (`grow::growth_candidates`)
 ///  7. ordering (`grow::build_candidates`)
 ///  8. score with `border::border_std_deviation`
-///  9. select (`select_candidate`)
-/// 10. `std_deviation > mask_max_standard_deviation` -> `mask: None`
-/// 11. assemble `Fitment`
+///  9. score/select (`select_candidate_with_fallback`)
+/// 10. resolve the optional lowest-deviation rescue (`resolve_fallback`)
+/// 11. selected `std_deviation > mask_max_standard_deviation` -> `mask: None`
+/// 12. assemble `Fitment`
 pub fn fit_region(
     base: &crate::border::BaseCanvas,
     cut: &BinaryMask,
@@ -344,70 +329,5 @@ pub fn fit_region(
     reference: Rect,
     config: &MaskerConfig,
 ) -> Option<Fitment> {
-    let image_size = base.dimensions();
-    if reference.to_crop(image_size).is_none() || masking.to_crop(image_size).is_none() {
-        tracing::warn!(
-            ?masking,
-            ?reference,
-            ?image_size,
-            "skipping degenerate or out-of-canvas masking region"
-        );
-        return None;
-    }
-
-    let x_offset = masking.x1 - reference.x1;
-    let y_offset = masking.y1 - reference.y1;
-    let base_crop = base
-        .crop(reference)
-        .expect("reference was validated against the base canvas");
-    let crop_size = base_crop.dimensions();
-    let precise_cut = cut.crop_into(masking, crop_size, (x_offset, y_offset));
-    if precise_cut.is_blank() {
-        tracing::warn!(
-            ?masking,
-            ?reference,
-            "skipping masking region with a blank precise cut"
-        );
-        return None;
-    }
-
-    let box_candidate = box_mask.crop_into(masking, crop_size, (x_offset, y_offset));
-    let candidates = build_candidates(&precise_cut, box_candidate, config);
-    let selected = match select_candidate(
-        candidates.len(),
-        config.mask_selection_fast,
-        config.mask_improvement_threshold,
-        |index| {
-            border_std_deviation(
-                &base_crop,
-                &candidates[index].mask,
-                config.off_white_max_threshold,
-                config.allow_colored_masks,
-            )
-        },
-    ) {
-        Ok(selected) => selected,
-        Err(BlankMask) => {
-            tracing::warn!(
-                ?masking,
-                ?reference,
-                "skipping masking region with an edgeless candidate"
-            );
-            return None;
-        }
-    };
-
-    let chosen = &candidates[selected.index];
-    let mask =
-        (selected.std_deviation <= config.mask_max_standard_deviation).then(|| chosen.mask.clone());
-
-    Some(Fitment {
-        mask,
-        median_color: selected.median_color,
-        coords: (reference.x1, reference.y1),
-        std_deviation: selected.std_deviation,
-        candidate_index: selected.index,
-        thickness: chosen.thickness,
-        masking_rect: masking,
-    })
+    fit_region_scored(base, cut, box_mask, masking, reference, config).map(|report| report.fitment)
 }
