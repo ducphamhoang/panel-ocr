@@ -6,9 +6,8 @@
 //!
 //! **This module is not wired into anything.** `pc_detect::run` still rejects
 //! `MaskRefineMode::Annotation` (§16.37's preamble: *"Nothing here asserts that
-//! `Annotation` mode works, or exists."*). Wiring is task A4; Otsu + the XOR-minimising
-//! channel selection are task A2; connected components, the merge loop and hole filling
-//! are task A3. None of those are implemented here.
+//! `Annotation` mode works, or exists."*). Wiring is task A4; connected components, the
+//! merge loop and hole filling are task A3. Neither is implemented here.
 //!
 //! What A1 covers, in upstream's own order inside `get_topk_masklist`:
 //!   1. [`expand_text_window`] -- the crop window (§16.37 item 5's corrected divisor
@@ -20,8 +19,21 @@
 //!   6. [`top_k_colors`] -- `get_topk_color(his, bin, color_var=10, k=3)`.
 //!
 //! Step 6 of upstream's function (`cv2.inRange` over each colour, then `minxor_thresh`)
-//! is deliberately **not** here: `minxor_thresh` is the XOR-minimising selection that
-//! §16.37 item 8 assigns to A2.
+//! is **not** part of A1: `minxor_thresh` is the XOR-minimising selection that
+//! §16.37 item 8 assigns to A2. It lives below, with the rest of A2.
+//!
+//! What A2 adds (spec §16.37 item 8: *"Otsu thresholding and the XOR-minimising channel
+//! selection"*), in upstream's own order:
+//!   7. [`otsu_threshold`] + [`threshold_binary`] -- `cv2.threshold(c, 1, 255,
+//!      THRESH_OTSU + THRESH_BINARY)`,
+//!   8. [`xor_sum`] and [`minxor_thresh`] -- `minxor_thresh` (`textmask.py:32`),
+//!   9. [`in_range`] and [`top_k_mask_list`] -- step 6 of `get_topk_masklist`, completing
+//!      the function A1 started,
+//!  10. [`otsu_thresh_mask_list`] -- `get_otsuthresh_masklist(..., per_channel=False)`
+//!      (`textmask.py:49`), and
+//!  11. [`candidate_mask_list`] -- `refine_mask`'s `mask_list = get_topk_masklist(...)`;
+//!      `mask_list += get_otsuthresh_masklist(...)` concatenation, whose **order** A3
+//!      depends on.
 
 use image::{GrayImage, Luma, RgbImage};
 use pc_core::{Rect, StageError};
@@ -312,4 +324,334 @@ pub fn top_k_colors(histogram: &Histogram255, k: usize, color_var: f64, bin_tol:
 #[must_use]
 pub fn top_k_colors_default(histogram: &Histogram255) -> Vec<f64> {
     top_k_colors(histogram, TOPK_K, TOPK_COLOR_VAR, TOPK_BIN_TOL)
+}
+
+// =========================================================== A2: Otsu + XOR selection
+
+/// `color_range` in upstream's `get_topk_masklist` (`textmask.py:78`). The band is
+/// `c_top = min(color + color_range, 255)`, `c_bottom = c_top - 2 * color_range` -- anchored
+/// at the **top**, so the 255 clamp shifts the whole window down.
+pub const TOPK_COLOR_RANGE: f64 = 30.0;
+
+/// `maxval` in upstream's `cv2.threshold(c, 1, 255, ...)`.
+pub const THRESHOLD_MAXVAL: u8 = 255;
+
+/// Upstream iterates `channels = [img[..., 0], img[..., 1], img[..., 2]]` over an array read
+/// by `cv2.imdecode(..., IMREAD_COLOR)`, i.e. **BGR**. `RgbImage` stores red at index 0, so
+/// the same memory order is R-index 2, 1, 0.
+///
+/// This is not cosmetic: it decides which candidate wins an exact XOR-sum tie, because
+/// upstream's `mask_list.sort(key=lambda x: x[1])` is Python's `list.sort`, which is
+/// **guaranteed stable**, and [`otsu_thresh_mask_list`] reproduces that with
+/// `Iterator::min_by_key` (documented to return the *first* of several equal minima).
+const UPSTREAM_CHANNEL_ORDER: [usize; 3] = [2, 1, 0];
+
+/// OpenCV's `FLT_EPSILON`, used by `getThreshVal_Otsu`'s degenerate-split guard. Kept as an
+/// `f64` widened from the `f32` constant, which is what the C++ comparison does.
+const FLT_EPSILON: f64 = f32::EPSILON as f64;
+
+/// One entry of upstream's `mask_list`: a `[threshed, xor_sum]` pair.
+///
+/// Upstream's list is a Python `list` of two-element lists, and both of its consumers depend
+/// on the **order** of that list -- see [`candidate_mask_list`]. This is a plain struct rather
+/// than a tuple so that A3's `mask_list.sort(key=lambda x: x[1])` port cannot sort on the
+/// wrong element.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MaskCandidate {
+    /// `threshed` -- a 0/255 mask the size of the crop.
+    pub mask: GrayImage,
+    /// `xor_sum` -- `cv2.bitwise_xor(threshed, pred_mask).sum()`, the selection key.
+    pub xor_sum: u64,
+}
+
+impl std::fmt::Debug for MaskCandidate {
+    /// Deliberately does **not** print the pixels: a crop is thousands of them, and an
+    /// assertion message that scrolls is an assertion message nobody reads.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MaskCandidate")
+            .field("size", &self.mask.dimensions())
+            .field(
+                "nonzero",
+                &self.mask.pixels().filter(|p| p.0[0] != 0).count(),
+            )
+            .field("xor_sum", &self.xor_sum)
+            .finish()
+    }
+}
+
+/// `cv2.threshold(src, _, _, cv2.THRESH_OTSU)`'s threshold search, ported from OpenCV's
+/// `getThreshVal_Otsu` (`modules/imgproc/src/thresh.cpp`, branch `5.x`) statement for
+/// statement -- the histogram, the `1/n` scale, the running `mu1 *= q1` accumulator, the
+/// `min(q1,q2) < FLT_EPSILON || max(q1,q2) > 1 - FLT_EPSILON` guard, and the **strict**
+/// `sigma > max_sigma` comparison.
+///
+/// Two consequences of that strictness, both pinned by A2 tests:
+///   * of two thresholds with equal between-class variance the **lowest index** wins;
+///   * a constant image skips every iteration, so the result is the initial `0` -- and
+///     `threshold_binary(_, 0)` then turns every non-zero pixel on.
+///
+/// **Empty input** returns 0. `cv2.threshold` has no defined behaviour there (it returns no
+/// threshold at all), so this is this crate's own totality choice, not upstream parity;
+/// upstream cannot reach it, because [`expand_text_window`] never yields an empty window.
+///
+/// **Measured, and the reason this doc says "OpenCV's C++ reference" and not "cv2".** The
+/// opencv-python 5.0.0 wheel is built with Intel IPP 2026.0.0, and `getThreshVal_Otsu_8u`
+/// short-circuits to `ippiComputeThreshold_Otsu_8u_C1R` before reaching the code above. Over
+/// 20 000 random and degenerate arrays per corpus, on 2026-08-06: with IPP **disabled** `cv2`
+/// agreed with this algorithm on every sample of every corpus measured; with IPP **enabled** a
+/// handful disagreed per corpus (10, 20, 21 and 54 per 20 000, across four independently
+/// generated corpora — the rate is corpus-dependent, not a constant). **Both mechanisms
+/// occur**: some disagreements are exact, bit-identical between-class variances — a genuine
+/// tie, decided by nothing but the tie rule — and others are ULP-level differences in IPP's
+/// arithmetic. IPP's own answer additionally varies with its dispatch level
+/// (`OPENCV_IPP=sse42` against `avx2`/`avx512` on the same arrays), so "match IPP" is not
+/// merely hard but not well-defined as a target.
+///
+/// DEVIATION(24) -- spec §14 item 24 / §16.37 item 10: this crate implements the documented
+/// reference path (strict `sigma > max_sigma`, lowest bin index wins a tie) and deliberately
+/// does **not** reproduce IPP's fast-path near-tie behaviour. Registered rather than left as
+/// prose because the two paths are two implementations of one nominally-specified function and
+/// a future parity investigation must find the choice immediately.
+#[must_use]
+pub fn otsu_threshold(image: &GrayImage) -> u8 {
+    let mut histogram = [0_u32; 256];
+    for pixel in image.pixels() {
+        histogram[pixel.0[0] as usize] += 1;
+    }
+
+    let count = u64::from(image.width()) * u64::from(image.height());
+    if count == 0 {
+        return 0;
+    }
+    let scale = 1.0 / count as f64;
+
+    let mut mu = 0.0_f64;
+    for (index, &bin) in histogram.iter().enumerate() {
+        mu += index as f64 * f64::from(bin);
+    }
+    mu *= scale;
+
+    let mut mu1 = 0.0_f64;
+    let mut q1 = 0.0_f64;
+    let mut max_sigma = 0.0_f64;
+    let mut max_val = 0_u8;
+    for (index, &bin) in histogram.iter().enumerate() {
+        let p_i = f64::from(bin) * scale;
+        mu1 *= q1;
+        q1 += p_i;
+        let q2 = 1.0 - q1;
+        if q1.min(q2) < FLT_EPSILON || q1.max(q2) > 1.0 - FLT_EPSILON {
+            continue;
+        }
+        mu1 = (mu1 + index as f64 * p_i) / q1;
+        let mu2 = (mu - q1 * mu1) / q2;
+        let sigma = q1 * q2 * (mu1 - mu2) * (mu1 - mu2);
+        // DEVIATION(24): strict, so ties keep the lowest index -- OpenCV's reference rule, not
+        // IPP's fast path. See this function's doc comment and spec §14 item 24.
+        if sigma > max_sigma {
+            max_sigma = sigma;
+            max_val = index as u8;
+        }
+    }
+    max_val
+}
+
+/// `cv2.THRESH_BINARY`: `dst = src > thresh ? 255 : 0`. The comparison is **strict**, so a
+/// pixel equal to the threshold is off.
+#[must_use]
+pub fn threshold_binary(image: &GrayImage, threshold: u8) -> GrayImage {
+    GrayImage::from_fn(image.width(), image.height(), |x, y| {
+        let value = image.get_pixel(x, y).0[0];
+        Luma([if value > threshold {
+            THRESHOLD_MAXVAL
+        } else {
+            0
+        }])
+    })
+}
+
+/// `cv2.bitwise_xor(a, b).sum()` -- a per-pixel XOR over all eight bits, summed.
+///
+/// **Not** a count of differing pixels. The pred mask this scores against is the raw U-Net
+/// output (255 distinct values on the committed page), so `255 ^ 128 = 127` contributes 127,
+/// where a boolean reading of both operands would contribute nothing.
+///
+/// The accumulator is `u64`: at 255 per pixel a `u32` overflows above 16 843 009 pixels, which
+/// a full page-sized mask can exceed.
+///
+/// Errors (`StageError::InvalidInput`, **per-image**, cookbook rule 4) on a size mismatch;
+/// `cv2.bitwise_xor` raises for mismatched shapes, and one bad block must not abort the run.
+pub fn xor_sum(a: &GrayImage, b: &GrayImage) -> Result<u64, StageError> {
+    if a.dimensions() != b.dimensions() {
+        return Err(StageError::InvalidInput(format!(
+            "xor operands {:?} and {:?} must have the same size",
+            a.dimensions(),
+            b.dimensions()
+        )));
+    }
+    Ok(a.pixels()
+        .zip(b.pixels())
+        .map(|(left, right)| u64::from(left.0[0] ^ right.0[0]))
+        .sum())
+}
+
+/// `minxor_thresh(threshed, mask, dilate=False)` -- upstream `textmask.py:32-46`.
+///
+/// Returns whichever of `threshed` and `255 - threshed` has the lower XOR sum against `mask`,
+/// with that sum. Upstream's comparison is `if neg_xor_sum < xor_sum` -- **strict** -- so on an
+/// exact tie the **positive** `threshed` is returned. Both call sites in upstream pass
+/// `dilate=False` (`get_otsuthresh_masklist` explicitly, `get_topk_masklist` by default), so
+/// the dilation branch is not ported.
+///
+/// Errors (`StageError::InvalidInput`, per-image) on a size mismatch.
+pub fn minxor_thresh(threshed: &GrayImage, mask: &GrayImage) -> Result<MaskCandidate, StageError> {
+    let positive = xor_sum(threshed, mask)?;
+    let negated = GrayImage::from_fn(threshed.width(), threshed.height(), |x, y| {
+        Luma([255 - threshed.get_pixel(x, y).0[0]])
+    });
+    let negative = xor_sum(&negated, mask)?;
+    if negative < positive {
+        Ok(MaskCandidate {
+            mask: negated,
+            xor_sum: negative,
+        })
+    } else {
+        Ok(MaskCandidate {
+            mask: threshed.clone(),
+            xor_sum: positive,
+        })
+    }
+}
+
+/// `cv2.inRange(src, lowerb, upperb)` for a single-channel `u8` source and scalar `f64`
+/// bounds: 255 where `round(lowerb) <= v <= round(upperb)`, 0 elsewhere.
+///
+/// The rounding is the part that is easy to get wrong. OpenCV converts each scalar bound to
+/// the source depth with `cvRound`, i.e. round-**half-to-even**, and saturates -- it does
+/// **not** compare in floating point and does not truncate. Measured against `cv2` 5.0.0 on
+/// 2026-08-06: `inRange(0..=255, 2.4, 12.6)` admits `[2, 13]`, and `inRange(0..=255, 0.5,
+/// 10.5)` admits `[0, 10]` where round-half-away-from-zero would give `[1, 11]`.
+///
+/// Bounds outside `0..=255` saturate. For `u8` data a negative lower bound and 0 are
+/// indistinguishable, so the saturation is not observable on that side; it is applied anyway
+/// to keep the conversion total.
+#[must_use]
+pub fn in_range(image: &GrayImage, lower: f64, upper: f64) -> GrayImage {
+    let bound = |value: f64| value.round_ties_even().clamp(0.0, 255.0) as u8;
+    let (low, high) = (bound(lower), bound(upper));
+    GrayImage::from_fn(image.width(), image.height(), |x, y| {
+        let value = image.get_pixel(x, y).0[0];
+        Luma([if low <= value && value <= high {
+            THRESHOLD_MAXVAL
+        } else {
+            0
+        }])
+    })
+}
+
+/// `get_topk_masklist(im_grey, pred_mask)` -- upstream `textmask.py:63-84`, complete.
+///
+/// A1 landed steps 2-6a (greyscale, erode, candidate values, histogram, top-k colours); this
+/// adds upstream's final loop: one `cv2.inRange` band per top-k colour, each passed through
+/// [`minxor_thresh`].
+///
+/// **The returned order is upstream's colour order**, which is DEVIATION(23)'s declared tie
+/// order via [`top_k_colors_default`] -- not sorted by `xor_sum`. See [`candidate_mask_list`]
+/// for why the order is load-bearing.
+///
+/// `grey` must already be greyscale ([`rgb_to_gray`]); upstream's `if len(im_grey.shape) == 3`
+/// conversion is handled by the caller, [`candidate_mask_list`].
+///
+/// Errors (`StageError::InvalidInput`, per-image) when `grey` and `mask` differ in size.
+pub fn top_k_mask_list(
+    grey: &GrayImage,
+    mask: &GrayImage,
+) -> Result<Vec<MaskCandidate>, StageError> {
+    let values = candidate_grey_values(grey, mask)?;
+    let histogram = histogram_255(&values);
+    let colors = top_k_colors_default(&histogram);
+
+    let mut list = Vec::with_capacity(colors.len());
+    for color in colors {
+        // `c_top = min(color + color_range, 255)`; `c_bottom = c_top - 2 * color_range`.
+        let upper = (color + TOPK_COLOR_RANGE).min(255.0);
+        let lower = upper - 2.0 * TOPK_COLOR_RANGE;
+        let threshed = in_range(grey, lower, upper);
+        list.push(minxor_thresh(&threshed, mask)?);
+    }
+    Ok(list)
+}
+
+/// `get_otsuthresh_masklist(img, pred_mask, per_channel=False)` -- upstream
+/// `textmask.py:49-60`.
+///
+/// Otsu-thresholds each colour channel, passes each result through [`minxor_thresh`], and
+/// returns the **single** lowest-scoring candidate -- upstream's `per_channel=False` branch,
+/// `return [mask_list[0]]`, which is the only branch `refine_mask` uses. A one-element `Vec`
+/// rather than a bare `MaskCandidate` because the caller concatenates it (see
+/// [`candidate_mask_list`]).
+///
+/// **Tie behaviour, ported exactly, no deviation declared.** Upstream sorts with
+/// `mask_list.sort(key=lambda x: x[1])` -- Python's `list.sort`, whose stability is
+/// **guaranteed** -- over channels visited in memory order B, G, R. So an exact tie at the
+/// minimum resolves to the earliest of those channels. Here the channels are visited in
+/// [`UPSTREAM_CHANNEL_ORDER`] and the winner is taken with `Iterator::min_by_key`, documented
+/// to return the *first* of several equal minima; `sort_unstable_by_key` would not be
+/// equivalent. This is unlike `DEVIATION(23)`, whose upstream tie order comes from
+/// `np.argsort`'s introsort and has no ordering contract at all.
+///
+/// Errors (`StageError::InvalidInput`, per-image) when `image` and `mask` differ in size.
+pub fn otsu_thresh_mask_list(
+    image: &RgbImage,
+    mask: &GrayImage,
+) -> Result<Vec<MaskCandidate>, StageError> {
+    if image.dimensions() != mask.dimensions() {
+        return Err(StageError::InvalidInput(format!(
+            "image {:?} and mask {:?} must have the same size",
+            image.dimensions(),
+            mask.dimensions()
+        )));
+    }
+
+    let mut candidates = Vec::with_capacity(UPSTREAM_CHANNEL_ORDER.len());
+    for &index in &UPSTREAM_CHANNEL_ORDER {
+        let channel = GrayImage::from_fn(image.width(), image.height(), |x, y| {
+            Luma([image.get_pixel(x, y).0[index]])
+        });
+        let threshed = threshold_binary(&channel, otsu_threshold(&channel));
+        candidates.push(minxor_thresh(&threshed, mask)?);
+    }
+
+    let winner = candidates
+        .into_iter()
+        .min_by_key(|candidate| candidate.xor_sum)
+        .expect("UPSTREAM_CHANNEL_ORDER is non-empty");
+    Ok(vec![winner])
+}
+
+/// `refine_mask`'s candidate list (upstream `textmask.py:206-207`):
+///
+/// ```text
+/// mask_list = get_topk_masklist(im, msk)
+/// mask_list += get_otsuthresh_masklist(im, msk, per_channel=False)
+/// ```
+///
+/// **The order is part of the contract, and A3 depends on it.** This is a concatenation, so
+/// the Otsu candidate is **last**, after however many top-k candidates there are (1 to 3 --
+/// measured on the committed page: 3 for blocks 0-2 and 1 for block 3). `merge_mask_list`
+/// then does its own `mask_list.sort(key=lambda x: x[1])` over the combined list, and that
+/// sort is stable, so the position of two equally-scoring candidates in *this* list decides
+/// which one the merge loop visits first. A `HashMap`, a `HashSet` or any reordering here
+/// would silently change the merge, which is why the return type is a `Vec` and why nothing
+/// in this function sorts.
+///
+/// Errors (`StageError::InvalidInput`, per-image) when `image` and `mask` differ in size.
+pub fn candidate_mask_list(
+    image: &RgbImage,
+    mask: &GrayImage,
+) -> Result<Vec<MaskCandidate>, StageError> {
+    let grey = rgb_to_gray(image);
+    let mut list = top_k_mask_list(&grey, mask)?;
+    list.extend(otsu_thresh_mask_list(image, mask)?);
+    Ok(list)
 }
