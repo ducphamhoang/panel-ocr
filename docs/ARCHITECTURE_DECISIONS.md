@@ -78,6 +78,39 @@ isn't necessary here.
 7. **GUI scope/timing**: CLI-first for v1 (fully usable standalone, as
    PanelCleaner's own CLI is); `egui` GUI is a separate v2 milestone.
 
+## Backlog / deferred ideas
+
+Not ratified, not scheduled, not to be picked up without going through the normal
+Plan step first. Recorded so the idea isn't lost, not as a decision.
+
+1. **A cheap flat-fill tier ahead of masking/inpainting** (raised by the maintainer,
+   2026-08-06, during the LaMa-inpainting planning pass). Instead of only two levers
+   (grow-and-score masking, then real inpainting), add a third, cheaper one in front
+   of both: a fast pixel check on the detected region's actual background — if it's
+   close to a uniform flat color (most commonly white, for plain speech bubbles),
+   paint that color directly, no border-uniformity scoring, no model. Only fall
+   through to masking/inpainting when the region *isn't* close to uniform.
+
+   Why it's attractive: trivial to compute (a threshold + fill, no ML), and correct
+   for what is likely the single most common bubble type. Why it's not free: it
+   hardcodes the same "bubble background is flat" assumption that already caps
+   masking's own ceiling (see `docs/PIPELINE_SPEC_V1.md` §16.37's measured 3/9→5/9
+   painted-region ceiling on committed CC-BY test pages) — it just cashes in on that
+   assumption cheaply instead of expensively. It would visibly fail (a flat patch
+   that looks like a sticker) on colored/shaded bubbles, gradient or halftone
+   shading, and bubbles with no clean interior at all — exactly the cases the
+   uniformity assumption already can't handle. So it isn't a competitor to
+   inpainting, it's a fast-path *ahead* of both existing levers for the easy
+   majority, with the same uniformity check already available (masking's own border
+   std-deviation scorer) potentially reusable as the "is this safe to flat-fill"
+   gate rather than a new heuristic.
+
+   Left for later because the mask-parity (§16.37) and LaMa-inpainting planning
+   passes already in flight address the harder end of the distribution; this would
+   only be worth adding once real measurement shows how much of the *remaining*
+   failure population is actually flat-background bubbles that inpainting is
+   over-paying to fix.
+
 ## Platform support
 
 This section exists because two places cited this document as the authority for the
