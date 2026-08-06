@@ -10,6 +10,10 @@
 /// Task A1 (spec §16.37 item 8) -- pure primitives for `MaskRefineMode::Annotation`.
 /// **Not wired into [`run`]**, which still rejects that mode; wiring is task A4.
 pub mod annotate;
+/// Task A3 (spec §16.37 item 8) -- connected components, the XOR merge loop and hole filling
+/// for `MaskRefineMode::Annotation`. **Not wired into [`run`]**, which still rejects that mode;
+/// wiring is task A4.
+pub mod annotate_merge;
 pub mod detector;
 pub mod mask;
 pub mod onnx;
