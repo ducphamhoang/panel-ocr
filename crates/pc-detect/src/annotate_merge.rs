@@ -53,7 +53,7 @@
 //! value was **4** and the effective value is **8** -- an upstream latent defect. That function
 //! is **outside A3**; the finding was reported upward and is now ratified as spec §16.37 item
 //! 11(c), which assigns the function to task A3b and rules that the **effective 8** is what
-//! gets ported, with no `DEVIATION` needed (the `DEVIATION(24)` precedent: match what upstream
+//! gets ported, with no `DEVIATION` needed (the `DEVIATION(29)` precedent: match what upstream
 //! does, not what it says).
 //!
 //! **(b) The `MORPH_ELLIPSE` 3x3 kernel is a plus, not a square.** `cv2.getStructuringElement(
@@ -118,7 +118,11 @@
 //! order-sensitive where these two loops are not -- upstream's `refine_undetected_mask` filters
 //! by area and then iterates `valid_labels[1:]`, dropping whichever surviving entry sorts
 //! first, which is a function of the numbering. Spec §16.37 item 11 assigns that function to
-//! task A3b, and §16.37 item 12 records that this proof does **not** cover it.
+//! task A3b, and §16.37 item 12 records that this proof does **not** cover it. **A3b discharged
+//! that obligation by re-establishing parity rather than by registering a divergence** (§16.37
+//! item 13): it takes the sequence from `ConnectedComponents::labels_in_opencv_block_scan_order`,
+//! which reorders the same components into `cv2`'s order without changing this function's
+//! numbering, its `labels`, or its `stats`.
 //!
 //! The proof's one precondition -- that distinct labels are pixel-disjoint -- is a property of
 //! a labeling, so [`merge_components_by_xor`] documents it as a caller obligation rather than
@@ -270,6 +274,73 @@ impl ConnectedComponents {
         );
         self.labels[(y * self.width + x) as usize]
     }
+
+    /// The **non-background** labels of this labeling, reordered into the sequence `cv2` would
+    /// have numbered them in -- ascending 2x2-block raster order of each component's
+    /// first-reached block.
+    ///
+    /// # This is the label ORDER OpenCV assigns, NOT a port of the BBDT algorithm
+    ///
+    /// Nothing here implements Grana/BBDT, SPAGHETTI or any other block-scan labeling. The
+    /// pixel-to-label assignment, the `stats` rows and [`Self::labels`] are untouched and stay
+    /// [`connected_components`]'s own first-raster-pixel numbering; this method only answers
+    /// *"in what order would `cv2` have handed these same components out?"*, which is the only
+    /// thing a consumer that selects by **position in the label sequence** actually needs.
+    ///
+    /// **The rule, measured rather than derived from OpenCV's source:** a component's `cv2` label
+    /// rank is the ascending order of `min over its pixels of (y / 2, x / 2)`, compared row-major
+    /// (block row first, then block column). Measured against **cv2 5.0.0**, on random binary
+    /// fixtures, with **0 mismatches** in every run: the architect measured 2614 + 299 fixtures,
+    /// the Senior Rust Engineer 2091 fixtures, and this implementation's own transcription run
+    /// re-measured 2000 fixtures / 8318 components. All four **block-based** variants agree
+    /// (`CCL_DEFAULT`, `CCL_BBDT`, `CCL_GRANA`, `CCL_SPAGHETTI`: 0 mismatches over 536 fixtures
+    /// carrying two or more components); the two **pixel-based** variants do not (`CCL_SAUF`,
+    /// `CCL_WU`: 71 of those same 536), and those two match *our* first-raster-pixel order
+    /// instead. `cv2`'s effective default for connectivity 8 is the block-based family (module
+    /// header note (a)), so the block rule is upstream's genuinely-intended order.
+    ///
+    /// **The key is a total order, not an arbitrary tie-break.** Two distinct components cannot
+    /// share a minimum block: all four pixels of a 2x2 block are mutually 8-adjacent, so pixels
+    /// of two labels in one block would be one label. No tie rule is therefore declared here,
+    /// and none is needed.
+    ///
+    /// **Who uses this, and why nothing else should.** Its sole caller is
+    /// `annotate_refine::undetected_blocks`, whose ported `valid_labels[1:]` selects by position
+    /// in the label sequence (spec §16.37 items 11(b)(iii) and 12). [`merge_mask_list`]'s two
+    /// loops are proven order-independent and must keep using the plain numbering -- routing
+    /// them through this method would change nothing but would imply an order dependence they
+    /// do not have.
+    #[must_use]
+    pub fn labels_in_opencv_block_scan_order(&self) -> Vec<u32> {
+        // `min over pixels (y / 2, x / 2)` per label, taken as a real minimum rather than as
+        // "the block of the first pixel the raster scan reaches". Those are NOT the same: a
+        // component whose topmost pixel is `(0, 10)` may also hold `(1, 0)`, which shares block
+        // row 0 and has the smaller block column, so the first-reached pixel can overstate the
+        // key. Comparing every pixel is the only correct form.
+        let mut min_block: Vec<Option<(u32, u32)>> = vec![None; self.stats.len()];
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let label = self.labels[(y * self.width + x) as usize] as usize;
+                if label == 0 {
+                    continue;
+                }
+                let block = (y / 2, x / 2);
+                let slot = &mut min_block[label];
+                if slot.is_none_or(|current| block < current) {
+                    *slot = Some(block);
+                }
+            }
+        }
+
+        let mut ordered: Vec<(u32, u32, u32)> = min_block
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter_map(|(label, block)| block.map(|(by, bx)| (by, bx, label as u32)))
+            .collect();
+        ordered.sort_unstable();
+        ordered.into_iter().map(|(_, _, label)| label).collect()
+    }
 }
 
 /// `cv2.connectedComponentsWithStats(mask)` -- **8-connectivity**, non-zero pixels are
@@ -290,7 +361,9 @@ impl ConnectedComponents {
 /// not -- upstream's `refine_undetected_mask` (spec §16.37 item 11's task A3b) iterates
 /// `valid_labels[1:]` and so drops whichever area-filtered entry sorts first. A new consumer
 /// re-establishes order-independence for itself or registers the divergence it has; it does not
-/// inherit this one.
+/// inherit this one. That consumer took a third route (§16.37 item 13): it reads
+/// [`ConnectedComponents::labels_in_opencv_block_scan_order`], so it is at parity with `cv2`'s
+/// order without this function's numbering moving.
 #[must_use]
 pub fn connected_components(mask: &GrayImage) -> ConnectedComponents {
     let (width, height) = mask.dimensions();

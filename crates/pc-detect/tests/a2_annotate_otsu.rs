@@ -47,7 +47,7 @@
 //!
 //! This crate implements the **documented C++ reference** path (`sigma > max_sigma`, strict,
 //! so the lowest index wins a tie), which is also `cv2`-with-IPP-off. That choice is now
-//! settled and registered as **`DEVIATION(24)`** (§14 item 24, ratified by §16.37 item 10);
+//! settled and registered as **`DEVIATION(29)`** (§14 item 29, ratified by §16.37 item 10);
 //! this file's earlier statement that it was "not decided by this file" and "escalated to the
 //! two architects" described the state at the time of writing and the escalation has since
 //! returned. What is asserted here is only what each test's name says: the reference rule,

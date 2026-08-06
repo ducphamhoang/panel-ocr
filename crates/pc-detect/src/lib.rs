@@ -14,6 +14,10 @@ pub mod annotate;
 /// for `MaskRefineMode::Annotation`. **Not wired into [`run`]**, which still rejects that mode;
 /// wiring is task A4.
 pub mod annotate_merge;
+/// Task A3b (spec §16.37 item 11) -- `refine_mask`'s page-level driver and
+/// `refine_undetected_mask` for `MaskRefineMode::Annotation`. **Not wired into [`run`]**, which
+/// still rejects that mode; wiring is task A4.
+pub mod annotate_refine;
 pub mod detector;
 pub mod mask;
 pub mod onnx;

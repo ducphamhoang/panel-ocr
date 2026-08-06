@@ -407,7 +407,7 @@ impl std::fmt::Debug for MaskCandidate {
 /// (`OPENCV_IPP=sse42` against `avx2`/`avx512` on the same arrays), so "match IPP" is not
 /// merely hard but not well-defined as a target.
 ///
-/// DEVIATION(24) -- spec §14 item 24 / §16.37 item 10: this crate implements the documented
+/// DEVIATION(29) -- spec §14 item 29 / §16.37 item 10: this crate implements the documented
 /// reference path (strict `sigma > max_sigma`, lowest bin index wins a tie) and deliberately
 /// does **not** reproduce IPP's fast-path near-tie behaviour. Registered rather than left as
 /// prose because the two paths are two implementations of one nominally-specified function and
@@ -446,8 +446,8 @@ pub fn otsu_threshold(image: &GrayImage) -> u8 {
         mu1 = (mu1 + index as f64 * p_i) / q1;
         let mu2 = (mu - q1 * mu1) / q2;
         let sigma = q1 * q2 * (mu1 - mu2) * (mu1 - mu2);
-        // DEVIATION(24): strict, so ties keep the lowest index -- OpenCV's reference rule, not
-        // IPP's fast path. See this function's doc comment and spec §14 item 24.
+        // DEVIATION(29): strict, so ties keep the lowest index -- OpenCV's reference rule, not
+        // IPP's fast path. See this function's doc comment and spec §14 item 29.
         if sigma > max_sigma {
             max_sigma = sigma;
             max_val = index as u8;
