@@ -1,7 +1,6 @@
 //! CLI-owned model-path resolution and download presentation (spec §6 and §8.3).
 
 use crate::args::DetectorSpec;
-#[cfg(feature = "onnx")]
 use crate::paths::Shell;
 use anyhow::Result;
 use pc_core::StageError;
@@ -14,8 +13,41 @@ pub fn expected_size(spec: &pc_models::ModelSpec) -> Option<u64> {
         "comictextdetector.pt.onnx" => Some(94_669_756),
         "encoder_model.onnx" => Some(343_454_249),
         "decoder_model.onnx" => Some(117_480_262),
+        // spec §16.38 item 1(a), re-verified for that entry against Hugging Face's
+        // `X-Linked-Size` header on the pinned revision URL.
+        "lama-manga.onnx" => Some(207_482_644),
         _ => None,
     }
+}
+
+/// One `models verify` output row. Pure, so the shape of every status line is assertable
+/// without running the subcommand (spec §13.1, §16.38 item 19(d)).
+pub fn verify_row(name: &str, verification: &pc_models::Verification) -> String {
+    let path = verification.path.display();
+    let label = verification.status.label();
+    match &verification.status {
+        pc_models::VerifyStatus::SizeMismatch { actual, expected } => {
+            format!("{name}\t{label}\t{path}\tactual={actual}\texpected={expected}")
+        }
+        pc_models::VerifyStatus::HashMismatch { actual, expected } => {
+            format!("{name}\t{label}\t{path}\tactual={actual}\texpected={expected}")
+        }
+        pc_models::VerifyStatus::Error(message) => {
+            format!("{name}\t{label}\t{path}\t{message}")
+        }
+        pc_models::VerifyStatus::Ok
+        | pc_models::VerifyStatus::Missing
+        | pc_models::VerifyStatus::NotInstalled => format!("{name}\t{label}\t{path}"),
+    }
+}
+
+/// The line `models download` prints for an optional model it deliberately did not fetch
+/// (spec §16.38 item 19(c) — a skip is announced, never silent).
+pub fn skipped_optional_notice(spec: &pc_models::ModelSpec) -> String {
+    format!(
+        "{}\tSKIPPED (optional)\trun `panel-ocr models download --include-optional` to fetch it",
+        spec.name
+    )
 }
 
 #[cfg(test)]
@@ -128,6 +160,20 @@ pub fn resolve_detector_model(
     }
 }
 
+/// The `--cache-dir <quoted>` suffix a recovery command needs, or `None` when the bare
+/// command is already followable (no resolved root, or the default one).
+///
+/// Shared by [`models_download_command`] and [`models_download_optional_command`] so the
+/// two cannot drift on quoting — which is what the hostile-path test in `x1_args.rs`
+/// exists to police for the first of them.
+fn cache_dir_suffix(resolved_cache_root: Option<&Path>) -> Option<String> {
+    let cache_root = resolved_cache_root?;
+    let config = crate::setup::load_app_config().unwrap_or_default();
+    let default_cache_root = crate::paths::resolve_cache_root(None, &config);
+    (cache_root != default_cache_root)
+        .then(|| format!(" --cache-dir {}", Shell::HOST.quote(cache_root)))
+}
+
 #[cfg(feature = "onnx")]
 #[doc(hidden)]
 /// Build the recovery command for the managed model cache.
@@ -136,20 +182,29 @@ pub fn resolve_detector_model(
 /// merely a CLI override. `None` preserves the bare command for callers without a
 /// resolved root.
 pub fn models_download_command(resolved_cache_root: Option<&Path>) -> String {
-    let Some(cache_root) = resolved_cache_root else {
-        return "panel-ocr models download".to_owned();
-    };
+    format!(
+        "panel-ocr models download{}",
+        cache_dir_suffix(resolved_cache_root).unwrap_or_default()
+    )
+}
 
-    let config = crate::setup::load_app_config().unwrap_or_default();
-    let default_cache_root = crate::paths::resolve_cache_root(None, &config);
-    if cache_root == default_cache_root {
-        "panel-ocr models download".to_owned()
-    } else {
-        format!(
-            "panel-ocr models download --cache-dir {}",
-            Shell::HOST.quote(cache_root)
-        )
-    }
+#[doc(hidden)]
+/// Build the recovery command for an **optional** managed model — the LaMa inpainting
+/// weights are the only one today (spec §16.38 item 19(g)).
+///
+/// A separate function rather than a parameter on [`models_download_command`], because
+/// that one's exact output is pinned by frozen tests and by `ModelError::Unavailable`'s
+/// message, and because a required model's refusal must never suggest a flag that fetches
+/// 207 MB the user did not ask for.
+///
+/// Deliberately **not** `#[cfg(feature = "onnx")]`, unlike its sibling: it has no caller
+/// until L5 wires the inpainter, and gating it would put its only tests in the tier
+/// cookbook rule 6 records as the one that is easy to leave unexecuted.
+pub fn models_download_optional_command(resolved_cache_root: Option<&Path>) -> String {
+    format!(
+        "panel-ocr models download --include-optional{}",
+        cache_dir_suffix(resolved_cache_root).unwrap_or_default()
+    )
 }
 
 pub fn progress_sink() -> Box<dyn pc_models::ProgressSink> {

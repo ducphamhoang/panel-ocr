@@ -93,6 +93,18 @@ impl ProfileDocument {
             warnings.push(ConfigWarning::ColoredImagesApproximation);
             warn_colored_images_once();
         }
+        // DEVIATION(26) (§14 item 26, ratified by §16.38 item 7(e)): surface upstream does
+        // not have. Upstream declares, INI-exports, INI-imports and clamps
+        // `inpainting_max_mask_radius` while `pcleaner/inpainting.py` reads it zero times,
+        // so a user who tunes it gets no effect — §14 item 7's "an opt-in setting must not
+        // silently behave differently". Bounded deliberately: silent at the default, so a
+        // user who never touched the key sees nothing.
+        if profile.inpainter.inpainting_max_mask_radius
+            != crate::profile::InpainterConfig::DEFAULT_MAX_MASK_RADIUS
+        {
+            warnings.push(ConfigWarning::InertInpaintingMaxMaskRadius);
+            warn_inert_inpainting_max_mask_radius_once();
+        }
         Ok(Self {
             profile,
             doc,
@@ -259,4 +271,12 @@ impl ConfigDocument {
 pub(crate) fn warn_colored_images_once() {
     static WARN_ONCE: Once = Once::new();
     WARN_ONCE.call_once(|| emit_warning(&ConfigWarning::ColoredImagesApproximation));
+}
+
+/// DEVIATION(26) / §16.38 item 7(e): "one-time" read as once per process, exactly as
+/// §16.5 item 12 reads §15.7's. `ConfigWarning::InertInpaintingMaxMaskRadius` is still
+/// returned on every parse.
+pub(crate) fn warn_inert_inpainting_max_mask_radius_once() {
+    static WARN_ONCE: Once = Once::new();
+    WARN_ONCE.call_once(|| emit_warning(&ConfigWarning::InertInpaintingMaxMaskRadius));
 }

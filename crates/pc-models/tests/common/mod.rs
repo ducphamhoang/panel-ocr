@@ -13,7 +13,7 @@
 //! anything -- the digest, the byte stream and the filesystem effects are all real.
 #![allow(dead_code)]
 
-use pc_models::{ModelError, ModelFetcher, ModelSpec, ModelStream, ProgressSink};
+use pc_models::{ModelError, ModelFetcher, ModelSpec, ModelStream, ProgressSink, Requirement};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -38,6 +38,11 @@ pub const FAKE_SPEC: ModelSpec = ModelSpec {
     file_name: "fake-detector.onnx",
     url: "https://example.invalid/fake-detector.onnx",
     sha256: PAYLOAD_SHA256,
+    // `Required`, matching the doc comment above: this stands in for
+    // `COMIC_TEXT_DETECTOR`. Compile-forced by §16.38 item 19's mandatory `Requirement`
+    // field (no `Default` impl); pre-authorised by the D1 tie-break ruling because it
+    // changes no assertion in any test.
+    requirement: Requirement::Required,
 };
 
 /// A fresh temp dir plus an existing `models/` subdirectory inside it, mirroring

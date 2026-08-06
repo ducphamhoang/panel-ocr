@@ -399,6 +399,103 @@ fn noise_sizes_non_negative() {
     assert_load_fails_naming("[denoiser]\nnoise_fade_radius = -1\n", "noise_fade_radius");
 }
 
+// ================================================================== [inpainter]
+//
+// spec §6 as superseded by §16.38 item 13(b), mirroring `config.py:917-932`'s `fix()` as
+// ERRORS rather than silent clamps.
+
+#[test]
+// §16.38 item 13(b): `inpainting_min_std_dev >= 0.0`. Both sides of the boundary, and 0.0
+// itself is valid -- `fix()` clamps at 0, it does not require a positive value.
+fn inpainting_min_std_dev_must_not_be_negative() {
+    let mut p = Profile::default();
+    p.inpainter.inpainting_min_std_dev = 0.0;
+    assert_valid(&p);
+
+    p.inpainter.inpainting_min_std_dev = -0.001;
+    assert_invalid_field(&p, "inpainter.inpainting_min_std_dev");
+}
+
+#[test]
+// §16.38 item 13(b) singles this key out because it is the block's only non-`Pixels`,
+// non-threshold key and therefore the easy one to omit -- and omitting it would be a real
+// gap, not a tidiness one: the multiplier is LIVE (it feeds item 3(e)'s
+// `growth = min(min_inpainting_radius + int(deviation * multiplier), max_inpainting_radius)`),
+// so a negative value drives `growth` below `min_inpainting_radius` and potentially negative,
+// into a growth kernel whose `size` is unsigned.
+fn inpainting_radius_multiplier_must_not_be_negative() {
+    let mut p = Profile::default();
+    p.inpainter.inpainting_radius_multiplier = 0.0;
+    assert_valid(&p);
+
+    p.inpainter.inpainting_radius_multiplier = -0.2;
+    assert_invalid_field(&p, "inpainter.inpainting_radius_multiplier");
+}
+
+#[test]
+// §16.38 item 13(b): `max_inpainting_radius >= min_inpainting_radius`, which is upstream's
+// own `config.py:932` invariant. Equality is the boundary and must be ACCEPTED -- a
+// strictly-greater reading would reject a profile upstream repairs to exactly this state.
+fn max_inpainting_radius_must_be_at_least_min() {
+    let mut p = Profile::default();
+    p.inpainter.min_inpainting_radius = 12;
+    p.inpainter.max_inpainting_radius = 12;
+    assert_valid(&p);
+
+    p.inpainter.max_inpainting_radius = 11;
+    assert_invalid_field(&p, "inpainter.max_inpainting_radius");
+
+    // The message must name the other key, or the user cannot tell which of the two to move.
+    let error = p
+        .validate()
+        .expect_err("11 < 12 must be rejected")
+        .to_string();
+    assert!(
+        error.contains("min_inpainting_radius"),
+        "the error must name the key it is compared against: {error}"
+    );
+}
+
+#[test]
+// §16.38 item 13(b) requires each of the five `Pixels` keys to be `>= 0`. That bound is
+// unrepresentable in their `u32` type -- exactly the situation §16.5 item 5 and this file's
+// header already handle for `min_mask_thickness` / `noise_outline_size` / `noise_fade_radius`
+// -- so it is asserted at the LOAD level as "fails and names the key". Falsifiable: change
+// any of these fields to `i64` and the load starts succeeding.
+fn each_inpainter_pixel_radius_rejects_a_negative_literal_naming_the_key() {
+    for key in [
+        "inpainting_max_mask_radius",
+        "min_inpainting_radius",
+        "max_inpainting_radius",
+        "inpainting_isolation_radius",
+        "inpainting_fade_radius",
+    ] {
+        assert_load_fails_naming(&format!("[inpainter]\n{key} = -1\n"), key);
+    }
+}
+
+#[test]
+// §16.38 item 13(a): zero is a legal value for every one of the five radius keys (upstream's
+// `fix()` clamps TO zero, so zero must be reachable). Written as a control for the test
+// above, so "fails the load" is not mistaken for "any small value is rejected".
+fn zero_is_valid_for_every_inpainter_pixel_radius() {
+    let doc = ProfileDocument::parse(concat!(
+        "[inpainter]\n",
+        "inpainting_max_mask_radius = 0\n",
+        "min_inpainting_radius = 0\n",
+        "max_inpainting_radius = 0\n",
+        "inpainting_isolation_radius = 0\n",
+        "inpainting_fade_radius = 0\n",
+    ))
+    .expect("zero is a legal radius");
+    let i = &doc.profile().inpainter;
+    assert_eq!(i.inpainting_max_mask_radius, 0);
+    assert_eq!(i.min_inpainting_radius, 0);
+    assert_eq!(i.max_inpainting_radius, 0);
+    assert_eq!(i.inpainting_isolation_radius, 0);
+    assert_eq!(i.inpainting_fade_radius, 0);
+}
+
 // ==================================================== load-time integration
 
 #[test]

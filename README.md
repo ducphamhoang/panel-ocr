@@ -20,8 +20,12 @@ panel-ocr cache ...
 panel-ocr models ...
 ```
 
-1,023 tests passing on the default feature tier (1,040 with the optional `onnx` tier
-enabled), 0 failed; `clippy --all-features -D warnings` and `cargo fmt --check` both clean.
+1,148 tests passing on the default feature tier (1,170 with the optional `onnx` tier
+enabled), 0 failed, 3 and 13 ignored respectively; `clippy --all-features -D warnings` and
+`cargo fmt --check` both clean. (Re-measured on this branch after tasks L1–L3 rather than
+copied forward — the previous figures, 1,023/1,040, had already gone stale before this
+branch, which is the drift cookbook rule 6 records. The ignored counts are stated because a
+green summary hides them.)
 
 **The real detector/OCR backend is opt-in, not the default.** `--detector onnx` and
 `panel-ocr ocr` need two things: the binary built with `--features pc-cli/onnx` (the

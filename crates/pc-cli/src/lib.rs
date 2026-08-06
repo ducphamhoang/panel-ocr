@@ -256,11 +256,21 @@ pub fn run_cache(command: CacheCommand) -> Result<i32> {
 /// spec §13.1's `models download|verify|path`.
 pub fn run_models(command: ModelsCommand) -> Result<i32> {
     match command {
-        ModelsCommand::Download { cache_dir } => {
+        ModelsCommand::Download {
+            cache_dir,
+            include_optional,
+        } => {
             let models_dir = models::resolve_managed_models_dir(cache_dir.as_deref())?;
+            // §16.38 item 19(c): never a silent skip. Every optional model left out is
+            // named, together with the flag that would fetch it. Printed BEFORE the
+            // transfers rather than after, so a run that fails partway through a required
+            // download has still told the user what it was never going to fetch.
+            for spec in pc_models::skipped(include_optional) {
+                println!("{}", models::skipped_optional_notice(spec));
+            }
             let fetcher = pc_models::ReqwestFetcher::new();
             let mut progress = models::progress_sink();
-            for spec in pc_models::ALL {
+            for spec in pc_models::selected(include_optional) {
                 let path = pc_models::ensure_available(
                     spec,
                     &models_dir,
@@ -273,58 +283,21 @@ pub fn run_models(command: ModelsCommand) -> Result<i32> {
             }
             Ok(EXIT_OK)
         }
-        ModelsCommand::Verify { cache_dir } => {
+        ModelsCommand::Verify {
+            cache_dir,
+            include_optional,
+        } => {
             let models_dir = models::resolve_managed_models_dir(cache_dir.as_deref())?;
             let mut all_ok = true;
-            for spec in pc_models::ALL {
-                let resolution = pc_models::resolve(spec, &models_dir, None)?;
-                match resolution {
-                    pc_models::Resolution::Missing(path) => {
-                        all_ok = false;
-                        println!("{}\tMISSING\t{}", spec.name, path.display());
-                    }
-                    pc_models::Resolution::Cached(path) => {
-                        if let Some(expected_size) = models::expected_size(spec) {
-                            let actual_size = std::fs::metadata(&path)
-                                .with_context(|| {
-                                    format!("failed to inspect model `{}`", spec.name)
-                                })?
-                                .len();
-                            if actual_size != expected_size {
-                                all_ok = false;
-                                println!(
-                                    "{}\tSIZE MISMATCH\t{}\tactual={}\texpected={}",
-                                    spec.name,
-                                    path.display(),
-                                    actual_size,
-                                    expected_size
-                                );
-                                continue;
-                            }
-                        }
-                        match pc_models::verify_sha256(&path, spec.sha256) {
-                            Ok(()) => println!("{}\tOK\t{}", spec.name, path.display()),
-                            Err(pc_models::ModelError::HashMismatch {
-                                actual, expected, ..
-                            }) => {
-                                all_ok = false;
-                                println!(
-                                    "{}\tHASH MISMATCH\t{}\tactual={}\texpected={}",
-                                    spec.name,
-                                    path.display(),
-                                    actual,
-                                    expected
-                                );
-                            }
-                            Err(error) => {
-                                all_ok = false;
-                                println!("{}\tERROR\t{}\t{}", spec.name, path.display(), error);
-                            }
-                        }
-                    }
-                    pc_models::Resolution::Override(_) => {
-                        unreachable!("managed model verification never supplies an override")
-                    }
+            for spec in pc_models::selected(include_optional) {
+                // The whole classification is `pc_models::verify`'s, so the policy is
+                // unit-testable without a filesystem walk through `pc-cli` and without any
+                // network path in reach (§16.18 item 3).
+                let verification =
+                    pc_models::verify(spec, &models_dir, models::expected_size(spec));
+                println!("{}", models::verify_row(spec.name, &verification));
+                if verification.status.is_failure() {
+                    all_ok = false;
                 }
             }
             Ok(if all_ok { EXIT_OK } else { EXIT_FATAL })

@@ -22,8 +22,8 @@ pub mod validate;
 pub use config::Config;
 pub use error::{ConfigError, ConfigWarning};
 pub use profile::{
-    DenoiserConfig, GeneralConfig, MaskRefineMode, MaskerConfig, OcrLanguageSetting,
-    PreprocessorConfig, Profile, ReadingOrder, TextDetectorConfig,
+    DenoiserConfig, GeneralConfig, InpainterConfig, MaskRefineMode, MaskerConfig,
+    OcrLanguageSetting, PreprocessorConfig, Profile, ReadingOrder, TextDetectorConfig,
 };
 pub use round_trip::{ConfigDocument, ProfileDocument};
 pub use validate::SUPPORTED_OUTPUT_SUFFIXES;

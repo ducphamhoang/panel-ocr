@@ -509,3 +509,172 @@ fn the_cache_directory_is_overridable() {
     let args = clean(&["a.png", "--cache-dir", "/tmp/pc-cache"]);
     assert_eq!(args.cache_dir, Some(PathBuf::from("/tmp/pc-cache")));
 }
+
+// ============================================================ task L3: --include-optional
+//
+// spec §13.1 as superseded by §16.38 item 19. Additive to this frozen file (cookbook rule
+// 8's exit 1): no existing assertion is touched.
+
+/// Parse a `models` subcommand, or fail the test.
+fn models(args: &[&str]) -> pc_cli::args::ModelsCommand {
+    let mut argv = vec!["panel-ocr", "models"];
+    argv.extend_from_slice(args);
+    match Cli::try_parse_from(argv).expect("parse").command {
+        Command::Models { command } => command,
+        other => panic!("expected models, got {other:?}"),
+    }
+}
+
+/// §16.38 item 19(b): the flag exists on `models download` and defaults to off, so the
+/// default invocation cannot pull the 207 MB optional artifact.
+#[test]
+fn models_download_takes_include_optional_and_defaults_it_off() {
+    match models(&["download"]) {
+        pc_cli::args::ModelsCommand::Download {
+            include_optional, ..
+        } => assert!(
+            !include_optional,
+            "the default must not fetch optional models"
+        ),
+        other => panic!("expected download, got {other:?}"),
+    }
+    match models(&["download", "--include-optional"]) {
+        pc_cli::args::ModelsCommand::Download {
+            include_optional, ..
+        } => assert!(include_optional),
+        other => panic!("expected download, got {other:?}"),
+    }
+}
+
+/// §16.38 item 19(b) put the flag on `verify` as well as `download`, deliberately — "not
+/// download alone". A parser accepting it only on `download` would make the ruling's
+/// preflight story unreachable, and fails here rather than at review time.
+#[test]
+fn models_verify_takes_include_optional_and_defaults_it_off() {
+    match models(&["verify"]) {
+        pc_cli::args::ModelsCommand::Verify {
+            include_optional, ..
+        } => assert!(!include_optional),
+        other => panic!("expected verify, got {other:?}"),
+    }
+    match models(&["verify", "--include-optional"]) {
+        pc_cli::args::ModelsCommand::Verify {
+            include_optional, ..
+        } => assert!(include_optional),
+        other => panic!("expected verify, got {other:?}"),
+    }
+}
+
+/// The flag's scope is `download` and `verify` only. `models path` already lists every
+/// registry entry unconditionally with `EXIT_OK` (§16.38 item 19(b) says it needs no
+/// change), so an `--include-optional` there would be a no-op flag implying the listing is
+/// otherwise filtered. It must be a parse error, not silently accepted.
+#[test]
+fn models_path_rejects_include_optional() {
+    assert!(
+        Cli::try_parse_from(["panel-ocr", "models", "path", "--include-optional"]).is_err(),
+        "`models path` must not accept a flag that changes nothing there"
+    );
+    // Control: the subcommand itself parses, so the assertion above is about the flag.
+    assert!(Cli::try_parse_from(["panel-ocr", "models", "path"]).is_ok());
+}
+
+/// §16.38 item 19(g): the refusal hint L5 will use for the optional model names the flag
+/// that actually fetches it. Literals, not a value derived from `models_download_command` —
+/// a hint assembled from the artifact it is meant to describe would pass vacuously.
+#[test]
+fn the_optional_download_hint_names_the_include_optional_flag() {
+    assert_eq!(
+        pc_cli::models::models_download_optional_command(None),
+        "panel-ocr models download --include-optional"
+    );
+
+    // A temp dir is never the default cache root, so this exercises the `--cache-dir` branch.
+    let root = tempfile::tempdir().unwrap();
+    let with_root = pc_cli::models::models_download_optional_command(Some(root.path()));
+    assert!(
+        with_root.starts_with("panel-ocr models download --include-optional --cache-dir "),
+        "the flag must survive the cache-dir branch: {with_root}"
+    );
+    let quoted = paths::Shell::HOST.quote(root.path());
+    assert!(
+        with_root.ends_with(&quoted),
+        "the hint must name the cache root it applies to: {with_root}"
+    );
+}
+
+/// §16.38 item 19(c): a skipped optional model is announced. The notice must name the model
+/// AND the flag — a line saying only "skipped" leaves the user with no next step, which is
+/// the silent-skip outcome the ruling forbids.
+#[test]
+fn the_skipped_optional_notice_names_the_model_and_the_flag() {
+    let notice = pc_cli::models::skipped_optional_notice(&pc_models::LAMA_MANGA_INPAINTER);
+
+    assert!(
+        notice.contains("lama-manga-inpainter"),
+        "must name the model: {notice}"
+    );
+    assert!(
+        notice.contains("--include-optional"),
+        "must name the flag that fetches it: {notice}"
+    );
+    assert!(
+        !notice.contains("MISSING"),
+        "a deliberate skip is not a missing model: {notice}"
+    );
+}
+
+/// §16.38 item 1(a)'s measured byte length, hard-coded here from the spec rather than read
+/// off any artifact: `expected_size` is what makes a truncated 207 MB download a reported
+/// `SIZE MISMATCH` instead of a mystery digest failure, and a `None` here would disable that
+/// check for the one model most likely to be interrupted mid-transfer.
+#[test]
+fn the_lama_registry_entry_has_a_pinned_expected_size() {
+    assert_eq!(
+        pc_cli::models::expected_size(&pc_models::LAMA_MANGA_INPAINTER),
+        Some(207_482_644)
+    );
+}
+
+/// The row `models verify` prints for each status. Pinned because the labels are a script
+/// interface: the optional-absent row must be greppable as its own thing, and the two
+/// mismatch rows must carry both numbers.
+#[test]
+fn the_verify_row_renders_each_status_with_its_diagnostic() {
+    use pc_models::{Verification, VerifyStatus};
+    let path = PathBuf::from("m.onnx");
+    let row = |status| {
+        pc_cli::models::verify_row(
+            "m",
+            &Verification {
+                path: path.clone(),
+                status,
+            },
+        )
+    };
+
+    assert_eq!(row(VerifyStatus::Ok), "m\tOK\tm.onnx");
+    assert_eq!(row(VerifyStatus::Missing), "m\tMISSING\tm.onnx");
+    assert_eq!(
+        row(VerifyStatus::NotInstalled),
+        "m\tNOT INSTALLED (optional)\tm.onnx"
+    );
+    assert_eq!(
+        row(VerifyStatus::SizeMismatch {
+            actual: 1,
+            expected: 2
+        }),
+        "m\tSIZE MISMATCH\tm.onnx\tactual=1\texpected=2"
+    );
+    assert_eq!(
+        row(VerifyStatus::HashMismatch {
+            actual: "aa".into(),
+            expected: "bb".into()
+        }),
+        "m\tHASH MISMATCH\tm.onnx\tactual=aa\texpected=bb"
+    );
+    assert_eq!(
+        row(VerifyStatus::Error("unreadable".into())),
+        "m\tERROR\tm.onnx\tunreadable"
+    );
+}

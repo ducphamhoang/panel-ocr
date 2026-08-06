@@ -8,11 +8,26 @@ mod common;
 use common::{FAKE_SPEC, PAYLOAD, PAYLOAD_SHA256};
 use pc_core::StageError;
 use pc_models::{
-    resolve, sha256_hex, verify_sha256, ModelError, Resolution, COMIC_TEXT_DETECTOR,
-    MANGA_OCR_DECODER, MANGA_OCR_ENCODER,
+    resolve, sha256_hex, verify_sha256, ModelError, Requirement, Resolution, COMIC_TEXT_DETECTOR,
+    LAMA_MANGA_INPAINTER, MANGA_OCR_DECODER, MANGA_OCR_ENCODER,
 };
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use tempfile::TempDir;
+
+/// The registry entry names at a given [`Requirement`], as a SET — cardinality is not
+/// identity (cookbook rule 13), so a swap between the two partitions must be visible.
+fn names_at(requirement: Requirement) -> BTreeSet<&'static str> {
+    pc_models::ALL
+        .iter()
+        .filter(|spec| spec.requirement == requirement)
+        .map(|spec| spec.name)
+        .collect()
+}
+
+fn names_of(specs: &[&'static pc_models::ModelSpec]) -> BTreeSet<&'static str> {
+    specs.iter().map(|spec| spec.name).collect()
+}
 
 // ------------------------------------------------------------ the declared models
 
@@ -68,6 +83,139 @@ fn manga_ocr_decoder_spec_matches_the_spec_url_and_digest() {
     );
     assert_eq!(MANGA_OCR_DECODER.file_name, "decoder_model.onnx");
     assert_eq!(MANGA_OCR_DECODER.name, "manga-ocr-decoder");
+}
+
+#[test]
+fn lama_manga_inpainter_spec_matches_the_ratified_artifact_pin() {
+    // spec §16.38 item 1(a), transcribed literally: the L0 spike's pinned revision of
+    // `mayocream/koharu`, whose size and digest were re-verified for that entry against
+    // Hugging Face's `X-Linked-Size` / `X-Linked-ETag` headers. Frozen here for the same
+    // reason as the three siblings above: a typo in either string turns every download into
+    // a confusing HashMismatch or a 404 rather than an obvious mistake. Registered at §14
+    // as DEVIATION(25), the substitution for upstream's TorchScript `.pt`.
+    assert_eq!(
+        LAMA_MANGA_INPAINTER.url,
+        "https://huggingface.co/mayocream/koharu/resolve/15439cba09df388c51de6e47c6020bc31edab41f/lama-manga.onnx"
+    );
+    assert_eq!(
+        LAMA_MANGA_INPAINTER.sha256,
+        "50a1abae0d73bd46d08eae36c8590cd59ad09029494c9698702b050ef00b0100"
+    );
+    assert_eq!(LAMA_MANGA_INPAINTER.file_name, "lama-manga.onnx");
+    assert_eq!(LAMA_MANGA_INPAINTER.name, "lama-manga-inpainter");
+    // The revision is what makes the URL reproducible: a `main`-branch URL would silently
+    // start serving different bytes and the digest above would become a mystery failure.
+    assert!(
+        LAMA_MANGA_INPAINTER
+            .url
+            .contains("/resolve/15439cba09df388c51de6e47c6020bc31edab41f/"),
+        "the URL must pin the ratified revision, not a branch: {}",
+        LAMA_MANGA_INPAINTER.url
+    );
+}
+
+#[test]
+fn the_required_optional_partition_is_pinned_by_name() {
+    // spec §16.38 item 19 (decision D1), and the specific graft the Fable tie-break made a
+    // condition of the ruling: the partition is pinned BY NAME, so a future edit that flips
+    // any one entry's `Requirement` turns this red instead of silently changing what
+    // `models download` fetches by default (or silently adding 207 MB to every user's).
+    //
+    // Sets, not counts: a swap — the detector marked `Optional` and LaMa marked `Required`
+    // — keeps both cardinalities and is exactly the mistake this exists to catch.
+    assert_eq!(
+        names_at(Requirement::Required),
+        BTreeSet::from([
+            "comic-text-detector",
+            "manga-ocr-encoder",
+            "manga-ocr-decoder",
+        ]),
+        "the three models a default run needs must all be Required"
+    );
+    assert_eq!(
+        names_at(Requirement::Optional),
+        BTreeSet::from(["lama-manga-inpainter"]),
+        "the 207 MB inpainting weights must be the only Optional entry"
+    );
+
+    // Anti-vacuity: a hard-coded total that cannot be computed from the registry, so the
+    // two set assertions above cannot both pass over an empty or truncated `ALL`.
+    assert_eq!(pc_models::ALL.len(), 4);
+
+    // And the field is stated per entry, not inferred: assert the two constants directly,
+    // so this test still fails if `ALL` stops containing one of them.
+    assert_eq!(COMIC_TEXT_DETECTOR.requirement, Requirement::Required);
+    assert_eq!(MANGA_OCR_ENCODER.requirement, Requirement::Required);
+    assert_eq!(MANGA_OCR_DECODER.requirement, Requirement::Required);
+    assert_eq!(LAMA_MANGA_INPAINTER.requirement, Requirement::Optional);
+}
+
+#[test]
+fn download_without_the_flag_selects_exactly_the_required_models() {
+    // §16.38 item 19(b): `models download` with no flag fetches only `Required` models.
+    // The set is written out literally rather than derived from `Requirement::Required`,
+    // so this cannot pass by `selected` and `names_at` sharing one bug.
+    assert_eq!(
+        names_of(&pc_models::selected(false)),
+        BTreeSet::from([
+            "comic-text-detector",
+            "manga-ocr-encoder",
+            "manga-ocr-decoder",
+        ])
+    );
+    assert_eq!(pc_models::selected(false).len(), 3);
+}
+
+#[test]
+fn download_with_the_flag_selects_every_registry_entry() {
+    // §16.38 item 19(b): with `--include-optional`, `Required` + `Optional`.
+    assert_eq!(
+        names_of(&pc_models::selected(true)),
+        BTreeSet::from([
+            "comic-text-detector",
+            "manga-ocr-encoder",
+            "manga-ocr-decoder",
+            "lama-manga-inpainter",
+        ])
+    );
+    assert_eq!(pc_models::selected(true).len(), 4);
+}
+
+#[test]
+fn the_skipped_set_names_the_optional_models_and_is_empty_under_the_flag() {
+    // §16.38 item 19(c): `models download` must NAME what it left out, so the caller needs
+    // a list of it — an empty list under the flag, the optional entry without.
+    assert_eq!(
+        names_of(&pc_models::skipped(false)),
+        BTreeSet::from(["lama-manga-inpainter"])
+    );
+    assert_eq!(names_of(&pc_models::skipped(true)), BTreeSet::new());
+}
+
+#[test]
+fn selected_and_skipped_partition_the_whole_registry_at_both_flag_settings() {
+    // Cookbook rule 13's bidirectional-coverage question, asked of the selector: enumerate
+    // BOTH populations independently and assert they cover `ALL` with no overlap. Without
+    // this, a model could be dropped from `selected` and never appear in `skipped` either —
+    // silently unfetchable and unreported, which is the one outcome neither option of D1
+    // permitted.
+    let everything: BTreeSet<&str> = pc_models::ALL.iter().map(|spec| spec.name).collect();
+
+    for include_optional in [false, true] {
+        let selected = names_of(&pc_models::selected(include_optional));
+        let skipped = names_of(&pc_models::skipped(include_optional));
+
+        assert!(
+            selected.is_disjoint(&skipped),
+            "include_optional={include_optional}: a model is both selected and skipped: {:?}",
+            selected.intersection(&skipped).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            selected.union(&skipped).copied().collect::<BTreeSet<_>>(),
+            everything,
+            "include_optional={include_optional}: selected + skipped must cover the registry"
+        );
+    }
 }
 
 #[test]

@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 35;
+const EXPECTED_PARSED_CLAIMS: usize = 36;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -109,7 +109,10 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.35", "10.3 step 10"),
     // §16.36's single marker: pins the device config key's section, previously unstated.
     ("16.36", "8.3 step 3"),
-    // §16.38's eight markers (LaMa inpainting). No §16.37 row exists on this branch: that number is
+    // §16.38's NINE markers (LaMa inpainting) — eight landed with the ratification, the ninth
+    // (`13.1`) with task L3; every "eight" in the paragraphs below is a measurement on the
+    // original eight and is deliberately not restated as a claim about nine. No §16.37 row
+    // exists on this branch: that number is
     // occupied by the sibling `mask-parity` branch, which forked from the same base commit, so this
     // entry is numbered 16.38 to avoid two `## 16.37` headings after a merge. Whoever merges the two
     // branches owns reconciling BOTH branches' rows here and BOTH branches' raises of
@@ -153,6 +156,18 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // all eight notes are present. Closing this would need a per-target expected mention count,
     // which is a hard-coded number derived from prose and would go stale on every edit to §6; the
     // trade was made deliberately in favour of disclosure.
+    //
+    // **The ninth row, `("16.38", "13.1")`, landed later than the other eight** — with task
+    // L3, when decision D1 was resolved and transcribed as §16.38 item 19. It is
+    // item-scoped in neither direction: `13.1` is a `### ` heading, so `outline()` resolves
+    // it as a two-component SECTION and the back-pointer may sit anywhere inside §13.1's
+    // span (which runs from that heading to `## 14.`). Unlike the `("16.38", "6")` row
+    // below, this one IS load-bearing today: §13.1's span carries exactly one `§16.38`
+    // mention — the back-pointer note itself — so deleting it turns the gate red. That is a
+    // fact about §13.1's current text, not a property of the row; a future edit adding a
+    // second `§16.38` citation anywhere in §13.1 would quietly make it non-load-bearing in
+    // the same way §6's is, and nothing here would notice.
+    ("16.38", "13.1"),
     ("16.38", "2.8"),
     ("16.38", "6"),
     ("16.38", "12.2"),
