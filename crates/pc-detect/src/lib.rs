@@ -7,6 +7,9 @@
 //! [`DetectStage::run`]'s wiring is implemented here (task D7); the signatures are frozen
 //! with the tests.
 
+/// Task A1 (spec §16.37 item 8) -- pure primitives for `MaskRefineMode::Annotation`.
+/// **Not wired into [`run`]**, which still rejects that mode; wiring is task A4.
+pub mod annotate;
 pub mod detector;
 pub mod mask;
 pub mod onnx;
@@ -19,6 +22,10 @@ pub mod mock;
 #[cfg(any(test, feature = "testkit"))]
 pub mod oracle;
 
+pub use annotate::{
+    candidate_grey_values, erode_rect3x3, expand_text_window, histogram_255, rgb_to_gray,
+    top_k_colors, top_k_colors_default, Histogram255, ANNOTATION_EXPAND_R,
+};
 pub use detector::{DetectInput, DetectOutput, RawBlock, RawDetection, TextDetector};
 pub use mask::{refine_simple, REFINE_DILATE_RADIUS, REFINE_EXPAND, REFINE_THRESHOLD};
 pub use resize::{calculate_new_size_and_scale, resize_area, round_half_away};
