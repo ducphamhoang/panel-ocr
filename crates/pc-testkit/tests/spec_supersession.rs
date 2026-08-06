@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 27;
+const EXPECTED_PARSED_CLAIMS: usize = 35;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -109,6 +109,58 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.35", "10.3 step 10"),
     // §16.36's single marker: pins the device config key's section, previously unstated.
     ("16.36", "8.3 step 3"),
+    // §16.38's eight markers (LaMa inpainting). No §16.37 row exists on this branch: that number is
+    // occupied by the sibling `mask-parity` branch, which forked from the same base commit, so this
+    // entry is numbered 16.38 to avoid two `## 16.37` headings after a merge. Whoever merges the two
+    // branches owns reconciling BOTH branches' rows here and BOTH branches' raises of
+    // EXPECTED_PARSED_CLAIMS, since each was measured against the shared base (§16.38 item 17(d)).
+    //
+    // **A parallel-branch collision this file does NOT gate, recorded here because this is where a
+    // reader will look for it.** The §-section number above is one of THREE collisions between these
+    // branches; the other two are the §14 DEVIATION register number — both branches independently
+    // reached for 23, since the shared base ended at `…19, 21, 22` with 20 unused, and
+    // `mask-parity`'s `1b4e12f` had already committed `DEVIATION(23)`, so §16.38 takes 24-27 — and
+    // this constant together with EXPECTED_PARSED_CLAIMS. **Nothing in this repo gates the
+    // register-number half:** no test reads §14's item numbering or cross-checks it against the
+    // `// DEVIATION(n)` comments in code, so two branches can still merge into two different
+    // deviations sharing one n. That gap is disclosed, not closed; §16.38 item 17(d)(ii) and §14's
+    // own "item 23 is not absent by accident" note are the record.
+    //
+    // Four of the eight are BARE-SECTION targets — `2.8`, `6`, `12.2`, `12.3` — and deliberately so:
+    // none of those four sections carries a `^N. ` item marker (§2.8 and §12.2 are prose plus a code
+    // fence; §6 is prose plus TOML; §12.3 numbers its steps as `**N — Title.**`, the same shape §8.3
+    // uses and the reason the `step N` fallback exists). That is ratified §16.26 item 3(c) leniency,
+    // the same class as §16.30's `9.5`/`13` rows and §16.33's `16` row, with the same consequence: a
+    // back-pointer anywhere in the section satisfies the gate, so the clause-level precision of
+    // those four annotations is a convention this constant cannot enforce.
+    //
+    // The four item-scoped rows carry their back-pointers at the END of the target item rather than
+    // its start, against §16.26's usual preference, and for a measured reason: all four of those
+    // items OPEN on a physical line that already cites an older section (§10.1, §11.3, §12.3,
+    // §16.21/§16.22), so placing a supersession verb on that line would manufacture a phantom Layer
+    // B prose claim out of a line break. Cookbook rule 14b, applied before it bit rather than after.
+    //
+    // **Seven of these eight back-pointers are individually load-bearing; `("16.38", "6")` is NOT,
+    // and the difference is sharper than the leniency noted above.** A step-1a fresh reader deleted
+    // each of the eight in turn and watched the gate: seven turn it red, and §6's does not. Cause,
+    // re-measured here: §6's span carries **five** separate `§16.38` mentions, because §16.38 also
+    // added the `[inpainter]` TOML block and a validation clause to that section, and each of those
+    // cites §16.38 in its own comments — while §2.8, §12.2 and §12.3 carry exactly one each.
+    // `contains_back_pointer` asks only whether the span mentions the host, so any one of the five
+    // satisfies the claim and the header note could be deleted with the suite green. The leniency
+    // paragraph above says PLACEMENT within a section is unenforced; this is one step further — for
+    // §6 alone, the marker's EXISTENCE is unenforced too. Do not read a green suite as proof that
+    // all eight notes are present. Closing this would need a per-target expected mention count,
+    // which is a hard-coded number derived from prose and would go stale on every edit to §6; the
+    // trade was made deliberately in favour of disclosure.
+    ("16.38", "2.8"),
+    ("16.38", "6"),
+    ("16.38", "12.2"),
+    ("16.38", "12.3"),
+    ("16.38", "16.9 item 2"),
+    ("16.38", "16.10 item 2"),
+    ("16.38", "16.11 item 3"),
+    ("16.38", "16.23 item 5"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
