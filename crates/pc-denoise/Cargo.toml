@@ -13,9 +13,12 @@ pc-core     = { path = "../pc-core" }
 # §16.5 item 1: every stage crate depends on pc-config -- the stage's config travels
 # by value inside its Input (§3).
 pc-config   = { path = "../pc-config" }
-# `BinaryMask` (M1). NOTE (§16.10 items 1-3): `nlm`, `gaussian`, `morph` and
-# `composite` live in THIS crate, not in pc-imageops -- pc-imageops was frozen at the
-# end of Stage 3 and none of those modules is used by another stage in v1.
+# `BinaryMask` (M1) and, since §16.38 item 16(a) (v1.5, task L1), `morph`.
+# NOTE (§16.10 items 1-3): `nlm`, `gaussian` and `composite` still live in THIS crate,
+# not in pc-imageops -- pc-imageops was frozen at the end of Stage 3 and none of those
+# three is used by another stage in v1. `morph` no longer holds: L1 hoisted `Kernel`,
+# `kernel` and `dilate` into pc-imageops because `pc-mask` needs them too, and
+# `pc_denoise::morph` is now a re-export of `pc_imageops::morph`.
 pc-imageops = { path = "../pc-imageops" }
 image       = { workspace = true }
 # §11.3: NLM parallelises over output row bands (§16.10 item 10).
