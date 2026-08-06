@@ -9,6 +9,7 @@
 
 pub mod args;
 pub mod detector;
+pub mod inpainter;
 pub mod logging;
 pub mod models;
 pub mod ocr;

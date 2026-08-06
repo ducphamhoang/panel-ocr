@@ -1,6 +1,6 @@
 [package]
 name        = "pc-inpaint"
-description = "panel-ocr STAGE 5: LaMa inpainting (spec §16.38) -- eligibility, growth, page masks, 512x512 tile cover, fade + composite. No ONNX here (task L4); the session is L5."
+description = "panel-ocr STAGE 5: LaMa inpainting (spec §16.38) -- eligibility, growth, page masks, 512x512 tile cover, fade + composite (task L4), plus the `ort` session behind the non-default `onnx` feature (task L5)."
 version.workspace      = true
 edition.workspace      = true
 license.workspace      = true
@@ -9,11 +9,13 @@ authors.workspace      = true
 repository.workspace   = true
 
 [features]
-# There is deliberately NO `onnx` feature here at L4. §16.38 item 16(c): "All of it behind
-# an `Inpainter` trait whose test double returns a fixed tile, so **every test in L4 runs
-# in the default no-`onnx` tier** -- the tier cookbook rule 6 records as the one that
-# actually executes." L5 adds `onnx = ["dep:ort"]` and an `OnnxInpainter` behind it.
+# `onnx` is NOT default, mirroring `pc-detect` and `pc-ocr` exactly. §16.38 item 16(c):
+# "All of it behind an `Inpainter` trait whose test double returns a fixed tile, so
+# **every test in L4 runs in the default no-`onnx` tier** -- the tier cookbook rule 6
+# records as the one that actually executes." Task L5 adds the `ort`-backed
+# `onnx::OnnxInpainter` behind this feature and changes nothing L4 pinned.
 default = []
+onnx    = ["dep:ort"]
 # Exposes `stub::StubInpainter` to other crates' tests (the same shape `pc-detect` uses
 # for its mock backends).
 testkit = []
@@ -28,8 +30,10 @@ pc-imageops = { path = "../pc-imageops" }
 image       = { workspace = true }
 serde       = { workspace = true }
 tracing     = { workspace = true }
+ort         = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Self dev-dependency so the integration tests (which link this crate as an external lib,
 # without `cfg(test)`) see the `testkit`-gated stub.
 pc-inpaint = { path = ".", features = ["testkit"] }
+tempfile   = { workspace = true }

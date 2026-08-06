@@ -4,10 +4,14 @@
 //! the eligibility filter (item 3(c)), the two fill-mask sources (3(d)), the growth
 //! arithmetic (3(e)), the page-global fill and isolation masks (3(f)), the tile cover
 //! (items 5(b)–(e)) and the compositing (3(h)). All of it sits behind the [`Inpainter`]
-//! trait, whose test double returns a fixed tile, so **every test here runs in the default
-//! no-`onnx` tier** — the tier cookbook rule 6 records as the one that actually executes.
-//! L5 adds the `ort`-backed implementation of that one trait method and changes nothing
-//! else.
+//! trait, whose test double returns a fixed tile, so **every L4 test here runs in the
+//! default no-`onnx` tier** — the tier cookbook rule 6 records as the one that actually
+//! executes.
+//!
+//! Task **L5** (item 16(d)) has since added the `ort`-backed implementation of that one
+//! trait method, in `onnx`, behind the non-default `onnx` feature. It changed nothing L4
+//! pinned: no L4 test was edited, and `onnx.rs`'s own tensor arithmetic and runtime
+//! output-shape validation are ungated, so they run in the default tier too.
 //!
 //! Module map:
 //!   * `eligible` — the two eligibility sets and their fill-mask sources (items 3(c), 3(d))
@@ -15,21 +19,25 @@
 //!   * `fill`     — the page-global fill and isolation masks (items 3(d), 3(f), 10)
 //!   * `tile`     — merged cover, the 512-lattice, and pixel ownership (items 5(b)–(e))
 //!   * `fade`     — the Gaussian fade and the isolation cut (item 3(h))
+//!   * `onnx`     — L5: the two NCHW input tensors (item 1(b)), the **runtime** output-shape validation (item 1(c)), and — behind the `onnx` feature — `OnnxInpainter`, built through `pc_core::device::resolve` (item 16(d))
 //!   * `compose`  — RGBA source-over + nearest resize (a **fourth** pinned copy, after `pc-mask`, `pc-denoise` and `pc-export`; the module states which of the four copies the equivalence test actually reaches, and which it does not)
 //!   * `stub`     — the `testkit`-gated test double
 //!   * this file  — [`inpaint_page`], the tile loop and the page assembly
 //!
 //! **What this crate deliberately does NOT do.** No `Step::Inpaint`, no cache-suffix
 //! constants, no `ExportSources` and no `--skip-inpaint`: those are L6 (§16.38 item 16(e)).
-//! No `ort`, no model file, no `pc_core::device::resolve`: those are L5 (item 16(d)). And
-//! per item 18(c) it does not modify `pc-mask` — `MaskRegionStats` already matches
-//! upstream's `boxes_with_stats` field for field (item 3(b)).
+//! No model **acquisition** and no lazy latch either — item 8 puts the provider in
+//! `crates/pc-cli/` (`DEVIATION(27)`), which is where L5 landed it, so this crate takes a
+//! path and nothing else. And per item 18(c) it does not modify `pc-mask` —
+//! `MaskRegionStats` already matches upstream's `boxes_with_stats` field for field (item
+//! 3(b)).
 
 pub mod compose;
 pub mod eligible;
 pub mod fade;
 pub mod fill;
 pub mod growth;
+pub mod onnx;
 pub mod tile;
 
 #[cfg(any(test, feature = "testkit"))]

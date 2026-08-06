@@ -1049,6 +1049,7 @@ dependencies = [
  "pc-core",
  "pc-detect",
  "pc-export",
+ "pc-inpaint",
  "pc-models",
  "pc-ocr",
  "pc-pipeline",
@@ -1149,11 +1150,13 @@ name = "pc-inpaint"
 version = "0.1.0"
 dependencies = [
  "image",
+ "ort",
  "pc-config",
  "pc-core",
  "pc-imageops",
  "pc-inpaint",
  "serde",
+ "tempfile",
  "tracing",
 ]
 
