@@ -37,3 +37,11 @@ tempfile   = { workspace = true }
 # (the same self/peer dev-dependency trick `pc-detect` and `pc-preprocess` use).
 pc-detect  = { path = "../pc-detect", features = ["testkit"] }
 pc-ocr     = { path = "../pc-ocr", features = ["testkit"] }
+# Task L4, TEST-ONLY. `tests/l4_composite_equivalence.rs` has to name `pc_mask::combine`,
+# `pc_denoise::composite` AND `pc_inpaint::compose` in one compilation unit, and §1 rule 2
+# forbids a stage-to-stage edge even through `[dev-dependencies]` (that would put the
+# forbidden edge in the workspace graph). `pc-pipeline` is the ONE crate allowed to depend on
+# every stage, so hosting the test here adds no new edge -- the same placement task L1 used
+# for `l1_morph_equivalence.rs`. This is NOT L6's wiring: nothing under `src/` references
+# `pc-inpaint`, and `Step::Inpaint` does not exist yet.
+pc-inpaint = { path = "../pc-inpaint" }

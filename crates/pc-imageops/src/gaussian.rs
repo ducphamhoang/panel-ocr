@@ -1,5 +1,32 @@
 //! Task N2 -- separable Gaussian blur (spec §11.3 step 5, §14.6, §16.10 item 12).
 //!
+//! **Placement.** Written for `pc-denoise` (task N2) and hoisted here by task L4, body
+//! unchanged, ratified by §16.38 item 20. §16.10 item 1 placed it in `pc-denoise` on a
+//! ground it stated as conditional -- paraphrasing, not quoting: `pc-imageops` had been
+//! frozen and committed at the end of Stage 3, and no other v1 stage used either module,
+//! so re-opening the crate bought nothing. That item then anticipated this move, and
+//! *this* sentence is quoted verbatim from §16.10 item 1:
+//!
+//! > Both stay `pub` (`pc_denoise::nlm`, `pc_denoise::gaussian`) and free of any
+//! > `pc-config` dependency, so §11.1's "independently benchmarkable" property is
+//! > preserved and a v1.5 hoist into `pc-imageops` is a mechanical move plus a re-export.
+//!
+//! v1.5's `pc-inpaint` needs the same blur for `inpainting_fade_radius` (§16.38 item 3(h),
+//! porting `image_ops.py:820-830`'s `fade_mask_edges`), and §1 rule 2 forbids the
+//! stage-to-stage edge that would let it borrow `pc-denoise`'s copy. `pc_denoise::gaussian`
+//! is now a re-export, so `crates/pc-denoise/tests/n2_gaussian.rs` is untouched.
+//!
+//! **Scope, stated because widening it would be wrong:** §16.38 item 20 ratifies the move
+//! for `gaussian` ALONE. `nlm` stays in `pc-denoise` -- it still has exactly one consumer --
+//! and §16.10 item 1 remains the live placement decision for it. §16.38 item 16(a)'s
+//! separate hoist names `kernel` and `dilate` only, and is not authority for this one.
+//!
+//! **DEVIATION(6) travels with the code and now has a second consumer.** `pc-inpaint`'s
+//! fade inherits it, since upstream's `fade_mask_edges` is the same PIL
+//! `GaussianBlur(radius)` call. That gets no new register number -- it is DEVIATION(6)
+//! propagating into a new consumer, the shape §16.38 item 10 uses for DEVIATION(12) -- but
+//! it is stated at the new call site too.
+//!
 //! DEVIATION(6): PIL's `GaussianBlur(radius=r)` is a **three-pass box-blur
 //! approximation**, not a true Gaussian. v1 uses a true separable Gaussian with
 //! `sigma = radius`, truncated at `3*sigma`. With the default `noise_fade_radius = 1`

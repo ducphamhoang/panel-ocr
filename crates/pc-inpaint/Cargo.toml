@@ -1,0 +1,35 @@
+[package]
+name        = "pc-inpaint"
+description = "panel-ocr STAGE 5: LaMa inpainting (spec §16.38) -- eligibility, growth, page masks, 512x512 tile cover, fade + composite. No ONNX here (task L4); the session is L5."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[features]
+# There is deliberately NO `onnx` feature here at L4. §16.38 item 16(c): "All of it behind
+# an `Inpainter` trait whose test double returns a fixed tile, so **every test in L4 runs
+# in the default no-`onnx` tier** -- the tier cookbook rule 6 records as the one that
+# actually executes." L5 adds `onnx = ["dep:ort"]` and an `OnnxInpainter` behind it.
+default = []
+# Exposes `stub::StubInpainter` to other crates' tests (the same shape `pc-detect` uses
+# for its mock backends).
+testkit = []
+
+[dependencies]
+pc-core     = { path = "../pc-core" }
+# §16.5 item 1: every stage crate depends on pc-config -- the stage's config travels by
+# value inside its Input (§3).
+pc-config   = { path = "../pc-config" }
+# `BinaryMask` + `morph` (§16.38 item 16(a), task L1) + `gaussian` (task L4's hoist).
+pc-imageops = { path = "../pc-imageops" }
+image       = { workspace = true }
+serde       = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+# Self dev-dependency so the integration tests (which link this crate as an external lib,
+# without `cfg(test)`) see the `testkit`-gated stub.
+pc-inpaint = { path = ".", features = ["testkit"] }

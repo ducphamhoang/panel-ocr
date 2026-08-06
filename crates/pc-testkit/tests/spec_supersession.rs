@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 36;
+const EXPECTED_PARSED_CLAIMS: usize = 38;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -176,6 +176,45 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.38", "16.10 item 2"),
     ("16.38", "16.11 item 3"),
     ("16.38", "16.23 item 5"),
+    // §16.38 item 20's TWO markers (the L4 Gaussian hoist), taking this section from nine
+    // markers to eleven and EXPECTED_PARSED_CLAIMS from 36 to 38.
+    //
+    // `("16.38", "16.10 item 1")` is item-scoped, and its back-pointer sits at the END of
+    // §16.10 item 1 for the same reason the four item-scoped rows above do: that item OPENS on a
+    // line already citing §11.1 and §11.5, so a supersession verb there would manufacture a
+    // phantom Layer B prose claim out of a line break (cookbook rule 14b). It is load-bearing
+    // today, but LESS SO than "exactly one mention" would suggest, and the count is stated
+    // precisely because the earlier wording here rounded it wrong: §16.10 item 1's span carries
+    // exactly **one LINE** mentioning §16.38 — the back-pointer sentence — and that single line
+    // carries **TWO** `§16.38` tokens (the `SUPERSEDED in part by §16.38 item 20` back-pointer, and
+    // the later `§16.38 item 20 is explicitly not authority for hoisting it` scope clause).
+    // Consequence, since this gate matches on the token and not on the verb: deleting the
+    // back-pointer clause alone would leave the second token in the span and the gate would stay
+    // GREEN. Only removing the whole line turns it red. All of that is a fact about today's text,
+    // not a property of the row.
+    //
+    // **The marker's own text is SCOPED to `gaussian`, and this constant cannot enforce that.**
+    // §16.10 item 1 places `nlm` AND `gaussian`; item 20 hoists `gaussian` only, and `nlm`
+    // stays. The gate checks that a back-pointer exists in the target span, never what it says,
+    // so if someone later widens the claim to `nlm` on this entry's authority nothing here goes
+    // red. Same class of unenforced-content gap as the placement leniency documented above.
+    //
+    // `("16.38", "13")` is a BARE-SECTION target for §13's row 14, which attributes "Gaussian
+    // blur" to `pc-denoise`. Deliberately bare: §13's rows live in a markdown table and carry no
+    // `^N. ` item marker, so no item-scoped anchor exists — ratified §16.26 item 3(c) leniency,
+    // the same class as §16.30's `13` row above, with the same consequence that a back-pointer
+    // anywhere in §13 satisfies the gate. It IS load-bearing today: §13's span (from `## 13.` to
+    // `### 13.1`) carries exactly one `§16.38` mention, the row-14 annotation, since §16.38's
+    // other §13 marker targets §13.1 and lands in a later span.
+    //
+    // **§11.5's N2 row is a third target that gets NO row here, and its absence is deliberate,
+    // not an omission.** The hoist RESTORES what that row always said (`pc-imageops`), and a
+    // restoration is not a supersession, so §16.38 item 20(c) puts a plain note there and no
+    // marker. Consequence, disclosed rather than left to be discovered: nothing in this file
+    // gates that note's existence and deleting it leaves the suite green — the same shape as the
+    // `("16.38", "6")` row's non-load-bearing back-pointer, accepted for the same reason.
+    ("16.38", "16.10 item 1"),
+    ("16.38", "13"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.

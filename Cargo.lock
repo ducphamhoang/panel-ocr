@@ -1145,6 +1145,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pc-inpaint"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "pc-config",
+ "pc-core",
+ "pc-imageops",
+ "pc-inpaint",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "pc-mask"
 version = "0.1.0"
 dependencies = [
@@ -1197,6 +1210,7 @@ dependencies = [
  "pc-detect",
  "pc-export",
  "pc-imageops",
+ "pc-inpaint",
  "pc-mask",
  "pc-ocr",
  "pc-preprocess",
