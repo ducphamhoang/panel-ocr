@@ -83,8 +83,7 @@ impl pc_core::Stage for DetectStage {
 
 /// spec §8.3, steps 1-7.
 ///
-/// Supports the `MaskRefineMode::Annotation` path wired in A4-a. Mode-dependent coverage
-/// selection remains separate work for A4-b.
+/// Supports the `MaskRefineMode::Annotation` path wired in A4-a.
 pub fn run(input: DetectInput, detector: &dyn TextDetector) -> Result<DetectOutput, StageError> {
     let original = input.source.load()?;
     let original = original.to_rgb8();
@@ -109,16 +108,21 @@ pub fn run(input: DetectInput, detector: &dyn TextDetector) -> Result<DetectOutp
         image_size: (new_width, new_height),
     };
     let detector_mask = detection.mask;
+    let prepared_detector_mask = mask::prepare_mask(&detector_mask, &geometry)?;
     let refined_mask = match input.config.mask_refine_mode {
-        MaskRefineMode::Simple => refine_simple(&detector_mask, &geometry, &detection.blocks)?,
+        MaskRefineMode::Simple => mask::refine_simple_prepared(
+            &prepared_detector_mask,
+            geometry.image_size,
+            &detection.blocks,
+        )?,
         MaskRefineMode::Annotation => {
             let detector_blocks = detection
                 .blocks
                 .iter()
                 .map(|block| block.rect)
                 .collect::<Vec<_>>();
-            let mut residual_mask = detector_mask.clone();
-            let refined = refine_mask(&base_image, &detector_mask, &detector_blocks)?;
+            let mut residual_mask = prepared_detector_mask.clone();
+            let refined = refine_mask(&base_image, &prepared_detector_mask, &detector_blocks)?;
             refine_undetected_mask(&base_image, &mut residual_mask, &refined, &detector_blocks)?
         }
     };
@@ -127,11 +131,15 @@ pub fn run(input: DetectInput, detector: &dyn TextDetector) -> Result<DetectOutp
         write_png(&image::DynamicImage::ImageLuma8(refined_mask.clone()), path)?;
     }
 
+    let coverage_mask = match input.config.mask_refine_mode {
+        MaskRefineMode::Annotation => &prepared_detector_mask,
+        MaskRefineMode::Simple => &refined_mask,
+    };
     let blocks = detection
         .blocks
         .into_iter()
         .filter_map(|block| {
-            let coverage = mask_coverage(&refined_mask, block.rect);
+            let coverage = mask_coverage(coverage_mask, block.rect);
             (coverage >= input.min_mask_coverage).then(|| DetectedBlock {
                 rect: block.rect,
                 language: yolo::class_to_language(block.class_index),
