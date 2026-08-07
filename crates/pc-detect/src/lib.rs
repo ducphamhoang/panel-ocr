@@ -8,15 +8,14 @@
 //! with the tests.
 
 /// Task A1 (spec §16.37 item 8) -- pure primitives for `MaskRefineMode::Annotation`.
-/// **Not wired into [`run`]**, which still rejects that mode; wiring is task A4.
+/// Used by the `MaskRefineMode::Annotation` path wired through [`run`] (A4-a).
 pub mod annotate;
 /// Task A3 (spec §16.37 item 8) -- connected components, the XOR merge loop and hole filling
-/// for `MaskRefineMode::Annotation`. **Not wired into [`run`]**, which still rejects that mode;
-/// wiring is task A4.
+/// for `MaskRefineMode::Annotation`, used by the path wired through [`run`] (A4-a).
 pub mod annotate_merge;
 /// Task A3b (spec §16.37 item 11) -- `refine_mask`'s page-level driver and
-/// `refine_undetected_mask` for `MaskRefineMode::Annotation`. **Not wired into [`run`]**, which
-/// still rejects that mode; wiring is task A4.
+/// `refine_undetected_mask` for `MaskRefineMode::Annotation`, used by the path wired through
+/// [`run`] (A4-a).
 pub mod annotate_refine;
 pub mod detector;
 pub mod mask;
@@ -34,6 +33,7 @@ pub use annotate::{
     candidate_grey_values, erode_rect3x3, expand_text_window, histogram_255, rgb_to_gray,
     top_k_colors, top_k_colors_default, Histogram255, ANNOTATION_EXPAND_R,
 };
+use annotate_refine::{refine_mask, refine_undetected_mask};
 pub use detector::{DetectInput, DetectOutput, RawBlock, RawDetection, TextDetector};
 pub use mask::{refine_simple, REFINE_DILATE_RADIUS, REFINE_EXPAND, REFINE_THRESHOLD};
 pub use resize::{calculate_new_size_and_scale, resize_area, round_half_away};
@@ -83,16 +83,9 @@ impl pc_core::Stage for DetectStage {
 
 /// spec §8.3, steps 1-7.
 ///
-/// Rejects `MaskRefineMode::Annotation` with `StageError::InvalidInput` **before** any
-/// detection work (§8.3 step 5, §15.2, §16.5 item 3) -- failing after paying for
-/// inference would be gratuitous.
+/// Supports the `MaskRefineMode::Annotation` path wired in A4-a. Mode-dependent coverage
+/// selection remains separate work for A4-b.
 pub fn run(input: DetectInput, detector: &dyn TextDetector) -> Result<DetectOutput, StageError> {
-    if input.config.mask_refine_mode == MaskRefineMode::Annotation {
-        return Err(StageError::InvalidInput(
-            "mask_refine_mode `annotation` is not implemented in v1".into(),
-        ));
-    }
-
     let original = input.source.load()?;
     let original = original.to_rgb8();
     let (new_width, new_height, scale) = calculate_new_size_and_scale(
@@ -115,7 +108,20 @@ pub fn run(input: DetectInput, detector: &dyn TextDetector) -> Result<DetectOutp
         dh: 0.0,
         image_size: (new_width, new_height),
     };
-    let refined_mask = refine_simple(&detection.mask, &geometry, &detection.blocks)?;
+    let detector_mask = detection.mask;
+    let refined_mask = match input.config.mask_refine_mode {
+        MaskRefineMode::Simple => refine_simple(&detector_mask, &geometry, &detection.blocks)?,
+        MaskRefineMode::Annotation => {
+            let detector_blocks = detection
+                .blocks
+                .iter()
+                .map(|block| block.rect)
+                .collect::<Vec<_>>();
+            let mut residual_mask = detector_mask.clone();
+            let refined = refine_mask(&base_image, &detector_mask, &detector_blocks)?;
+            refine_undetected_mask(&base_image, &mut residual_mask, &refined, &detector_blocks)?
+        }
+    };
 
     if let Some(path) = &input.raw_mask_dest {
         write_png(&image::DynamicImage::ImageLuma8(refined_mask.clone()), path)?;
