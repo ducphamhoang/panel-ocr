@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 29;
+const EXPECTED_PARSED_CLAIMS: usize = 35;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -122,6 +122,27 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // the same consequence already recorded for §16.35's `10.3 step 10` row.
     ("16.37", "14 item 17"),
     ("16.37", "8.3 step 5"),
+    // §16.39's six markers, all landing with A4's wiring of `MaskRefineMode::Annotation`.
+    //
+    // Two of them re-target clauses §16.37 already claimed against, from a DIFFERENT host, and
+    // that is deliberate rather than a duplicate: `("16.39", "8.3 step 5")` claims the
+    // `Annotation -> StageError::InvalidInput` parenthetical of the out-of-scope bullet, while
+    // `("16.37", "8.3 step 5")` above claims the `expand_textwindow` parenthetical five lines
+    // earlier — two different sentences of one step. `("16.39", "14 item 17")` claims item 17's
+    // OPERAND sentence, while `("16.37", "14 item 17")` claims its "never fired" measurement.
+    // Both pairs collapse to the same span (the `step N` fallback for §8.3, item 17's whole span
+    // for §14), so one back-pointer would satisfy each pair; the rows are distinct because the
+    // hosts differ, and the multiset comparison keeps them so.
+    //
+    // `("16.39", "15 item 2")` is the anchor spelling §16.37 item 7 settled in advance: `15 item
+    // 2`, never `15.2 item 2` — there is no `## 15.2` header, and an unresolvable anchor PANICS
+    // `every_supersession_marker_has_a_back_pointer_at_its_target` rather than being skipped.
+    ("16.39", "14 item 12"),
+    ("16.39", "14 item 17"),
+    ("16.39", "15 item 2"),
+    ("16.39", "16.5 item 3"),
+    ("16.39", "8.3 step 5"),
+    ("16.39", "8.3 step 6"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
