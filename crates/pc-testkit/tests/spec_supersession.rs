@@ -23,7 +23,14 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 39;
+const EXPECTED_PARSED_CLAIMS: usize = 41;
+
+/// Claims whose declared sub-item identity must scope the target-side back-pointer independently.
+/// Most historical lettered claims retain §16.26 item 3(a)'s parent-item span. These two are pinned
+/// because §16.40 resolves two siblings in the same item and either sibling's pointer would otherwise
+/// satisfy both claims, making each dedicated annotation decorative.
+const SUB_ITEM_SCOPED_BACKPOINTERS: &[(&str, &str)] =
+    &[("16.40", "16.38 item 25(a)"), ("16.40", "16.38 item 25(d)")];
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -253,6 +260,13 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // resolved SPAN is item 12 whole (ratified §16.26 item 3(a)). If a later erratum against a
     // different sub-item of item 12 is added, it gets its own row and losing either names which.
     ("16.38", "16.38 item 12(a)"),
+    // §16.40 resolves two independently identified sub-items inside §16.38 item 25. Ordinary
+    // `parse_anchor` / `target_span` first identifies parent item 25 under §16.26 item 3(a), but
+    // `claim_target_span` deliberately narrows these two `SUB_ITEM_SCOPED_BACKPOINTERS` identities
+    // to their respective (a)/(d) spans so each target annotation is independently load-bearing.
+    // The two rows raise EXPECTED_PARSED_CLAIMS from 39 to 41.
+    ("16.40", "16.38 item 25(a)"),
+    ("16.40", "16.38 item 25(d)"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
@@ -336,9 +350,11 @@ struct Claim {
     /// (`16.24 item 18(b)`). Constructed by `marker_claims` alone — `Claim` has no other
     /// constructor — so nothing in Layer B or in `target_span` can see it.
     ///
-    /// This is an IDENTITY, not a span: `target` and therefore `target_span` are untouched by the
-    /// letter, so `item 18(b)` still resolves to item 18's whole span per §16.26 item 3(a). Only
-    /// counting/matching in `the_ratified_supersessions_are_each_covered` gains the granularity.
+    /// Historical lettered identities remain identities only and resolve to their parent item under
+    /// §16.26 item 3(a). The two identities in `SUB_ITEM_SCOPED_BACKPOINTERS` are the explicit narrow
+    /// exception: `claim_target_span` resolves those letters to separate sub-item spans so sibling
+    /// target annotations are independently falsifiable. Layer B and bare `target_span` remain
+    /// unchanged.
     identity: String,
 }
 
@@ -602,6 +618,89 @@ fn target_span(lines: &[&str], outline: &Outline, target: &Anchor) -> Option<(us
         .map(|(_, start, end)| (*start, *end))
 }
 
+fn sub_item_marker(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let rest = trimmed.strip_prefix('(')?;
+    let letters_len = rest
+        .chars()
+        .take_while(char::is_ascii_alphabetic)
+        .map(char::len_utf8)
+        .sum();
+    if letters_len == 0 || !rest[letters_len..].starts_with(')') {
+        return None;
+    }
+    Some(&rest[..letters_len])
+}
+
+/// Resolve a claim's target span. Historical lettered claims keep §16.26 item 3(a)'s parent-item
+/// leniency unless their identity is explicitly pinned in `SUB_ITEM_SCOPED_BACKPOINTERS`.
+fn claim_target_span(lines: &[&str], outline: &Outline, claim: &Claim) -> Option<(usize, usize)> {
+    let parent = target_span(lines, outline, &claim.target)?;
+    if !SUB_ITEM_SCOPED_BACKPOINTERS.contains(&(claim.host.as_str(), claim.identity.as_str())) {
+        return Some(parent);
+    }
+
+    let letter = claim.identity.strip_suffix(')')?.rsplit_once('(')?.1;
+    let start =
+        (parent.0..parent.1).find(|index| sub_item_marker(lines[*index]) == Some(letter))?;
+    let end = ((start + 1)..parent.1)
+        .find(|index| sub_item_marker(lines[*index]).is_some())
+        .unwrap_or(parent.1);
+    Some((start, end))
+}
+
+fn has_pinned_supersession_annotation(line: &str, host: &str) -> bool {
+    let line = line.trim_start();
+    for prefix in ["**SUPERSEDED by §", "**SUPERSEDED IN PART by §"] {
+        let Some(after_prefix) = line.strip_prefix(prefix) else {
+            continue;
+        };
+        let Some(after_host) = after_prefix.strip_prefix(host) else {
+            continue;
+        };
+        // After the host, accept only end-of-line or the exact live separator ` —` (ASCII space
+        // followed by em dash). Tabs, bare spaces, and every other continuation are malformed.
+        let allowed_host_boundary = after_host.is_empty() || after_host.starts_with(" —");
+        if allowed_host_boundary {
+            return true;
+        }
+    }
+    false
+}
+
+fn contains_claim_back_pointer(lines: &[&str], span: (usize, usize), claim: &Claim) -> bool {
+    if SUB_ITEM_SCOPED_BACKPOINTERS.contains(&(claim.host.as_str(), claim.identity.as_str())) {
+        // For independently pinned sibling claims, a mere citation of the host is insufficient.
+        // After indentation, the dedicated line must begin with exactly one of these Markdown forms:
+        // `**SUPERSEDED by §<host>` or `**SUPERSEDED IN PART by §<host>`. After the host, accept only
+        // end-of-line or the exact live separator ` —`; arbitrary words between the verb and `by`,
+        // and every other post-host continuation, are rejected.
+        return lines[span.0..span.1]
+            .iter()
+            .any(|line| has_pinned_supersession_annotation(line, &claim.host));
+    }
+    contains_back_pointer(lines, span, &claim.host)
+}
+
+fn missing_back_pointers(text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let outline = outline(&lines);
+    let claims = marker_claims(&lines, &outline);
+    let mut missing = Vec::new();
+    for claim in &claims {
+        let span = claim_target_span(&lines, &outline, claim).unwrap_or_else(|| {
+            panic!(
+                "§{} (line {}) claims to supersede {}, which does not resolve to any section, item, or pinned sub-item",
+                claim.host, claim.line, claim.identity
+            )
+        });
+        if !contains_claim_back_pointer(&lines, span, claim) {
+            missing.push(claim.identity.clone());
+        }
+    }
+    missing
+}
+
 /// Does `span` reference `§<host>`? Requires the sigil and a non-digit boundary, so `§16.2` does not
 /// satisfy a claim by `§16.25`.
 fn contains_back_pointer(lines: &[&str], span: (usize, usize), host: &str) -> bool {
@@ -706,9 +805,14 @@ fn spec() -> String {
 // artifact, enumerate every reader, record the enumeration" — where the artifact is a spec clause and
 // the reader is anyone who cites it without noticing it was superseded.
 //
-// What must break for this to fail: delete a back-pointer from a superseded site, or add a
-// `SUPERSEDES:` marker without adding one. Nothing else. The check is scoped to the target's own
-// span, so a pointer elsewhere in the file does not satisfy it — proven separately by
+// What must break for this to fail differs by claim class. Historical claims fail when their target
+// span lacks a citation of the host section. The two `SUB_ITEM_SCOPED_BACKPOINTERS` identities are
+// stricter: after indentation, each individual sub-item span must have a line beginning with exactly
+// `**SUPERSEDED by §<host>` or `**SUPERSEDED IN PART by §<host>`. After the host, only end-of-line
+// or the exact live separator ` —` is accepted. Thus removing the annotation,
+// replacing/negating/extending its verb, inserting arbitrary words between the verb and `by`, or
+// using any other post-host continuation fails even when another host citation remains. Adding a `SUPERSEDES:` marker without the required target-side form also fails. In both
+// classes, a pointer outside the target span does not satisfy the gate, as separately proven by
 // `a_back_pointer_outside_the_target_span_does_not_satisfy_the_gate`.
 fn every_supersession_marker_has_a_back_pointer_at_its_target() {
     let text = spec();
@@ -718,7 +822,7 @@ fn every_supersession_marker_has_a_back_pointer_at_its_target() {
 
     let mut missing = Vec::new();
     for claim in &claims {
-        let span = target_span(&lines, &outline, &claim.target).unwrap_or_else(|| {
+        let span = claim_target_span(&lines, &outline, claim).unwrap_or_else(|| {
             panic!(
                 "§{} (line {}) claims to supersede {}, which does not resolve to any section or \
                  item. An unresolvable anchor is a FAILURE, not a skip: a typo'd anchor would \
@@ -726,26 +830,47 @@ fn every_supersession_marker_has_a_back_pointer_at_its_target() {
                 claim.host, claim.line, claim.target.label
             )
         });
-        if !contains_back_pointer(&lines, span, &claim.host) {
-            missing.push(format!(
-                "\n  {} (spec line {}) is superseded by §{}, but {}'s own text (lines {}-{}) \
-                 never mentions §{}.\n    Fix: add a marker at the START of {} — e.g.\n      \
-                 **SUPERSEDED by §{} — read it before citing this clause.**\n    Why: anyone \
-                 reading {} in isolation must learn it has been superseded from {} itself. A \
-                 pointer that exists only in §{} is invisible to them.",
-                claim.target.label,
-                claim.line,
-                claim.host,
-                claim.target.label,
-                span.0 + 1,
-                span.1,
-                claim.host,
-                claim.target.label,
-                claim.host,
-                claim.target.label,
-                claim.target.label,
-                claim.host,
-            ));
+        if !contains_claim_back_pointer(&lines, span, claim) {
+            if SUB_ITEM_SCOPED_BACKPOINTERS
+                .contains(&(claim.host.as_str(), claim.identity.as_str()))
+            {
+                missing.push(format!(
+                    "\n  {} (spec line {}) is superseded by §{}, but its individual sub-item span \
+                     (lines {}-{}) lacks a dedicated annotation beginning with exactly \
+                     `**SUPERSEDED by §{}` or `**SUPERSEDED IN PART by §{}`.\n    \
+                     Fix: restore one of those two forms, followed only by end-of-line or the exact \
+                     separator ` —`.\n    Why: another §{} citation or any other verb/post-host \
+                     syntax does not identify this target annotation.",
+                    claim.identity,
+                    claim.line,
+                    claim.host,
+                    span.0 + 1,
+                    span.1,
+                    claim.host,
+                    claim.host,
+                    claim.host,
+                ));
+            } else {
+                missing.push(format!(
+                    "\n  {} (spec line {}) is superseded by §{}, but {}'s own text (lines {}-{}) \
+                     never mentions §{}.\n    Fix: add a marker at the START of {} — e.g.\n      \
+                     **SUPERSEDED by §{} — read it before citing this clause.**\n    Why: anyone \
+                     reading {} in isolation must learn it has been superseded from {} itself. A \
+                     pointer that exists only in §{} is invisible to them.",
+                    claim.target.label,
+                    claim.line,
+                    claim.host,
+                    claim.target.label,
+                    span.0 + 1,
+                    span.1,
+                    claim.host,
+                    claim.target.label,
+                    claim.host,
+                    claim.target.label,
+                    claim.target.label,
+                    claim.host,
+                ));
+            }
         }
     }
     assert!(
@@ -888,6 +1013,167 @@ fn every_pinned_pre_convention_target_still_resolves() {
 }
 
 // ── the parser's own controls, on synthetic text ──────────────────────────────
+
+#[test]
+fn section_16_40s_two_item_25_back_pointers_are_independently_load_bearing() {
+    let text = spec();
+    let annotations = [
+        (
+            "16.38 item 25(a)",
+            "    **SUPERSEDED IN PART by §16.40 — this back-pointer qualifies the former OPEN, DEFERRED status and the former omission of strip tests; the measurement above remains unchanged.**\n",
+        ),
+        (
+            "16.38 item 25(d)",
+            "    **SUPERSEDED IN PART by §16.40 — this back-pointer resolves the OPEN provider-location choice; the measurements and dependency-edge analysis above remain unchanged.**\n",
+        ),
+    ];
+
+    assert!(
+        missing_back_pointers(&text).is_empty(),
+        "the unmodified live spec must satisfy every target-side back-pointer"
+    );
+    for (identity, annotation) in annotations {
+        assert_eq!(
+            text.matches(annotation).count(),
+            1,
+            "the mutation must identify exactly one dedicated annotation for {identity}"
+        );
+        let deleted = text.replacen(annotation, "", 1);
+        assert_ne!(
+            deleted, text,
+            "the {identity} deletion must change the spec"
+        );
+        assert_eq!(
+            missing_back_pointers(&deleted),
+            vec![identity.to_owned()],
+            "deleting only {identity}'s annotation must fail that identity even while the sibling and other §16.40 mentions remain"
+        );
+
+        for (label, replacement_prefix) in [
+            ("replaced verb", "**QUALIFIED"),
+            ("negated verb", "NOT SUPERSEDED"),
+            ("token-extended verb", "**SUPERSEDEDNESS"),
+            ("post-verb negation", "**SUPERSEDED NOT"),
+            ("altered IN PART phrase", "**SUPERSEDED IN NO PART"),
+        ] {
+            let rejected_annotation =
+                annotation.replacen("**SUPERSEDED IN PART", replacement_prefix, 1);
+            assert_ne!(
+                rejected_annotation, annotation,
+                "the {identity} {label} mutation must alter the annotation"
+            );
+            let mutated = text.replacen(annotation, &rejected_annotation, 1);
+            assert_ne!(mutated, text, "the {identity} {label} mutation must land");
+            assert!(
+                mutated.contains(&rejected_annotation),
+                "the {identity} {label} mutation must leave its rejected form in the document"
+            );
+            assert_eq!(
+                missing_back_pointers(&mutated),
+                vec![identity.to_owned()],
+                "the {identity} {label} form must fail only that identity while its host citation, sibling annotation, and other §16.40 citations remain"
+            );
+        }
+        for (label, replacement_host) in [
+            ("alphabetic host extension", "§16.40x"),
+            ("hyphen host extension", "§16.40-extra"),
+        ] {
+            let rejected_annotation = annotation.replacen("§16.40", replacement_host, 1);
+            assert_ne!(
+                rejected_annotation, annotation,
+                "the {identity} {label} mutation must alter the annotation"
+            );
+            let mutated = text.replacen(annotation, &rejected_annotation, 1);
+            assert_ne!(mutated, text, "the {identity} {label} mutation must land");
+            assert!(
+                mutated.contains(&rejected_annotation),
+                "the {identity} {label} mutation must leave its rejected form in the document"
+            );
+            assert_eq!(
+                missing_back_pointers(&mutated),
+                vec![identity.to_owned()],
+                "the {identity} {label} form must fail only that identity while its sibling annotation and other §16.40 citations remain"
+            );
+        }
+
+        let misleading_suffix = annotation.replacen("§16.40 —", "§16.40 NOT superseded. —", 1);
+        assert_ne!(
+            misleading_suffix, annotation,
+            "the {identity} post-host prose mutation must alter the annotation"
+        );
+        let mutated = text.replacen(annotation, &misleading_suffix, 1);
+        assert_ne!(
+            mutated, text,
+            "the {identity} post-host prose mutation must land"
+        );
+        assert!(
+            mutated.contains(&misleading_suffix),
+            "the {identity} post-host prose mutation must remain in the document"
+        );
+        assert_eq!(
+            missing_back_pointers(&mutated),
+            vec![identity.to_owned()],
+            "post-host ` NOT superseded.` must fail only {identity} while its sibling annotation and other §16.40 citations remain"
+        );
+    }
+}
+
+#[test]
+fn pinned_annotation_accepts_only_the_two_declared_markdown_forms() {
+    for accepted in [
+        "    **SUPERSEDED by §16.40",
+        "    **SUPERSEDED IN PART by §16.40",
+        "    **SUPERSEDED by §16.40 — annotation.**",
+        "    **SUPERSEDED IN PART by §16.40 — annotation.**",
+    ] {
+        assert!(has_pinned_supersession_annotation(accepted, "16.40"));
+    }
+    for rejected in [
+        "    NOT SUPERSEDED by §16.40 — annotation.",
+        "    **SUPERSEDEDNESS by §16.40 — annotation.**",
+        "    **QUALIFIED by §16.40 — annotation.**",
+        "    **SUPERSEDED NOT by §16.40 — annotation.**",
+        "    **SUPERSEDED IN NO PART by §16.40 — annotation.**",
+        "    **SUPERSEDED by §16.400 — annotation.**",
+        "    **SUPERSEDED IN PART by §16.40.1 — annotation.**",
+        "    **SUPERSEDED by §16.40x — annotation.**",
+        "    **SUPERSEDED IN PART by §16.40-extra — annotation.**",
+        "    **SUPERSEDED by §16.40 NOT superseded.",
+        "    **SUPERSEDED by §16.40 plain space",
+        "    **SUPERSEDED IN PART by §16.40\tannotation.",
+    ] {
+        assert!(
+            !has_pinned_supersession_annotation(rejected, "16.40"),
+            "rejected pinned annotation form passed: {rejected}"
+        );
+    }
+}
+
+#[test]
+fn pinned_sibling_sub_items_use_distinct_spans_and_require_annotations() {
+    let text = "\
+## 16.38 Older
+
+25. Parent cites §16.40, which must satisfy neither sibling by itself.
+
+    (a) A cites §16.40 in prose.
+
+    **SUPERSEDED IN PART by §16.40 — dedicated A annotation.**
+
+    (b) Untouched.
+
+    (d) D has no dedicated annotation, though it cites §16.40.
+
+## 16.40 Newer
+
+1. **SUPERSEDES: §16.38 item 25(a); §16.38 item 25(d)** — two claims.
+";
+    assert_eq!(
+        missing_back_pointers(text),
+        vec!["16.38 item 25(d)".to_owned()],
+        "a parent citation, sibling annotation, and same-sub-item prose citation must not satisfy 25(d)"
+    );
+}
 
 #[test]
 // spec §16.24 item 19(b)'s prohibition, made mechanical: a back-pointer ELSEWHERE in the file must
