@@ -73,8 +73,10 @@ pub fn export_sources(mask: Option<&MaskOutput>, denoise: Option<&DenoiseOutput>
     ExportSources {
         masked: mask.map(|output| output.cleaned.clone()),
         denoised: denoise.map(|output| output.denoised.clone()),
+        inpainted: None,
         final_mask: mask.map(|output| output.combined_mask.clone()),
         denoise_mask: denoise.map(|output| output.noise_mask.clone()),
+        inpainted_mask: None,
         isolated_text: mask.and_then(|output| output.text_layer.clone()),
     }
 }
@@ -524,6 +526,7 @@ fn export_once(
             preferred_file_type: options.profile.general.cleaned_suffix(),
             preferred_mask_file_type: options.profile.general.preferred_mask_file_type.clone(),
             denoising_enabled: options.denoising_enabled(),
+            inpainting_enabled: options.profile.inpainter.inpainting_enabled,
         },
         (),
     )

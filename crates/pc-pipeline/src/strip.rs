@@ -157,6 +157,7 @@ pub fn merged_strip_export(
                 preferred_file_type: Some(options.profile.general.preferred_file_type.clone()),
                 preferred_mask_file_type: options.profile.general.preferred_mask_file_type.clone(),
                 denoising_enabled: options.denoising_enabled(),
+                inpainting_enabled: options.profile.inpainter.inpainting_enabled,
             })?;
             files_written.extend(output.files_written);
         }
@@ -196,6 +197,8 @@ pub fn merged_strip_export(
             manifest.image_size,
             "cleaned",
         )?,
+        // §16.38 item 25(a): merged-strip inpainting policy is deferred; do not stitch it.
+        inpainted: None,
         final_mask: stitch_requested(
             &requested,
             &[Output::FinalMask, Output::DenoiseMask],
@@ -216,6 +219,8 @@ pub fn merged_strip_export(
             manifest.image_size,
             "mask",
         )?,
+        // §16.38 item 25(a): merged-strip inpainting policy is deferred; do not stitch it.
+        inpainted_mask: None,
         isolated_text: stitch_requested(
             &requested,
             &[Output::IsolatedText],
@@ -238,6 +243,7 @@ pub fn merged_strip_export(
         preferred_file_type: Some(options.profile.general.preferred_file_type.clone()),
         preferred_mask_file_type: options.profile.general.preferred_mask_file_type.clone(),
         denoising_enabled: options.denoising_enabled(),
+        inpainting_enabled: options.profile.inpainter.inpainting_enabled,
     })
 }
 

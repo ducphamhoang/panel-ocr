@@ -51,6 +51,11 @@ pub enum MaskChoice {
         final_mask: ImageHandle,
         denoise_mask: ImageHandle,
     },
+    WithInpaint {
+        final_mask: ImageHandle,
+        denoise_mask: Option<ImageHandle>,
+        inpainted_mask: ImageHandle,
+    },
 }
 
 /// Exactly one cleaned image, at most one mask, at most one text layer (§12.7(A)5).
@@ -76,14 +81,57 @@ impl Selection {
 ///   * `text = isolated_text`, independent of the other two;
 ///   * narrowing by `outputs` is applied **after** precedence, so the two cannot
 ///     interact.
-pub fn resolve(sources: &ExportSources, outputs: &[Output], denoising_enabled: bool) -> Selection {
-    let cleaned = if denoising_enabled {
-        sources.denoised.clone().or_else(|| sources.masked.clone())
+pub fn resolve(
+    sources: &ExportSources,
+    outputs: &[Output],
+    denoising_enabled: bool,
+    inpainting_enabled: bool,
+) -> Selection {
+    let fallback_cleaned = || {
+        if denoising_enabled {
+            sources.denoised.clone().or_else(|| sources.masked.clone())
+        } else {
+            sources.masked.clone()
+        }
+    };
+    let cleaned = if inpainting_enabled {
+        sources.inpainted.clone().or_else(fallback_cleaned)
     } else {
-        sources.masked.clone()
+        fallback_cleaned()
     };
 
-    let mask = match (
+    let mask = if inpainting_enabled {
+        match (sources.final_mask.clone(), sources.inpainted_mask.clone()) {
+            (Some(final_mask), Some(inpainted_mask)) => Some(MaskChoice::WithInpaint {
+                final_mask,
+                denoise_mask: sources.denoise_mask.clone().filter(|_| denoising_enabled),
+                inpainted_mask,
+            }),
+            (None, Some(_)) => {
+                tracing::warn!(
+                    artifact = "inpainting",
+                    "an inpainting mask was available without a combined mask; no mask will be exported"
+                );
+                None
+            }
+            _ => fallback_mask(sources, denoising_enabled),
+        }
+    } else {
+        fallback_mask(sources, denoising_enabled)
+    };
+
+    Selection {
+        cleaned: cleaned.filter(|_| is_requested(outputs, Category::Cleaned)),
+        mask: mask.filter(|_| is_requested(outputs, Category::Mask)),
+        text: sources
+            .isolated_text
+            .clone()
+            .filter(|_| is_requested(outputs, Category::Text)),
+    }
+}
+
+fn fallback_mask(sources: &ExportSources, denoising_enabled: bool) -> Option<MaskChoice> {
+    match (
         sources.final_mask.clone(),
         sources.denoise_mask.clone(),
         denoising_enabled,
@@ -100,15 +148,6 @@ pub fn resolve(sources: &ExportSources, outputs: &[Output], denoising_enabled: b
             None
         }
         (None, _, _) => None,
-    };
-
-    Selection {
-        cleaned: cleaned.filter(|_| is_requested(outputs, Category::Cleaned)),
-        mask: mask.filter(|_| is_requested(outputs, Category::Mask)),
-        text: sources
-            .isolated_text
-            .clone()
-            .filter(|_| is_requested(outputs, Category::Text)),
     }
 }
 

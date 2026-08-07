@@ -152,6 +152,7 @@ fn destination_input(
         preferred_file_type: preferred_file_type.map(str::to_string),
         preferred_mask_file_type: preferred_mask_file_type.to_string(),
         denoising_enabled: true,
+        inpainting_enabled: false,
     }
 }
 

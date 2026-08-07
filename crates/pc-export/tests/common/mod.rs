@@ -85,6 +85,7 @@ pub fn input_with(
         preferred_file_type: None,
         preferred_mask_file_type: ".png".into(),
         denoising_enabled,
+        inpainting_enabled: false,
     }
 }
 
@@ -101,6 +102,7 @@ pub fn full_sources() -> ExportSources {
     ExportSources {
         masked: Some(handle("/cache/page_clean.png", masked)),
         denoised: Some(handle("/cache/page_clean_denoised.png", denoised)),
+        inpainted: None,
         final_mask: Some(handle(
             "/cache/page_combined_mask.png",
             DynamicImage::ImageRgba8(final_mask),
@@ -109,6 +111,7 @@ pub fn full_sources() -> ExportSources {
             "/cache/page_noise_mask.png",
             DynamicImage::ImageRgba8(denoise_mask),
         )),
+        inpainted_mask: None,
         isolated_text: Some(handle(
             "/cache/page_text.png",
             DynamicImage::ImageRgba8(text),
