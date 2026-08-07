@@ -1,210 +1,172 @@
 # Handover — TEMPORARY, delete when consumed
 
-Written 2026-08-03, replacing the previous version (2026-07-30, which described F1 Phase 2 as
-code-done-but-not-recorded and P7/P8 as the other open v1.0 task — both are now done, see
-below). **This file is scaffolding, not a record.** Anything in it worth keeping permanently
-belongs in `PIPELINE_SPEC_V1.md`, `COOKBOOK.md`, or `RULINGS.md` instead.
+Written 2026-08-07, replacing the previous version (2026-08-03, which covered v1.0's F1
+detector-oracle landing and F2/CPU-EP/v1.5-sequencing open items — all of that is now
+superseded by the mask-parity and lama-inpaint work described below). **This file is
+scaffolding, not a record.** Anything in it worth keeping permanently belongs in
+`PIPELINE_SPEC_V1.md`, `COOKBOOK.md`, `RULINGS.md`, or `ARCHITECTURE_DECISIONS.md` instead.
 
-## Repo state
+## Read this first: the standing blocker
 
-- Branch `claude/codex-plugin-install-jxirxa`, `HEAD` = `f6212eb`, working tree clean, **pushed**
-  (origin is up to date with HEAD as of this writing).
-- Verification bar, actually run at HEAD: `cargo test --workspace` (920 passed, 0 failed, 3
-  ignored), the onnx tier (`cargo test --workspace --all-targets --features pc-cli/onnx`, 934
-  passed, 0 failed, 5 ignored), `cargo clippy --workspace --all-targets --all-features -- -D
-  warnings` clean, `cargo fmt --all --check` clean. **Do not cite older figures** — re-run the
-  count yourself; this repo's own docs have gone stale on this point more than once (cookbook
-  rule 6).
-- `export PATH="$HOME/.cargo/bin:$PATH"` or cargo is not found (`COOKBOOK.md` rule 11).
-- Git has no configured identity; commits used `GIT_AUTHOR_NAME=Claude
-  GIT_AUTHOR_EMAIL=noreply@anthropic.com` (+ `GIT_COMMITTER_*`) as env vars.
-- The upstream PanelCleaner checkout/venv/weights used this session are session-scoped
-  scratchpad state (`/tmp/claude-*/.../scratchpad/oracle_rebuild/`) and are gone in a new
-  session. Rebuild fresh via `COOKBOOK.md` rule 3's recipe if the next session needs the real
-  oracle again (e.g. for the CPU-EP investigation's `cv2.dnn` speed comparison, or a future
-  DBNet-lines F1 re-record). **Do not let the installer touch shell rc files** — `uv`'s
-  installer auto-appends a `source .../uvbin/env` line to `.bashrc`/`.zshrc`/`.profile`
-  pointing at the ephemeral scratchpad path, which breaks on the next session with a `bash:
-  No such file or directory` warning; either pass `INSTALLER_NO_MODIFY_PATH=1` to the curl
-  installer or just export `PATH` yourself and strip any line it adds afterward. This has
-  already happened and been cleaned up twice this session — don't reintroduce it a third time.
-- Downloaded model weights are cached at `~/.cache/panel-ocr/models/` (`comictextdetector.pt.onnx`,
-  `encoder_model.onnx`, `decoder_model.onnx`) — already sha256-verified by `panel-ocr models
-  download`; no need to re-download for a same-machine continuation.
+**Codex cannot currently write to either of the two active feature worktrees.** This blocks
+every remaining code-implementation task below. Diagnosis, so the next session doesn't have
+to re-discover it:
 
-## v1.0: DONE
+- Confirmed via a completed `codex-companion.mjs` job that made **zero edits** and reported
+  `"Blocked by the managed Windows sandbox before any edits could be made."` after trying
+  every patch mechanism available to it (embedded `apply_patch`, the direct `apply_patch`
+  wrapper, git's own patch applicator) — all failed with `Access is denied`.
+- `icacls` on the main repo (`D:\Duc\panel-ocr`) shows two extra sandbox-session SIDs granted
+  `Modify`, on top of the generic `CodexSandboxUsers` group. The two worktree directories
+  (`D:\Duc\panel-ocr-mask-parity`, `D:\Duc\panel-ocr-lama-inpaint`) have **only** the generic
+  `CodexSandboxUsers` entry — no session-specific grant — which is evidently insufficient.
+  This means Codex's Windows sandbox was never onboarded/provisioned for these two paths.
+- `--cwd <worktree>` on the `task` subcommand **does** correctly scope `workspaceRoot` (fixed
+  a *different*, earlier bug where jobs defaulted to the main repo root and silently treated
+  worktrees as read-only) — but it does not fix the ACL gap itself.
+- `codex-windows-sandbox-setup.exe` (in `~/.codex/.sandbox-bin/`) exists and is presumably
+  the tool that provisions this, but it takes an internal encoded payload, not plain CLI
+  flags — not safely hand-invokable, and this session deliberately did not attempt it (a
+  system-level sandbox/ACL change needs human authorization, not agent guesswork).
 
-Every task in §13's consolidated table (F0 through P8, all 32 rows) is implemented and green,
-**including F1**, which was the last open item as of the previous handover. Commit `f6212eb`
-landed the real detector-oracle recording: the pinned PanelCleaner checkout
-(`0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`) run for real against the real
-`comictextdetector.pt.onnx` on the ratified page (`ja_Pepper-and-Carrot_by-David-Revoy_E01P01.jpg`,
-§16.24 item 17), producing:
+**What would unblock it** (untried this session, in rough order of likely-least-effort):
+1. Run `codex` interactively once inside each worktree directory — this often triggers a
+   one-time per-path sandbox onboarding.
+2. Check whether `/codex:setup` (or an equivalent onboarding command) accepts a target
+   directory and can be pointed at the two worktrees.
+3. Manually grant the two worktree directories the same session-SID ACL entries the main
+   repo has (needs to know which SID(s) to add — `icacls D:\Duc\panel-ocr` shows the pattern).
 
-- `tests/fixtures/recorded/detector/` (7 artifacts + `PROVENANCE.json`), the oracle page moved
-  in (`git mv`, no second copy) per §16.29 item 2.
-- The real-page gate test (`crates/pc-detect/tests/f1_real_page_gate.rs`) with its hand-derived
-  `Expectations` literal — derived independently twice (two subagents, blind to each other,
-  converged exactly) — plus two adversarial mutation controls proving it actually gates.
-- Four previously-`#[ignore]`d tests un-gated against this real page: `d7_run.rs`'s `a6`/`b9`,
-  `p5_run.rs`'s `b11`. (`n4_run.rs`'s `b13` stays `#[ignore]`d — see "What's still open" below.)
-- `docs/DETECTOR_ORACLE.md`: the §16.20 item 3(e)/§16.24 item 11 completeness partition, the
-  pairing verdict, and all three required signatures (two independent agent re-derivations +
-  human maintainer `ducph`, 2026-08-02) — reviewed by an independent `fresh-reader` pass before
-  signing, which caught and required fixing three real defects (a wrong `NO-ORACLE`/`EXPLAINED`
-  verdict, an unsourced page attribution, and four `§16.24`/`§16.20` mis-citations — all fixed
-  before the signature was recorded, not after).
-- `crates/pc-testkit/tests/detector_oracle_doc.rs`: the four §16.24 item 11 doc-shape gates,
-  live (not dormant) since the fixture already exists — including a hardened
-  "all 3 signatures present, none self-referential" check that reads the producing-agent name
-  off the doc itself rather than matching a hardcoded string.
+**Once unblocked**, dispatch Codex with the corrected pattern (bypass the `codex-rescue`
+subagent for this, since its fixed forwarding logic doesn't know about `--cwd`):
 
-**Nothing else is open for v1.0.** Do not start a new v1.0 task; the next work is v1.5-scoped
-(F2, below, plus everything after it).
+```
+node "<codex plugin path>/scripts/codex-companion.mjs" task --background --write --fresh \
+  --cwd "<worktree-path>" --prompt-file "<path-to-prompt-file>"
+```
+Check status/result with the **same** `--cwd`:
+```
+node ".../codex-companion.mjs" status <job-id> --cwd "<worktree-path>"
+```
+Prompt text is easier to manage as a file (`--prompt-file`) than as a shell-escaped
+positional argument, especially since these prompts embed full Rust source for frozen test
+files.
 
-## What's still open, in the order the maintainer chose to do them
+## Repo / worktree state
 
-### 1. F2 — `calibrate-goldens` (§7.3), in progress, needs real implementation
+Three worktrees, same repo, independent working directories:
 
-`cargo xtask calibrate-goldens` **runs today** and correctly measures its two already-wired
-sections (NLM vs `cv2.fastNlMeansDenoising`, INTER_AREA), but **section 3 of its output is
-stale placeholder prose** written back when the detector didn't exist — it unconditionally
-says "BLOCKED on D1+D4" regardless of what's actually recorded now. Three things are needed:
+- **Main** — `D:\Duc\panel-ocr`, branch `claude/codex-plugin-install-jxirxa`, HEAD `78fecb7`,
+  clean. Not touched this session beyond this handover file and an earlier backlog note.
+- **`mask-parity`** — `D:\Duc\panel-ocr-mask-parity`, HEAD `aa6f3c7`, clean.
+  Commits: `1b4e12f` (R0) → `e3a9d70` (A1) → `70a617c` (A2) → `dacd666` (A3) →
+  `0a41904` (A3b) → `aa6f3c7` (A4 ratification, §16.39).
+- **`lama-inpaint`** — `D:\Duc\panel-ocr-lama-inpaint`, HEAD `66cf7e4`, clean.
+  Commits: `ee7cb60` (L-R) → `41b90b3` (L1) → `534734e` (L2+L3) → `f517aa8` (L4) →
+  `ead8bd1` (L5) → `66cf7e4` (L6 ratification, §16.38 items 22-25).
 
-1. **Update the status table.** `a6`/`b9`/`b11` are no longer blocked (done, see above); only
-   `b13` remains blocked, and for a *different* reason now — missing golden PNGs, not the
-   detector (see "What's still open" #3 below). The hardcoded "BLOCKED on D1+D4" line in
-   `write_verdict` and the `section_blocked` table need to reflect this split.
-2. **Implement the `demo_bubbles` masking calibration report (§10.7(B)15).** This is genuinely
-   new code, not a re-run. Per §16.20 item 12 (a **ratified, binding** decision, not a design
-   choice open to reconsideration): run the detector on the 7 `demo_bubbles` crops
-   (`tests/fixtures/upstream/demo_bubbles/*_bubble_raw.png`) **to scratch only — commit
-   nothing** — then run masking and measure IoU / exact-% / max-Δ / SSIM against each crop's
-   `_clean.png` reference. Non-gating report only, no test. The same decision confirms the four
-   un-ignored tests above are correctly scoped ("un-ignore only against the signed maintainer
-   page, never against `demo_bubbles`") — nothing to reconcile there.
-3. **Implement the detector's upstream-vs-ours box-count comparison (§15.1)** on the recorded
-   page. Cheap — the numbers already exist in `f1_real_page_gate.rs`'s report (3 matched pairs;
-   upstream 4 vs ours 4, both extra blocks explained by a named `Mechanism`). This is mostly
-   formatting already-derived facts into the doc, not new measurement.
+Verification bar last actually run (not quoted from an older doc): `cargo test --workspace`
+green on both branches at their respective ratification commits (mask-parity: 1194 passed /
+0 failed / 3 ignored, re-verified after A4's ratification landed; lama-inpaint: 1218 passed /
+0 failed / 3 ignored, re-verified after L6's ratification landed). **Re-run yourself before
+trusting these numbers** — cookbook rule 6 — especially since neither branch has had the
+`onnx` tier / clippy / fmt re-run since the *ratification* commits specifically (they were
+last confirmed clean earlier in the review cycle, on the pre-ratification code).
 
-Scope note from the session that reached this point: item 2 is real implementation work
-(new detector + masker + metrics wiring in `xtask/src/calibrate.rs`) with a ratified
-scratch-only constraint that's easy to get wrong (accidentally committing a `demo_bubbles`
-detector artifact would violate §16.20 item 12 directly) — worth a deliberate check before
-landing, not necessarily a full joint-architect planning pass given how much of the underlying
-plumbing (detector, masker, `pc_testkit::metrics`) already exists and is well-understood from
-F1.
+`export PATH="/c/Users/ducph/.cargo/bin:$PATH"` if `cargo` is not found in a fresh Bash
+session (same issue as before, cookbook rule 11).
 
-### 2. CPU-EP investigation (§16.21 item 6), not started, schedule-independent of GPU
+## What's committed: mask-parity (Annotation mask-refine port)
 
-Already ratified as part of v1.5, and explicitly **may run any time after PERF-1** (which
-already landed) — it does not need to wait for GPU-1/GPU-2. Scope, per the ratifying entry:
-profile which ONNX ops dominate, check session/execution-mode options, try an `ort`/ONNX
-Runtime version bump as a *candidate* (not a given).
+Full A1→A3b algorithm port is implemented and unit-tested (85 tests). `aa6f3c7` ratifies
+the two remaining design decisions needed to wire it in:
+- **Coverage operand under Annotation mode**: score against the *unrefined* detector mask
+  (upstream's own operand), not the refined one. Simple mode is unchanged. Both the
+  architect and rust-engineer planning passes independently reached this by reading/running
+  upstream at the pinned commit — no Fable escalation needed, genuine convergence.
+- **`DEVIATION(12)`**: narrowed, not retired. Upstream has no mode switch; panel-ocr's
+  default stays `Simple`, so a default run still diverges from upstream's unconditional
+  refinement. The primary comment relocates from `crates/pc-detect/src/mask.rs:150` to
+  `MaskRefineMode`'s `#[default] Simple` variant in `crates/pc-config/src/profile.rs`.
 
-**Measured this session** (informal, not a committed benchmark — see below): our detector at
-default config (`intra_threads=0`) takes ~17.3s median per inference on this machine; upstream's
-`cv2.dnn` takes ~1.9s median on the identical page — roughly a **9-12x gap**, consistent with
-§16.21 item 6's own prior measurement of an 11x gap at matched thread count (`cv2.dnn` 1.20s vs
-ours 13.6s at 16 threads). **A thread-count sweep this session ruled out threading as the
-cause**: intra_threads 0/1/4/8/20 gave medians of 17.3s/142.9s/37.9s/20.4s/16.1s — so `0`
-(default) is already near-optimal, and even pinning to all cores only shaves ~7% off. The
-static `libonnxruntime.a` linked here has no OpenMP symbols, so the "with_intra_threads is a
-documented no-op under OpenMP prebuilt binaries" scenario doesn't apply either. **The gap is a
-backend/model-execution difference, not a config bug** — likely ORT's default CPU EP not
-hitting an equivalently-optimized conv path (Winograd/im2col) that OpenCV's DNN module has had
-years to tune for this kind of model. Nothing was implemented from this finding; it's a
-starting point for whoever picks up item 6, not a conclusion.
+**One flagged-but-undecided item, left open for the two architects rather than resolved
+unilaterally**: whether §16.39 item 2's "contradicts the word 'retirement' in §16.37 items
+8/11(d)" claim needs its own back-pointer at §16.37, or whether the marker at §14 item 12
+(the register entry that carries the actual proposition) is sufficient as scoped. The
+fourth fresh-reader's own adjudication leaned "acceptable as scoped" but recorded both
+sides — worth a quick architect confirmation before it's forgotten, not urgent.
 
-**Hard constraint, already ratified, do not skip**: the model bytes are immutable
-(sha256-pinned, §16.16); **no runtime replacement is permitted** — swapping to `cv2.dnn`/OpenCV
-was explicitly considered and explicitly rejected for this investigation, because `cv2.dnn` *is*
-the independent oracle F1 just finished comparing against, and running our detector on the same
-backend as the oracle would collapse the whole point of the comparison. And **any fix that
-perturbs even one recorded float — including a plain version bump — is fixture-affecting**: it
-would invalidate the F1 fixture just signed and committed in `f6212eb`, requiring a full
-re-record + re-sign (the same 3-signature process this session just went through). So: measure
-before adopting, always; nothing here lands quietly.
+### Next: A4-a (heavy, needs Codex)
 
-### 3. `n4_run.rs::b13_pending_recorded_page_end_to_end_golden` — still blocked, not by F1
+Wire the `Annotation` branch into `pc_detect::run` per §16.39's ruling. Test code is fully
+drafted (captured in this session's transcript, not yet written to disk) — six oracle-backed
+tests in a new `crates/pc-detect/tests/a4_run_annotation.rs`, covering: mode acceptance +
+mask emission, the Simple-stays-default quarantine, the undetected-mask pass reachability
+with zero detected blocks, per-image error classification for an empty expanded window, disk
+artifact writing, and end-to-end reproduction on the recorded page. A separate
+`a4_coverage_operand.rs` (four more tests) locks in the operand ruling specifically,
+including one synthetic fixture that's the *only* thing in the repo that can actually
+discriminate the two candidate operands (the committed real page can't — both operands agree
+on it). A4-b (the operand-specific implementation) is sequenced after A4-a lands.
 
-§11.7(B)13 requires committed reference golden PNGs (`_noise_mask.png`, `_clean_denoised.png`)
-for SSIM/alpha-histogram assertions. Neither exists anywhere in the tree — the F1 detector
-recording never produced them (denoise is a separate stage). Generating them by running our own
-denoiser and accepting the result would be cookbook rule 7's exact violation (no independent
-oracle for this stage on this page). Needs a joint-architect decision on how the golden is
-derived and signed before anyone touches this — not a unilateral generation. Its `#[ignore]`
-reason string already names this correctly; nothing to fix there, just nothing to do yet either.
+## What's committed: lama-inpaint (LaMa neural-inpainting fallback)
 
-### 4. v1.5 sequence after the above, per §16.24 item 5 (ratified order)
+Full `pc-inpaint` crate exists and works standalone: real ONNX LaMa session (verified against
+the actual downloaded 512×512 model), tile geometry, Gaussian-fade blending, eligibility
+checks, config, model registry partition. `66cf7e4` ratifies wiring it into
+`pc-pipeline`'s (currently nonexistent) `Step::Inpaint` stage:
+- **Mask-precedence correction**: §16.38 item 12(a) as originally written ("mask =
+  inpainted_mask.or(...)") mis-transcribed upstream. The real inpainted-mask export is a
+  three-layer alpha composite (combined_mask, then noise_mask if denoising ran, then
+  inpainting output) — verified character-for-character against `image_export.py:241-263`
+  at the pinned upstream commit. Again, independent convergence between architect and
+  rust-engineer, no Fable needed.
+- **Eligibility-first design**: the pipeline must call `pc_inpaint::select_regions()` before
+  ever asking the `InpainterProvider` for a session, so a run with zero eligible regions
+  never provisions the 207MB model / ONNX session.
 
-GPU-1 (device config / policy resolver / fatal-refusal wiring, **no CUDA linkage**) → GPU-2 (the
-`cuda` feature itself) → legacy INI import + Lab-space NLM (batched) → LaMa inpainting → PSD/
-layered export → DBNet line synthesis (flagged as the highest-risk item in the whole v1.5 scope,
-and forces a second F1 re-record + re-sign when it lands, budgeted up front) → `Mask
-RefineMode::Annotation` last. The CPU-EP investigation (#2 above) is order-flexible within this
-sequence per §16.24 item 5's own text ("may run any time after PERF-1"); GPU-1 is scoped as
-config-only and shouldn't conflict with CPU-EP work in the same files, but **GPU-2 would** —
-both touch `crates/pc-detect/src/onnx.rs`'s `Session::builder()` construction directly (GPU-2
-needs to pin `ConvAlgorithmSearch::Heuristic`/`Default` there per §16.22 item 3). If running
-these as parallel worktrees, don't pair CPU-EP investigation with GPU-2; CPU-EP + GPU-1 or
-CPU-EP + F2 are both low-conflict pairings.
+### Next: L6-1 through L6-5 (needs Codex)
 
-## Known discrepancies flagged this session, not yet corrected (recorded in `docs/DETECTOR_ORACLE.md`'s own "Known discrepancies" section too)
+Five tasks, four Codex calls: L6-1+L6-2 batched (simple — `Step::Inpaint` enum insertion,
+cache suffix constants), L6-3 (heavy — `pc-export` precedence/composite), L6-4 (heavy —
+the actual pipeline stage wiring, `PipelineCtx.inpainters`, eligibility-first call site),
+L6-5 (simple, depends on L6-4 — `--skip-inpaint` CLI flag + provider handoff). Full test
+code for all five is drafted (captured in transcript) — 20 tests across five new test files.
+**L6-1+L6-2 was attempted via Codex this session and hit the sandbox blocker described
+above before writing anything** — safe to retry verbatim once Codex can write here; nothing
+was left in a partial state (confirmed: `git status` in this worktree is clean).
 
-Three small spec/artifact mismatches surfaced while deriving F1's real-page pairing, all
-**flagged, not fixed** per this project's convention (a ratified transcription is corrected by
-a new entry, not a silent edit):
+One thing worth reading before dispatching L6-3: the drafted test file
+`l6_inpaint_precedence.rs` includes one test marked `#[ignore] // BLOCKED — DO NOT FREEZE`
+in the original draft — that block is now resolved by `66cf7e4`'s ratification, so the
+`#[ignore]` should come off before handing it to Codex (the drafted content already
+reflects the three-layer composite design; just confirm the attribute is removed).
 
-1. §16.27's transcription of upstream blocks 1/2's served `xyxy` has its `y2` values
-   transposed against the real recorded artifact (spec ~line 5433). The entry's conclusion
-   still holds against the real vectors; needs a spec erratum.
-2. A previously-quoted `mask_score` of `0.0359` (spec ~lines 3430/4012/5494,
-   `crates/pc-detect/src/oracle.rs:85`, `f1_oracle_comparator.rs:1058`) reads
-   `0.03446455505279035` in this real recording's `PROVENANCE.json`. Both are `< 0.1` so no
-   conclusion changes, but five sites now quote a stale number (one inside a frozen test file).
-3. §14 item 17's "measured across two real manga pages the filter has never fired" is
-   contradicted by this page — our own coverage filter *does* fire here (measured 0.0868 on
-   block index 3). §16.20 item 9 already records this page's correct outcome; item 17's summary
-   sentence is the stale one.
+## What's NOT started
 
-Also found: `DEVIATION(17)`, which §14 item 17's own text says "the implementation site
-carries", does not exist anywhere in `crates/`/`xtask/` (`DEVIATION(12)` does, at
-`crates/pc-detect/src/mask.rs:150`). A register/code desync the `mask_coverage` row's
-`EXPLAINED-§14.17` close rests on but doesn't create — worth landing alongside whichever of the
-three erratum entries above gets written first, since all four are in the same neighborhood.
+- **Task #22**: consolidate the 4-copy `blend_channel`/`alpha_composite_over`/
+  `resize_nearest_rgba`/`composite_rgb` duplication (`pc-mask`, `pc-denoise`, `pc-export`,
+  `pc-inpaint`) into `pc_imageops`. Existing but unfulfilled ticket at spec §16.11 item 10.
+  Should follow the L1/Gaussian-hoist pattern exactly (body byte-identical, frozen tests
+  unedited). Needs Codex like everything else above.
+- **Task #16 / #6**: the real-page benchmark (Simple vs Annotation vs LaMa). Blocked on both
+  A4 and L6 landing — neither alternate mode can run end-to-end yet.
+- Eventual merge reconciliation of `docs/PIPELINE_SPEC_V1.md` between the two branches
+  (`mask-parity` used §16.39, `lama-inpaint` used §16.38, chosen specifically to avoid
+  colliding — but the two branches' spec files have now diverged independently and will
+  need a real merge, not just a fast-forward, whenever they're combined).
 
-None of these block anything currently green; they're follow-up erratum entries for whoever is
-next in `docs/PIPELINE_SPEC_V1.md`'s §16.x sequence.
+## Process notes for whoever picks this back up
 
-### F2 demo_bubbles discrepancies requiring joint-architect decision
-
-These are escalated, not resolved here:
-
-1. §10.6 (~line 1019) says not to assume any demo fixture exercises the
-   “leave it untouched, failed: true” path. The measured §10.7(B)15 report shows 6 of 8
-   masking regions across the seven `demo_bubbles` crops taking that path. Four crops
-   (`darkrays`, `nightmare`, `ray`, and `square`) change zero pixels because their masking
-   region failed that border check; `handwritten` separately changes zero pixels because zero
-   detector boxes were found. This contradicts ratified guidance and needs a proper
-   erratum/supersession entry, or a joint determination that the masker is failing regions
-   that should succeed.
-2. §16.13 item 8 (~line 2584) still says the §10.7(B)15 report is blocked and recorded as
-   BLOCKED. The report is now live and maintainer-measured, but the stale statement has no
-   supersession marker pointing to the correction.
-
-### Known minor follow-ups (not blocking)
-
-1. **MEDIUM-2:** The report does not explain the attrition from 9 detector boxes to 8 masking
-   regions; specifically, `darkrays` has 2 boxes but 1 masking region.
-2. **MEDIUM-3:** The in-code SPEC AMBIGUITY comment about §10.6's “no model runs in CI” wording
-   versus this implementation's live ONNX requirement is not yet reflected in this HANDOVER
-   escalation section.
-3. **LOW-1:** The downgrade warning says “will replace” after replacement has already occurred,
-   and does not mention that no backup is created.
-4. **LOW-2/LOW-3:** The generated report has a doubled period in the black/spikey shortfall
-   notes, and emits the shortfall-attribution sentence whenever a region succeeds without
-   checking whether an actual shortfall exists.
-5. **LOW-4/LOW-5:** There are minor test-quality issues in the rename guard and the formatting
-   test's synthetic state; these are logged without individual write-ups.
+- Both ratifications this session went through **3-4 fresh-reader review rounds each**
+  before landing clean — this is normal for this project's pipeline, not a sign anything
+  was unusually wrong. The recurring defect class was almost entirely: a number or count in
+  corrective prose that was itself miscounted, or a claim whose grounding array/data source
+  was misidentified. Every one of these was caught by an independent fresh-reader re-deriving
+  the number from source rather than trusting the prior draft — keep doing that.
+- Two genuinely useful debugging techniques from this session, worth reusing: (1) when a
+  background agent's status looks stuck, check `git diff --stat` in the actual worktree for
+  real file-level progress rather than trusting a status field alone (this project's own
+  cookbook rule 6-adjacent principle, applied to agent monitoring); (2) when Codex's sandbox
+  behaves unexpectedly, check `icacls` on the target directory against a known-working one
+  before assuming it's a code/prompt problem.
