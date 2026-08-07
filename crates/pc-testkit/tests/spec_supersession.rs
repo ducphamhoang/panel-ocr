@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 38;
+const EXPECTED_PARSED_CLAIMS: usize = 39;
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -215,6 +215,44 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // `("16.38", "6")` row's non-load-bearing back-pointer, accepted for the same reason.
     ("16.38", "16.10 item 1"),
     ("16.38", "13"),
+    // §16.38 item 22's single marker (the L6 mask-precedence correction), taking this section
+    // from eleven markers to twelve and EXPECTED_PARSED_CLAIMS from 38 to 39.
+    //
+    // **This is the file's first SELF-referential row: host and target are the same section.**
+    // §16.38 item 22 corrects §16.38 item 12(a) — an entry amending its own earlier item rather
+    // than an older section's. Layer A handles it without special-casing (`marker_claims` never
+    // compares host to target), and `target_span` resolves `16.38 item 12` through the ordinary
+    // `^N. ` item outline, so the back-pointer must sit inside item 12's own span and a pointer
+    // parked in item 11 or item 13 would not satisfy it.
+    //
+    // Two consequences of the self-reference worth stating, because neither is obvious:
+    //
+    //   1. **Layer B cannot see this claim at all**, in either direction. `prose_claims` drops
+    //      any candidate whose `target_version >= host_version`, and here they are EQUAL — so a
+    //      future editor who rewrites this correction in prose instead of the marker form would
+    //      NOT trip `prose_form_claims_match_the_recorded_pre_convention_set`. For same-section
+    //      claims the prose tripwire is inert, and Layer A is the only thing enforcing the
+    //      convention. That is a gap in the tripwire's coverage, disclosed rather than closed:
+    //      relaxing the direction filter to admit equal versions would re-open the false-positive
+    //      class the filter exists to suppress (every back-pointer inside §16.38 that names
+    //      §16.38 would become a "claim").
+    //
+    //   2. **It IS load-bearing today**, and the count is stated precisely rather than rounded:
+    //      §16.38 item 12's span carries exactly one line mentioning §16.38 — the
+    //      `SUPERSEDED IN PART by §16.38 item 22` back-pointer added with item 22 — and that line
+    //      carries exactly one `§16.38` token. Deleting the line turns
+    //      `every_supersession_marker_has_a_back_pointer_at_its_target` red. Unlike the
+    //      `("16.38", "16.10 item 1")` row above, there is no second token on the line to keep the
+    //      gate green after a partial deletion. That is a fact about item 12's current text, not a
+    //      property of this row: any later edit adding another `§16.38` citation anywhere inside
+    //      item 12's span would quietly make this row non-load-bearing, exactly as the
+    //      `("16.38", "6")` row already is, and nothing here would notice.
+    //
+    // The marker declares the sub-item letter (`item 12(a)`), so `Claim::identity` keys this row
+    // as `16.24`-style lettered identities are keyed: the row below reads `12(a)`, while the
+    // resolved SPAN is item 12 whole (ratified §16.26 item 3(a)). If a later erratum against a
+    // different sub-item of item 12 is added, it gets its own row and losing either names which.
+    ("16.38", "16.38 item 12(a)"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
