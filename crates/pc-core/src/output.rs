@@ -1,6 +1,7 @@
-//! spec §2.8 — `Step` / `Output`, mirroring upstream `output_structures.py` minus
-//! inpainting. `cache_suffix` values are upstream's file suffixes VERBATIM so a user
-//! can diff our cache against upstream's during parity work.
+//! spec §2.8 / §16.38 item 11 — `Step` mirrors pipeline order including inpainting;
+//! `Output` retains the closed upstream-derived 13-artifact set without the two
+//! pipeline-local inpainting artifacts. `cache_suffix` values are upstream's file suffixes
+//! VERBATIM so a user can diff our cache against upstream's during parity work.
 
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +12,7 @@ pub enum Step {
     Preprocess,
     Mask,
     Denoise,
+    Inpaint,
     Export,
 }
 
@@ -22,7 +24,8 @@ impl Step {
             Step::Preprocess => Some(Step::Detect),
             Step::Mask => Some(Step::Preprocess),
             Step::Denoise => Some(Step::Mask),
-            Step::Export => Some(Step::Denoise),
+            Step::Inpaint => Some(Step::Denoise),
+            Step::Export => Some(Step::Inpaint),
         }
     }
 }

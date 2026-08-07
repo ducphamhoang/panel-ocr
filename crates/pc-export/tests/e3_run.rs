@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 #[test]
 fn the_stage_impl_is_wired_to_step_export() {
     assert_eq!(ExportStage::STEP, Step::Export);
-    assert_eq!(Step::Export.prev(), Some(Step::Denoise));
+    assert_eq!(Step::Export.prev(), Some(Step::Inpaint));
     // §2.8: no `Output` variant maps to `Step::Export` -- export writes user-facing
     // files, not cache artifacts. §16.11 item 2 exists precisely because of this.
     assert!(pc_core::Output::ALL
