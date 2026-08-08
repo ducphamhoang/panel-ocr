@@ -358,7 +358,7 @@ fn enum_spellings_are_snake_case() {
 // accept it.
 fn annotation_refine_mode_loads_successfully() {
     let doc = ProfileDocument::parse("[text_detector]\nmask_refine_mode = \"annotation\"\n")
-        .expect("config accepts annotation; pc-detect is what rejects it");
+        .expect("config accepts annotation as an opt-in refinement mode");
     assert_eq!(
         doc.profile().text_detector.mask_refine_mode,
         MaskRefineMode::Annotation

@@ -89,6 +89,28 @@ pub fn resize_bilinear(image: &GrayImage, new_w: u32, new_h: u32) -> GrayImage {
     })
 }
 
+pub(crate) fn prepare_mask(
+    mask: &GrayImage,
+    geometry: &LetterboxGeometry,
+) -> Result<GrayImage, StageError> {
+    if !geometry.dw.is_finite()
+        || !geometry.dh.is_finite()
+        || geometry.dw < 0.0
+        || geometry.dh < 0.0
+    {
+        return Err(StageError::InvalidInput(
+            "letterbox padding must be finite and non-negative".into(),
+        ));
+    }
+
+    let cropped = crop_letterbox(mask, geometry.dw as u32, geometry.dh as u32)?;
+    Ok(resize_bilinear(
+        &cropped,
+        geometry.image_size.0,
+        geometry.image_size.1,
+    ))
+}
+
 /// Dilation with an L1 (diamond) structuring element: output `p` is the maximum over
 /// all `q` with `|dx| + |dy| <= radius`. spec §8.3 step 5, refinement step 4.
 pub fn dilate_l1(mask: &GrayImage, radius: u32) -> GrayImage {
@@ -147,48 +169,39 @@ pub fn rasterize_union(rects: &[Rect], size: (u32, u32)) -> GrayImage {
 ///
 /// With no blocks the refined mask is all-zero.
 ///
-/// DEVIATION(12): v1 ships this "Simple" refinement instead of upstream's
-/// `refine_mask`/`refine_undetected_mask` (top-k grey/Otsu masks + XOR-minimising merge +
-/// hole filling). Decided in §15.2; `MaskRefineMode::Annotation` is the v1.5 door for a
-/// full port.
+/// `Simple` is koharu's refinement algorithm; the default-value divergence from
+/// upstream is recorded by `DEVIATION(12)` on `MaskRefineMode::Simple`.
 pub fn refine_simple(
     mask: &GrayImage,
     geometry: &LetterboxGeometry,
     blocks: &[RawBlock],
 ) -> Result<GrayImage, StageError> {
-    if !geometry.dw.is_finite()
-        || !geometry.dh.is_finite()
-        || geometry.dw < 0.0
-        || geometry.dh < 0.0
-    {
-        return Err(StageError::InvalidInput(
-            "letterbox padding must be finite and non-negative".into(),
-        ));
-    }
+    let prepared = prepare_mask(mask, geometry)?;
+    refine_simple_prepared(&prepared, geometry.image_size, blocks)
+}
 
-    let cropped = crop_letterbox(mask, geometry.dw as u32, geometry.dh as u32)?;
-    let resized = resize_bilinear(&cropped, geometry.image_size.0, geometry.image_size.1);
+pub(crate) fn refine_simple_prepared(
+    resized: &GrayImage,
+    image_size: (u32, u32),
+    blocks: &[RawBlock],
+) -> Result<GrayImage, StageError> {
     let expanded = blocks
         .iter()
-        .map(|block| block.rect.pad(REFINE_EXPAND, geometry.image_size))
+        .map(|block| block.rect.pad(REFINE_EXPAND, image_size))
         .collect::<Vec<_>>();
-    let in_bounds = rasterize_union(&expanded, geometry.image_size);
-    let base = GrayImage::from_fn(geometry.image_size.0, geometry.image_size.1, |x, y| {
+    let in_bounds = rasterize_union(&expanded, image_size);
+    let base = GrayImage::from_fn(image_size.0, image_size.1, |x, y| {
         let inside = in_bounds.get_pixel(x, y).0[0] != 0;
         let above_threshold = resized.get_pixel(x, y).0[0] > REFINE_THRESHOLD;
         Luma([if inside && above_threshold { 255 } else { 0 }])
     });
     let dilated = dilate_l1(&base, REFINE_DILATE_RADIUS);
 
-    Ok(GrayImage::from_fn(
-        geometry.image_size.0,
-        geometry.image_size.1,
-        |x, y| {
-            if in_bounds.get_pixel(x, y).0[0] != 0 {
-                *dilated.get_pixel(x, y)
-            } else {
-                Luma([0])
-            }
-        },
-    ))
+    Ok(GrayImage::from_fn(image_size.0, image_size.1, |x, y| {
+        if in_bounds.get_pixel(x, y).0[0] != 0 {
+            *dilated.get_pixel(x, y)
+        } else {
+            Luma([0])
+        }
+    }))
 }

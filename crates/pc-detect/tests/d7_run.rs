@@ -7,7 +7,7 @@ use common::{
     COVERED_RECT, REPLAY_SIZE, UNCOVERED_RECT,
 };
 use image::{GrayImage, Luma};
-use pc_config::{MaskRefineMode, TextDetectorConfig};
+use pc_config::TextDetectorConfig;
 use pc_core::{Language, Rect, Stage, StageError};
 use pc_detect::{DetectStage, MockDetector, ReplayDetector, TextDetector};
 use std::path::{Path, PathBuf};
@@ -190,27 +190,6 @@ fn run_maps_class_index_to_language_per_block() {
             .map(|block| block.language)
             .collect::<Vec<_>>(),
         vec![Some(Language::English), Some(Language::Japanese), None]
-    );
-}
-
-#[test]
-fn run_rejects_annotation_refine_mode() {
-    // spec §16.5 item 3 / §15.2: config accepts `annotation`, the stage rejects it --
-    // and must do so BEFORE paying for inference.
-    let detector = MockDetector::new().with_blocks(synthetic_blocks());
-    let mut input = memory_input(synthetic_page(REPLAY_SIZE.0, REPLAY_SIZE.1));
-    input.config = TextDetectorConfig {
-        mask_refine_mode: MaskRefineMode::Annotation,
-        ..TextDetectorConfig::default()
-    };
-
-    let error = pc_detect::run(input, &detector).expect_err("annotation mode is v1.5");
-
-    assert!(matches!(error, StageError::InvalidInput(_)));
-    assert_eq!(
-        detector.calls(),
-        0,
-        "must fail before invoking the detector"
     );
 }
 

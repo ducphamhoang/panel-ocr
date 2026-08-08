@@ -26,7 +26,7 @@ pub struct DetectInput {
     pub raw_mask_dest: Option<PathBuf>,
     /// §8.3 step 6; [`crate::DEFAULT_MIN_MASK_COVERAGE`] in v1.
     pub min_mask_coverage: f32,
-    /// spec §16.6 item 1: required so the stage can reject
+    /// spec §16.6 item 1: required because the stage selects the refinement path
     /// `MaskRefineMode::Annotation` (§16.5 item 3), and consistent with §3's
     /// "config by value inside the Input" rule.
     pub config: TextDetectorConfig,

@@ -205,12 +205,14 @@ impl TextDetectorConfig {
     }
 }
 
-/// spec §8.3 step 5 / §15.2. Only `Simple` is implemented in v1; `Annotation` is
-/// accepted by config (spec §16.5 item 3) and rejected by `pc-detect` with
-/// `StageError::InvalidInput`.
+/// spec §8.3 step 5 / §15.2. Simple remains the shipped default; `Annotation` is
+/// accepted by config and opts into upstream refinement. The default remains a deliberate divergence from upstream's
+/// unconditional refinement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MaskRefineMode {
+    /// DEVIATION(12): the shipped default is `Simple`; parity is reachable only by opting in
+    /// with `mask_refine_mode = "annotation"`.
     #[default]
     Simple,
     Annotation,
