@@ -62,8 +62,7 @@
 //! runs on a constructed input, and each constructed input was executed through `cv2` before
 //! its expected value was written down.
 //!
-//! **Scope.** A2 is *not* Annotation mode. `pc_detect::run` still rejects
-//! `MaskRefineMode::Annotation` and `d7_run.rs::run_rejects_annotation_refine_mode` still
+//! **Scope.** A2 covers Annotation primitives; run wiring is A4. The A4-a integration gate
 //! passes; connected components, the merge loop and hole filling are A3, wiring is A4.
 //! Nothing here asserts anything about `MaskRefineMode::Simple`.
 

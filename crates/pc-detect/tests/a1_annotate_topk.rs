@@ -16,8 +16,7 @@
 //!     (`"opencv": "5.0.0"`; `numpy` there is `2.5.1`, the run used 2.2.5 -- see the note
 //!     on [`histogram_255_matches_numpy_on_the_documented_corner_cases`]).
 //!
-//! **Scope.** A1 is *not* Annotation mode. `pc_detect::run` still rejects
-//! `MaskRefineMode::Annotation` and `d7_run.rs::run_rejects_annotation_refine_mode` still
+//! **Scope.** A1 covers Annotation primitives; run wiring is A4. The A4-a integration gate
 //! passes; Otsu and the XOR-minimising selection are A2, connected components / merge /
 //! hole filling are A3, wiring is A4. Nothing in this file asserts anything about
 //! `MaskRefineMode::Simple`, whose behaviour §16.37 leaves untouched.

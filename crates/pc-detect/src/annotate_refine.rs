@@ -4,10 +4,10 @@
 //! `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`): `refine_mask` at `:195-212` and
 //! `refine_undetected_mask` at `:161-192`, plus `imgproc_utils.py::union_area` at `:15-22`.
 //!
-//! **This module is not wired into anything.** `pc_detect::run` still rejects
-//! `MaskRefineMode::Annotation` and `d7_run.rs::run_rejects_annotation_refine_mode` still
+//! This module supplies Annotation page-level refinement used by `pc_detect::run` (A4-a).
+//! The A4-a integration gate
 //! passes. Wiring is **A4**, together with the config gate, §16.37 item 6's coverage decision,
-//! item 7's clause amendments and the `DEVIATION(12)` retirement. None of that is here.
+//! item 7's clause amendments and the `DEVIATION(12)` narrowing. None of that is here.
 //!
 //! **Why a third file rather than more lines in [`crate::annotate`].** §14 items 23 and 24 and
 //! §16.37 items 2 and 10 cite six live line numbers inside `annotate.rs`; growing that file

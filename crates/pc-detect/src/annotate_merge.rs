@@ -11,15 +11,14 @@
 //! functions are used here by path, so the family stays in one crate directory with no
 //! line-number churn.
 //!
-//! **This module is not wired into anything.** `pc_detect::run` still rejects
-//! `MaskRefineMode::Annotation` and `d7_run.rs::run_rejects_annotation_refine_mode` still
-//! passes. **Corrected 2026-08-07 by spec §16.37 item 11:** this sentence read *"Wiring --
+//! This module supplies Annotation merge primitives used by `pc_detect::run` (A4-a).
+//! **Corrected 2026-08-07 by spec §16.37 item 11:** this sentence read *"Wiring --
 //! upstream's `refine_mask` per-block driver, the config gate, and §16.37 item 6's coverage
 //! decision -- is task A4"*, which assigned the per-block driver to the wrong task. The driver
 //! belongs to **A3b**, together with `refine_undetected_mask` -- it is numerical work with an
 //! upstream oracle, and `refine_undetected_mask` calls into it recursively, so it cannot wait
 //! for A4's integration pass. **A4** is the config gate, §16.37 item 6's coverage decision,
-//! item 7's clause amendments and the `DEVIATION(12)` retirement.
+//! item 7's clause amendments and the `DEVIATION(12)` narrowing.
 //!
 //! What A3 covers, in upstream's own order inside `merge_mask_list`:
 //!   1. [`sort_candidates_by_xor_sum`] -- `mask_list.sort(key=lambda x: x[1])` (`:92`), the

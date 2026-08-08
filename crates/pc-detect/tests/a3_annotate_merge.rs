@@ -57,15 +57,14 @@
 //! `pred` accepts every component either way. So at unit level that mutation was caught only by
 //! the two recorded-page tests until the 22nd fixture landed.
 //!
-//! **Scope, corrected 2026-08-07 by spec §16.37 item 11.** A3 is *not* Annotation mode.
-//! `pc_detect::run` still rejects `MaskRefineMode::Annotation` and
-//! `d7_run.rs::run_rejects_annotation_refine_mode` still passes. This paragraph read *"upstream's
+//! **Scope, corrected 2026-08-07 by spec §16.37 item 11.** A3 covers Annotation primitives; run wiring is A4.
+//! This paragraph read *"upstream's
 //! `refine_mask` per-block driver, the config gate and §16.37 item 6's coverage decision are A4.
 //! Upstream's `refine_undetected_mask` is named by **no** task in §16.37 item 8 and nothing here
 //! covers it."* Both halves are now out of date: the per-block driver **and**
 //! `refine_undetected_mask` belong to task **A3b** (§16.37 item 11, ratified 2026-08-07, and it
 //! was exactly this file's "named by no task" observation that surfaced the gap), while A4 keeps
-//! the config gate, item 6's coverage decision and the `DEVIATION(12)` retirement. What is
+//! the config gate, item 6's coverage decision and the `DEVIATION(12)` narrowing. What is
 //! unchanged is the operative half: **nothing in this file covers either function**. Nothing here
 //! asserts anything about `MaskRefineMode::Simple`.
 

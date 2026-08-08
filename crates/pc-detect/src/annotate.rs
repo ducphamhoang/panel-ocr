@@ -4,10 +4,9 @@
 //! `imgproc_utils.py::expand_textwindow` (pinned commit
 //! `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`).
 //!
-//! **This module is not wired into anything.** `pc_detect::run` still rejects
-//! `MaskRefineMode::Annotation` (§16.37's preamble: *"Nothing here asserts that
-//! `Annotation` mode works, or exists."*). Wiring is task A4; connected components, the
-//! merge loop and hole filling are task A3. Neither is implemented here.
+//! This module supplies Annotation primitives used by `pc_detect::run` (A4-a). Wiring is
+//! task A4; connected components, the merge loop and hole filling are task A3. Neither is
+//! implemented here.
 //!
 //! What A1 covers, in upstream's own order inside `get_topk_masklist`:
 //!   1. [`expand_text_window`] -- the crop window (§16.37 item 5's corrected divisor

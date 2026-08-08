@@ -17,7 +17,7 @@ model_path                   = ""        # empty = use managed cache
 concurrent_models            = 1
 intra_threads                = 0         # 0 = let ONNX Runtime choose
 inter_threads                = 0         # 0 = let ONNX Runtime choose
-mask_refine_mode             = "simple"  # simple | annotation ("annotation" is rejected by pc-detect in v1: §8.3 step 5 / §15.2)
+mask_refine_mode             = "simple"  # simple | annotation (Annotation is opt-in; Simple remains the default)
 
 [preprocessor]
 box_min_size                 = 400       # 20*20
