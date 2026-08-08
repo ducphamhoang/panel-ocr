@@ -102,12 +102,17 @@ pub fn run_clean(args: CleanArgs) -> Result<i32> {
     } else {
         None
     };
+    let inpainting_enabled = setup::effective_inpainting_enabled(&args, &profile);
+    let inpainter = inpainter::build_provider(inpainting_enabled, None, &cache_root, device);
+    let mut profile = profile;
+    profile.inpainter.inpainting_enabled = inpainting_enabled;
     let options = setup::build_clean_options(&args, profile, images.len(), &cache_root);
     run_pipeline(
         &images,
         options,
         provider.as_ref(),
         ocr_factory.as_deref(),
+        inpainter.as_deref(),
         !args.hide_analytics,
     )
 }
@@ -333,6 +338,7 @@ fn run_pipeline(
     options: PipelineOptions,
     provider: &dyn pc_pipeline::DetectorProvider,
     ocr: Option<&dyn pc_ocr::OcrEngineFactory>,
+    inpainter: Option<&dyn pc_pipeline::InpainterProvider>,
     show_analytics: bool,
 ) -> Result<i32> {
     if options.checkpointing == Checkpointing::Disk {
@@ -351,6 +357,9 @@ fn run_pipeline(
     let mut ctx = PipelineCtx::new(provider);
     if let Some(ocr) = ocr {
         ctx = ctx.with_ocr(ocr);
+    }
+    if let Some(inpainter) = inpainter {
+        ctx = ctx.with_inpainter(inpainter);
     }
     let summary = pc_pipeline::run_batch(images, &options, &ctx);
     if let Some(bar) = progress {

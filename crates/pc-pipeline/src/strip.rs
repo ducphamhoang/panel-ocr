@@ -173,7 +173,12 @@ pub fn merged_strip_export(
             first_segment.display()
         ))
     })?;
-    let cache = CachePaths::from_existing(first_segment, cache_dir)?;
+    let cache = CachePaths::discover(cache_dir, &manifest.original)?.ok_or_else(|| {
+        StageError::InvalidInput(format!(
+            "cannot discover original strip cache for `{}`",
+            manifest.original.display()
+        ))
+    })?;
     let requested = options.requested_outputs();
 
     let sources = ExportSources {
@@ -197,8 +202,16 @@ pub fn merged_strip_export(
             manifest.image_size,
             "cleaned",
         )?,
-        // §16.38 item 25(a): merged-strip inpainting policy is deferred; do not stitch it.
-        inpainted: None,
+        inpainted: stitch_requested(
+            &requested,
+            &[Output::MaskedOutput, Output::DenoisedOutput],
+            segment_sources
+                .iter()
+                .map(|sources| sources.inpainted.as_ref()),
+            cache.for_suffix(crate::single::CLEAN_INPAINT_SUFFIX),
+            manifest.image_size,
+            "inpainted",
+        )?,
         final_mask: stitch_requested(
             &requested,
             &[Output::FinalMask, Output::DenoiseMask],
@@ -219,8 +232,16 @@ pub fn merged_strip_export(
             manifest.image_size,
             "mask",
         )?,
-        // §16.38 item 25(a): merged-strip inpainting policy is deferred; do not stitch it.
-        inpainted_mask: None,
+        inpainted_mask: stitch_requested(
+            &requested,
+            &[Output::FinalMask, Output::DenoiseMask],
+            segment_sources
+                .iter()
+                .map(|sources| sources.inpainted_mask.as_ref()),
+            cache.for_suffix(crate::single::INPAINTING_SUFFIX),
+            manifest.image_size,
+            "inpainted mask",
+        )?,
         isolated_text: stitch_requested(
             &requested,
             &[Output::IsolatedText],

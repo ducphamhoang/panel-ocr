@@ -34,30 +34,9 @@ pub const INPAINT_ONNX_UNAVAILABLE: &str = "LaMa inpainting is not available in 
 `[inpainter].inpainting_enabled` is not linked in). Rebuild with `--features onnx`, or set \
 `inpainting_enabled = false` under `[inpainter]` in your profile.";
 
-/// A source of the run's single [`Inpainter`].
-///
-/// Deliberately a trait even though L5 has one real implementation and one refusing one: L6
-/// hands this to the pipeline, and the boundary is what keeps `--skip-inpaint` and the
-/// no-`onnx` build from needing two different call sites.
-pub trait InpainterProvider: Send + Sync {
-    /// The run's inpainter, built at most once (§16.38 item 8(d)).
-    fn inpainter(&self) -> Result<Arc<dyn Inpainter>, StageError>;
+pub use pc_pipeline::InpainterProvider;
 
-    /// **Fatality is declared, not inferred** (cookbook rule 4; §16.38 item 9(g) declares
-    /// both halves of this stage's split).
-    ///
-    /// `true` for every implementation here, and the reason is item 9(c) rather than item
-    /// 9(b): construction takes no image, which only *licences* the classification, while
-    /// what chooses it is that `Step::Inpaint` sits before `Step::Export`, so a per-image
-    /// `Failed { step: Inpaint }` suppresses that page's export anyway — *"The outcome is the
-    /// same zero exported files as run-fatal, at the cost of N error lines instead of one, N
-    /// provisioning attempts instead of one, and exit 2 instead of 1."*
-    ///
-    /// This says nothing about failures **inside** [`Inpainter::inpaint_tile`], which receive
-    /// the image and are per-image `StageError::Inference` (item 9(g)).
-    fn failures_are_run_fatal(&self) -> bool;
-}
-
+/// Production providers retained in this module; the trait is pipeline-owned.
 /// The provider for a build without the `onnx` feature, and for a run whose model could never
 /// be reached. Refuses on first use rather than at construction, so a run that never reaches
 /// an eligible region never sees the message (§16.38 item 8(c)).

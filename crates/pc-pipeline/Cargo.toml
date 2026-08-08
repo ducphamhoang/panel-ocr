@@ -20,6 +20,7 @@ pc-ocr        = { path = "../pc-ocr" }
 pc-mask       = { path = "../pc-mask" }
 pc-denoise    = { path = "../pc-denoise" }
 pc-export     = { path = "../pc-export" }
+pc-inpaint    = { path = "../pc-inpaint" }
 
 image      = { workspace = true }
 # §4.5: per-image parallelism, in the pipeline's own thread pool (§16.12 item 17).

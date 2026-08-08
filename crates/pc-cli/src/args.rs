@@ -83,6 +83,11 @@ pub struct CleanArgs {
     #[arg(long)]
     pub skip_denoise: bool,
 
+    /// Disable inpainting entirely (spec §16.38 item 16(e) — this one is *disable*, not
+    /// *load from cache*).
+    #[arg(long)]
+    pub skip_inpaint: bool,
+
     /// Write only the cleaned image.
     #[arg(long, group = "save_only")]
     pub save_only_cleaned: bool,
