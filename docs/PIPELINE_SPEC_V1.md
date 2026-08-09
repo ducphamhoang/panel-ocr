@@ -8357,6 +8357,300 @@ output first. This entry transcribes that convergence.
    ticket" as item 3, but its own, later-numbered ratification) as unhoisted; this
    entry cashes in that ticket per items 1–9 above.
 
+## 16.43 `cargo xtask mode-bench`: the Simple/Annotation/LaMa non-gating comparison benchmark (task #16/#6, 2026-08-09)
+
+**Provenance.** Two independent joint architect + Senior Rust Engineer planning passes
+designed this benchmark from the same brief, without one reading the other's output
+first. They converged on the non-gating nature, on reusing `pc_testkit::GoldenReport`
+as the metric, on computing eligibility for every cell (not only the LaMa one), on
+individually blocking a LaMa cell rather than aborting the whole report when its model
+is unavailable, on `DevicePolicy::report()` (not `provenance_execution_provider()`) as
+the disclosure primitive, on `--device cuda` hard-refusing rather than silently
+falling back to CPU, and on splitting the Simple/Annotation measurement work from the
+LaMa integration work into two separate heavy implementation calls. They disagreed on
+four concrete points (labelled D1–D4 below); per this project's disagreement rule, the
+Orchestrator did not pick a side — `fable-adjudicator` was convened as tie-breaker.
+Separately, the architect flagged one further open ambiguity (labelled D5) that the
+rust-engineer's design did not address at all — not a disagreement between the two
+passes, so this project's disagreement rule does not on its own reach it, but a
+question that still needed resolving before either design could be transcribed as one
+coherent entry. The Orchestrator included D5 in the same Fable dispatch for that
+reason, and item 7 below states this distinction explicitly rather than letting it
+blend into the four genuine disagreements. This entry transcribes that ruling, item by
+item, quoting Fable's own reasoning rather than paraphrasing it.
+
+1. **What this is.** A new `xtask` subcommand, `mode-bench`, that runs the masking
+   stage under each of several *(mask mode, inpainting)* combinations against the same
+   input and produces a comparison report (working filename `docs/MODE_COMPARISON.md`;
+   item 11 below leaves the exact name to the implementation plan, not fixed here).
+   **The tool itself does not gate CI or block any merge** — this is the same
+   non-gating status as `cargo xtask calibrate-goldens` (F2, §7.3) and `cargo xtask
+   mask-sweep` (T3, §16.35). This is separate from item 10's binding sequencing
+   requirement, which is about a CI-runnable **test of the tool's own `--replay`
+   contract** (ordinary red-first TDD on the tool's code) — that test gates the
+   workspace test suite the way any other test does; it is the *benchmark's report*,
+   not the tool's own test coverage, that is non-gating.
+
+2. **Two premises in the original task brief were factually wrong, and both
+   independent passes corrected them identically before designing anything — this is
+   convergence, not something either side argued for:**
+
+   (a) **LaMa is not a peer mode of Simple and Annotation; it is a stage that composes
+   with whichever mask mode ran.** `pc_pipeline::run_inpaint` consumes
+   `mask_data.regions` and `mask_data.combined_mask`, whichever mode produced them, and
+   for every `failed` region the LaMa fill source is that mode's own raw mask
+   (`crates/pc-inpaint/src/eligible.rs:16-24`, which documents that DEVIATION(12)
+   propagates into this consumer at measured IoU 0.258). The design space is
+   therefore *(mask mode) × (inpainting on/off)*, not three independent peers.
+
+   (b) **GPU execution is not merely unused in this build — it is unreachable.**
+   `DeviceSupport::compiled()` is unconditionally `CPU_ONLY`
+   (`crates/pc-core/src/device.rs:43-45`), and no `cuda` Cargo feature exists anywhere
+   in the workspace (`grep -rn cuda --include=Cargo.toml .` returns zero hits). §16.36
+   item 7 hands `compiled()`'s conditionality to the unshipped GPU-2. A benchmark
+   design that assumed a working `--device cuda` path today would be designing for a
+   capability that does not exist; §16.36 item 5's already-ratified rule — *"`xtask
+   bench` builds a session but writes only to scratch … → report the resolved device,
+   not refuse"* — was read as governing the case where GPU-2 eventually lands, and the
+   present-day behavior is a hard refusal via `pc_core::device::resolve`'s own message,
+   never a silent CPU fallback. **Scope:** this reading applies to mode-bench's own
+   `--device` handling only; it does not amend §16.36 item 5 itself, and it does not
+   decide how any other `xtask` subcommand should behave once GPU-2 lands.
+
+3. **D1 — Cell/arm space: four cells, with the brief's three as the default subset
+   (architect's design wins).** Fable's ruling, quoted: *"The interaction is real and
+   I verified it at the file the architect cited: for every `failed` region the LaMa
+   fill source is the raw mask the active `MaskRefineMode` produced ... `Annotation+LaMa`
+   is therefore a materially distinct configuration, not a redundant cross-term. The
+   rust-engineer's isolation goal ('hold mask mode fixed to isolate inpainting') is
+   fully preserved by the architect's default cell set — Simple, Annotation,
+   Simple+LaMa varies one factor at a time — and the fourth cell costs one accepted
+   value in the `--cells` parser, no new machinery."* **Scope, quoted:** *"This decides
+   the accepted value space and default of the cell selector. It does not decide that
+   any published report must run all four cells, and it does not decide the flag's
+   spelling."* The four accepted cells are Simple, Annotation, Simple+LaMa (default
+   set), plus Annotation+LaMa (reachable via `--cells`, not run by default).
+
+4. **D2 — Eligibility segmentation: three segments (architect's design wins), with a
+   captioning condition.** `pc_inpaint::select_regions` (`crates/pc-inpaint/src/eligible.rs:64-97`)
+   reads only `MaskRegionStats`, which every cell produces, so the segmentation is not
+   LaMa-specific — both passes agreed on this. They disagreed on how to segment across
+   cells whose eligible sets differ. Fable's ruling, quoted: *"The gate predicate is
+   mode-dependent: Annotation changes the raw mask and the block set ... which changes
+   which regions fail, which changes `select_regions`' output. Under the
+   rust-engineer's Simple-defined gate, a page that is Simple-eligible but
+   Annotation-ineligible would contribute an Annotation-cell row whose 'inpainted'
+   output is actually the bare masking output ... compared against a genuinely
+   inpainted Simple-cell row, inside a segment whose caption claims comparability.
+   That is the different-populations bug, hidden."* The three segments, binding:
+
+   - **Full population** — every input row, every cell run. Cross-cell comparable by
+     construction (every cell reports on every page, whether or not that page was
+     eligible for that cell) — a full-population cross-cell mean **is** permitted,
+     since no eligibility conditioning applies to it at all; nothing in Fable's quoted
+     grounds above excludes this segment, only the eligibility-conditioned ones below.
+   - **Per-cell eligible subset** — each cell's own `{page : eligible_regions > 0}`,
+     printed per cell. **Caption requirement (the transcription's own operational
+     wording, not a quote from Fable's ruling):** each per-cell subset's table must be
+     labelled "not cross-comparable", since Fable's ruling establishes *why* these
+     sets are not comparable across cells without dictating exact caption text.
+   - **Common-eligible intersection** — the intersection of the eligible sets over
+     whichever cells were actually run in that invocation. This is the only
+     *eligibility-restricted* segment a cross-cell mean may be computed over — i.e.
+     the per-cell eligible subsets above may not be averaged across cells, but the
+     full population's unconditioned mean is unaffected by this restriction. If the
+     intersection is empty, the report states that and prints no mean, rather than a
+     mean over zero rows.
+
+   **Binding condition (Fable's graft, resolving the rust-engineer's one legitimate
+   objection — re-segmentation instability across runs with different cell sets):**
+   *"the intersection segment's caption must name the cell set it was intersected
+   over, so that adding a cell in a later run visibly re-segments rather than
+   silently."* **Scope, quoted:** *"This decides mode-bench's report segmentation
+   only. It does not define 'eligibility' anywhere else, and it does not touch
+   `select_regions` or its defaults."*
+
+5. **D3 — LaMa model acquisition and provider path: `xtask` depends on `pc-cli` and
+   reuses `pc_cli::inpainter` (rust-engineer's design wins).** Fable's ruling, quoted:
+   *"The provider in `pc-cli/src/inpainter.rs` carries three ratified behaviours ... (i)
+   §16.38 item 19(b)'s runtime digest verification — with the non-obvious split that a
+   cached artifact is hashed and an explicit override path is existence-checked, not
+   hashed ('the user's own artifact'); (ii) item 19(g)'s missing-model message naming
+   the `--include-optional` command; (iii) item 8(d)'s latch with the poison-tolerant
+   mutex and image-independent run-fatal classification. The architect's ... scope
+   line — 'model resolve + sha256' — is a re-implementation of (i), and would almost
+   certainly get the override-path split wrong or different, creating a second
+   model-acquisition mechanism with divergent semantics."* **Citation note added
+   2026-08-09 during step-1a review: (iii)'s two behaviours are not both at item
+   8(d).** Item 8(d) covers only the latch mechanism itself (the `OnceLock` behind a
+   double-checked `Mutex`); the poison-tolerant handling is in code
+   (`crates/pc-cli/src/inpainter.rs:221`, `PoisonError::into_inner`) rather than named
+   in 8(d)'s text, and the run-fatal classification is ratified separately at §16.38
+   item 9 (9(b)/9(c)/9(g)). All three behaviours were independently verified to exist
+   in `pc-cli/src/inpainter.rs` as described; only the section anchor was too narrow
+   for what it was made to cover. Fable independently
+   verified the dependency direction is safe before ruling: *"`pc-cli` has a lib
+   target; `pc-testkit` is dev-dep-only in `pc-cli`, so `xtask → pc-cli` adds no
+   `pc-testkit`-into-shipped-graph edge and no cycle; §16.13 item 2's 'nothing in
+   `pc-cli`'s dependency graph reaches [xtask]' is untouched (the edge points the
+   other way)."* (§16.13 item 2's own words are "reaches **it**", referring back to
+   `xtask` named earlier in that item's sentence; `[xtask]` above marks the
+   substitution rather than silently presenting it as verbatim.) **Scope, quoted:** *"This decides the LaMa model-acquisition and provider
+   path for mode-bench. It does not make `pc-cli` a general-purpose xtask dependency
+   for other subcommands, and it does not decide whether mode-bench also routes the
+   detector through `pc-cli` (both designs build the detector the way `calibrate.rs`
+   already does; that was not disputed and stays undecided here)."*
+
+6. **D4 — Device disclosure: one process-wide statement (architect's design wins),
+   with a mechanism-disclosure graft from the rust-engineer.** Fable's ruling, quoted:
+   *"§16.36 item 1 ... rules device is 'a single global choice, not a per-stage key',
+   and §16.22 item 5(f) forbids a second policy surface. mode-bench has one `--device`
+   flag and one compiled-support value; `resolve` is a pure function, so the two
+   sessions' policies are equal by construction, and printing the same `report()` text
+   twice under two per-session headings asserts an independence that does not exist —
+   inviting exactly the per-stage-divergence reading that §16.36 exists to make
+   structurally impossible."* Binding shape: state `DevicePolicy::report()` verbatim,
+   once; per-stage rows carry only the genuinely per-stage facts (model path, expected
+   sha256, digest-verified?, session constructed?, constructing function) and
+   cross-reference the single device statement. **Graft, quoted in full because it is
+   itself binding, not merely explanatory:** *"the detector's per-stage row must state
+   that its constructor takes no device argument at all — device reaches the detector
+   path only as an up-front refusal, never as a registration — and the inpainter's row
+   must state that its construction route (`from_path_for_device`) re-resolves the
+   same requested device through the same resolver. That is disclosure of mechanism,
+   not a second policy statement."* **Scope, quoted:** *"This decides mode-bench's
+   report layout for device disclosure. It does not amend §16.36, and it does not
+   decide anything about disclosure in `pc-cli`'s own output."*
+
+7. **D5 — Comparing against the vendored `demo_bubbles/*_clean.png` reference does
+   not violate §16.37 item 3 (reading "b" is correct); reference columns are
+   permitted, under disclosure conditions.** This was not a disagreement between the
+   two passes — the rust-engineer's design did not address the question and the
+   architect flagged it as an open ambiguity with two readings. Fable's ruling,
+   quoted in full because the textual argument is the load-bearing part: *"Item 3's
+   own sentence scopes itself: 'Any comparison against upstream is a non-gating
+   calibration report, the same downgrade §15.2 item 2 already applied to this
+   stage's parity claim … and that report must additionally pin the CPU feature set
+   it was produced under'. 'This stage' is the Annotation refinement; the pins exist
+   because §16.37 items 1 and 10's measured hazards (introsort tie order, IPP Otsu)
+   make a freshly produced upstream run irreproducible unless its environment is
+   pinned — the pin's object is the environment of the run that produces the
+   comparand. A vendored asset has no producing run to pin; the clause's mechanism
+   does not apply to it, and §15.2/§16.24 item 17 is the regime written for exactly
+   that asset class."* **Note on the §16.24 item 17 reference: that item's own text
+   holds narrower than this — it rules that using `_clean.png` as a *source image* is
+   not a §15.2 parity assertion, and closes by saying its rule "remains in force for
+   anything that compares our pipeline **output** to a `_clean.png`."** §16.43's own
+   binding conditions below (no pass/fail against `_clean.png`, ever) already honour
+   that narrower scope; a future reader must not cite item 17 as a general licence for
+   output-vs-`_clean.png` comparison beyond what §16.43 itself binds here. Fable
+   additionally verified a running precedent before ruling: *"`calibrate-goldens` has,
+   since F2 and under ratified §10.7(B)15/[§16.9 item 17],
+   compared our pipeline output to `_clean.png` non-gating with no CPU/IPP pins —
+   verified at `xtask/src/calibrate.rs:1053`. Reading (a) would retroactively put a
+   ratified, shipped report in violation; nothing in the spec makes that claim."*
+   **`[§16.9 item 17]` marks a correction to the original quoted text, not a verbatim
+   Fable citation: the original transcription said "§16.13 item 17", which does not
+   exist (§16.13 has only items 1–10, verified 2026-08-09 during step-1a review); the
+   actual ratifying clause is §16.9 item 17 — "§10.7(B)15's demo_bubbles calibration
+   report is produced by `cargo xtask calibrate-goldens` (F2), not by a `pc-mask`
+   test." The substance Fable verified was correct; only the section number was
+   wrong.** §7.3's own opening line is also directly on point and was not cited in
+   the original ruling: *"Upstream's `*_clean.png` images were produced by a specific
+   PanelCleaner version/profile we cannot fully verify."*
+
+   **Binding conditions, all three required, quoted:** *"the report states that the
+   reference's producing PanelCleaner version, profile and environment are unrecorded,
+   so §16.37 item 3's pins are unsatisfiable for the reference side and only the
+   ours-side numbers are reproducible; the reference column is headed as
+   agreement-with-reference, never 'quality' (a LaMa cell can be visually better
+   while further from a non-inpainted reference); and the verdict text never ranks
+   cells on distance-to-`_clean.png`. No pass/fail assertion against `_clean.png`,
+   ever — §15.2 stays fully in force."* **Scope, quoted:** *"This ruling covers
+   mode-bench's non-gating reference columns against `demo_bubbles/*_clean.png` only.
+   It does not weaken §16.37 item 3 for any comparison whose upstream side is freshly
+   produced — A5's calibration report still owes both pins exactly as written — and it
+   decides nothing about committing upstream fixtures (that remains A6's ruling,
+   §16.37 item 10(g))."*
+
+8. **What both passes independently agreed on, stated once here as binding since
+   neither side contested it:**
+
+   - The stage functions are invoked directly (`pc_detect::run` →
+     `pc_preprocess::run` → `pc_mask::run` → `pc_pipeline::run_inpaint`), not
+     `pc-cli`'s end-to-end `run_clean` — the latter drags in OCR, export precedence
+     and cache resolution, none of which this measures.
+   - The metric is the existing `pc_testkit::golden::GoldenReport`
+     (`compare_gray_with_shape` / `compare_gray`) — no new metric type.
+   - Eligibility (`pc_inpaint::select_regions`) is computed and reported for every
+     cell, LaMa or not, since the function reads only `MaskRegionStats`.
+   - A LaMa cell whose model is unavailable is recorded as **BLOCKED** with a reason
+     naming the acquisition remedy; every other cell in the run still reports. A
+     benchmark that produces no report because one optional ~207 MB model is absent
+     is a worse artifact than a report with one blocked column.
+   - `--device cuda` on a build that cannot provide it is a hard, non-zero-exit
+     refusal carrying `pc_core`'s own refusal message verbatim — never a silent
+     downgrade to CPU.
+   - Three input sources are supported: `--replay` (the committed detector fixture,
+     no model needed, CI-runnable, no reference), `--demo-bubbles` (the 7 vendored
+     crops, the only source with a reference, all crops measured under 512px on both
+     axes so every LaMa cell on this source is a single edge-replicated tile per
+     §16.38 item 5(c) (one centred window per merged rectangle that fits within 512)
+     and 5(d) (sub-512 pages are edge-replicated) and cannot evidence `DEVIATION(24)`'s
+     tiling behavior), and
+     `--pages DIR` (maintainer-local full pages, no reference, the only source that
+     reaches multi-tile LaMa).
+   - The report is generated in full by the tool and carries the same "do not
+     hand-edit" / non-gating banner convention as `docs/MASK_QUALITY_CALIBRATION.md`
+     and `docs/GOLDEN_CALIBRATION.md`.
+   - The report states plainly that it does not close §16.38 item 17(b) decision
+     point D2 (a side-by-side run of upstream and this port on a real page with a
+     human verdict, per §15.10(a)'s independence rule) — mode-bench compares this
+     port's own cells to each other and runs no upstream.
+
+9. **Classification for the plan.** Both passes independently split the work into: a
+   **simple** pure-layer task (cell/segment types, the report renderer, CLI arg
+   parsing, device-disclosure rendering — no stage calls, no I/O); a **heavy** task
+   for the Simple/Annotation measurement driver (the three input sources, the
+   detect→preprocess→mask sequence per cell, per-page/per-cell failure capture); and a
+   separate **heavy** task for the LaMa integration (the `pc-cli`-sourced provider per
+   item 5 above, `run_inpaint` wiring, the BLOCKED-cell path, the new `xtask`
+   dependency edges). The two heavy tasks are ratified as **two separate calls, not
+   one**, on convergent reasoning from both passes: they fail in shapes that mask each
+   other (a wrong number that still renders vs. a missing row entirely), they differ
+   in which cargo feature tier they run under (the Simple/Annotation driver runs in
+   the default no-`onnx` tier; the LaMa integration needs the `onnx` feature and a
+   real model artifact), and only the LaMa task edits `xtask/Cargo.toml` — a
+   dependency edit that fails to resolve would otherwise block the other task's own
+   tests from running at all. After the two heavy tasks land, a final **simple** task
+   adds the doc pointer and the first generated report.
+
+10. **Binding sequencing.** This ratification's pre-implementation test files —
+    including the CI-gateable process-level test asserting the `--replay` path's
+    contract — land **first, before either heavy task starts**, as ordinary red-first
+    TDD (this project's normal rule: tests are drafted and reviewed against the spec
+    before Codex writes implementation code). **Corrected 2026-08-09 during step-1a
+    review: the original transcription described this as "observed green before the
+    two heavy tasks start" and cited §16.42 item 9 as precedent — that is wrong on
+    both counts.** §16.42 item 9's pre-hoist tests could be green before its heavy
+    task started only because they exercised code that already existed (the
+    four-times-duplicated composite functions, pre-hoist). Here there is no existing
+    `mode-bench` implementation for a `--replay` process-level test to pass against —
+    the test is necessarily red until the Simple/Annotation measurement-driver task
+    implements the command it exercises. The test still belongs first in the
+    sequence, and it still needs no code from either heavy task to be *written* and
+    *reviewed against the spec* — that part of the original claim survives — but it is
+    a standard red-first anchor, not a pre-hoist-style green-first lock, and citing
+    §16.42 item 9 for it was a false analogy.
+
+11. **What this entry does not decide.** The exact output filename, flag spellings
+    (`--cells` vs. some other name), and the precise M-task numbering are left to the
+    implementation plan — neither disputed point named these, and both independent
+    task breakdowns agreed on the split that matters (see item 9). This entry also
+    does not amend §16.36, §16.37, §16.13, §15.2, or §16.24 — every quoted ruling
+    above states explicitly that its binding force is scoped to mode-bench's own
+    report, not to those sections' general rules.
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

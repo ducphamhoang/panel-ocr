@@ -349,16 +349,23 @@ const PRESENT: &[Site] = &[
         text: "historical final step; §16.39 subsequently landed it",
     },
     Site {
-        // Re-pinned 2026-08-09 (joint architect + rust-engineer ruling, unanimous):
-        // was line 7666 in mask-parity's standalone spec, then 8170, then 8363, then
-        // 8366, then 8373 — each shift caused by further corrections landing inside
-        // §16.42's own body (which sits above this line) during the step-1a review
-        // cycle. Content unchanged, single occurrence verified each time. Given how
-        // many times this one site has moved, ALWAYS re-verify with `grep -n
+        // Re-pin history, each a DISTINCT event (not one claim restated — earlier
+        // attributions are preserved here rather than overwritten, since a provenance
+        // overwrite is the failure class CLAUDE.md step 1a exists to catch):
+        //   7666 (mask-parity's standalone spec, pre-integration)
+        //   → 8170, 8363, 8366, 8373 (2026-08-09, joint architect + rust-engineer
+        //     ruling, unanimous — shifts during §16.42's own step-1a review cycle)
+        //   → 8608 (2026-08-09, Orchestrator, mechanical — the §16.43 mode-bench
+        //     ratification inserted directly above "## 16. Summary of what v1 is NOT")
+        //   → 8638, now 8667 (2026-08-09, Orchestrator, mechanical — §16.43's own
+        //     step-1a review fix-up passes, first and second rounds, each adding more
+        //     lines inside its body)
+        // Content unchanged, single occurrence verified each time. Given how many
+        // times this one site has moved, ALWAYS re-verify with `grep -n
         // "Upstream .refine_mask" docs/PIPELINE_SPEC_V1.md` before trusting this
         // number if this test ever fails again — do not just add/subtract a delta.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 8373,
+        line: 8667,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {

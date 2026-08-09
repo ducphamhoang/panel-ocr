@@ -1,6 +1,10 @@
 /target/
 *.snap.new
 
+# Orchestrator agent-dispatch briefs (see CLAUDE.md "Agent dispatch briefs") -- scratch
+# instructions written for subagent/Codex/cmdc dispatches, not repo content.
+/docs/briefs/
+
 # Personal/local test images -- never commit (copyright: not license-clean; see
 # docs/PIPELINE_SPEC_V1.md §16.24 item 17 for why vendored fixtures must be license-clean)
 /tests/fixtures/local/

@@ -126,6 +126,47 @@ report a brief that names nothing concrete rather than reviewing generically.
   re-message a previous `fresh-reader`**, because resuming destroys the freshness the
   gate depends on, and never assign it to whoever produced the artifact.
 
+## Agent dispatch briefs
+
+**Every subagent dispatch — the four named roles above, `codex:codex-rescue`, `cmdc`,
+or any other external agent call — gets its full task context written to a markdown
+brief file first, and the dispatch prompt tells the agent to read that file rather
+than inlining the context in the prompt itself.** (Decided 2026-08-09, prompted by the
+`codex-rescue` model-routing incident: iterating on a subagent's instructions mid-task
+meant re-typing the whole brief into a fresh prompt each retry, with no single place
+recording what the *current* instructions actually are.)
+
+Why a file instead of a prompt string:
+
+- **The brief can be revised in place and the agent told to re-read it**, instead of
+  re-explaining from scratch on every retry. If an agent misunderstands a step, comes
+  back with a wrong assumption, or needs a correction mid-task, edit the brief file and
+  send a follow-up telling it to re-read the file — this works whether the agent is
+  paused/resumed (Agent tool) or a fresh dispatch (`codex-rescue`/`cmdc`, which don't
+  preserve conversation state the same way).
+- **One artifact, not scattered prompt text**, to point a reviewer at when checking
+  whether an implementation actually followed its brief — "did it do what the brief
+  said" is a diffable question when the brief is a file.
+- Applies uniformly across dispatch mechanisms that don't share a common prompt
+  interface: an `Agent` tool subagent gets `Read <path>` naturally (all four roles
+  already carry the `Read` tool); `codex:codex-rescue` is a thin forwarder, so the
+  forwarded task text itself becomes "read the brief at `<path>` and follow it exactly"
+  — the underlying Codex CLI task reads the file with its own tools; `cmdc -p` works
+  the same way.
+
+Placement: write the brief under the **target worktree's own path** when the task is
+scoped to one worktree (so a worktree-relative mention inside the brief resolves
+correctly and the brief travels if the worktree is inspected later), otherwise under
+the session scratchpad. Either way, pass the **absolute path** in the dispatch prompt.
+Keep the dispatch prompt itself short: point at the brief, state anything that changed
+since the brief was written (if this is a retry), and nothing else duplicated from the
+brief's own content — duplicating defeats the point of having a single revisable place.
+
+This does not relax any other rule in this file — a brief-file dispatch to
+`rust-engineer` still needs an independent reviewer per §16.13 item 4, a ratification
+transcription still needs `fresh-reader`, and an implementer's own self-report is still
+not verification (re-run the actual checks).
+
 ## Pipeline
 
 1. **Plan**: Orchestrator spawns the Opus Technical Architecture and Opus Senior
