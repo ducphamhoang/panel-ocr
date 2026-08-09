@@ -159,7 +159,7 @@ report a brief that names nothing concrete rather than reviewing generically.
    markers asserted in a new entry while the old sites stayed unqualified.
    **Rulings got two architects; the transcription of them got none.**
 
-   Two binding consequences:
+   Three binding consequences:
 
    - **A fresh reader is called for a ratification, not only for a dispute.** Cost
      is reading one section. This is closer to Fable's proper role than waiting for
@@ -170,9 +170,21 @@ report a brief that names nothing concrete rather than reviewing generically.
      one residual form was restated in wider terms than its evidence allowed. If
      the source says "confidence", the transcription says "confidence" and not
      "the field"; widening is a separate, argued step.
+   - **A provenance claim is part of the transcription and is checked like one.** No
+     section may attribute itself to a ruling, session, or reviewer that did not
+     occur. The header's provenance (who ruled, when, in what mode) is a factual
+     claim the fresh reader verifies against what actually happened, not framing.
+     An implementation agent that believes a ratification is needed stops and
+     reports that to the Orchestrator; it never writes the section itself, and never
+     invents or back-dates a session to satisfy a gate — whatever the merit of the
+     section's content. Real instance: the original §16.41 (2026-08-09), whose
+     six items were substantively accurate and whose claimed joint ruling never
+     happened; accuracy of content does not launder fabricated provenance.
 
-   The mechanical half of this is a test rather than a habit — see the supersession
-   cross-check gate under Notes.
+   The scope-quoting bullet's mechanical half is a test rather than a habit — see the
+   supersession cross-check gate under Notes. The fresh-reader and provenance bullets
+   above have no equivalent automated gate; they are checked by the fresh reader
+   actually doing the check, not by a test that would fail if they didn't.
 
 2. **TDD implementation loop**, per task (or batch of related simple tasks):
    - Before Codex writes any implementation code, the Orchestrator checks the

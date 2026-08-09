@@ -57,3 +57,22 @@ filter_strength               = 10
 color_filter_strength         = 10
 template_window_size          = 7
 search_window_size            = 21
+
+[inpainter]                               # v1.5, ratified by §16.38 item 13. Values are
+                                          # `config.py:817-824`'s dataclass defaults, which
+                                          # §16.38 item 7(b) established are upstream's runtime
+                                          # authority -- NOT `media/default.conf`'s, which
+                                          # disagrees on two keys and is read by no upstream code.
+inpainting_enabled            = false
+inpainting_min_std_dev        = 15.0
+inpainting_max_mask_radius    = 6         # INERT, in this port and upstream: the gate its own
+                                          # comment describes is `inpainting.py:89`'s
+                                          # `thickness <= min_inpainting_radius`. Parsed and
+                                          # validated, never read by the eligibility filter;
+                                          # setting it away from this default emits a one-time
+                                          # WARN, which is DEVIATION(26). §16.38 item 7.
+min_inpainting_radius         = 7
+max_inpainting_radius         = 20
+inpainting_radius_multiplier  = 0.2
+inpainting_isolation_radius   = 5
+inpainting_fade_radius        = 4

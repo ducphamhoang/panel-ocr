@@ -36,7 +36,7 @@ pub mod strip;
 
 pub use batch::{process_image_isolated, run_batch};
 pub use cache::{CachePaths, SEGMENT_INFIX, SPLITS_SUFFIX};
-pub use ctx::{DetectorProvider, PipelineCtx, SharedDetector};
+pub use ctx::{DetectorProvider, InpainterProvider, PipelineCtx, SharedDetector};
 pub use discovery::{expand_inputs, input_suffix, is_supported_input, SUPPORTED_INPUT_SUFFIXES};
 pub use options::{
     requested_outputs, resolve_threads, select_checkpointing, Checkpointing, PipelineOptions,
@@ -46,5 +46,8 @@ pub use outcome::{
     panic_message, BatchSummary, ImageAnalytics, ImageOutcome, PipelineError, SkipReason,
     EXIT_FATAL, EXIT_OK, EXIT_PARTIAL,
 };
-pub use single::{process_image, process_image_with_splitting, run_stages, ChainOutputs};
+pub use single::{
+    export_sources, inpaint_dests, process_image, process_image_with_splitting, run_inpaint,
+    run_stages, ChainOutputs, InpaintDests, InpaintOutput,
+};
 pub use strip::{should_split, SplitManifest};

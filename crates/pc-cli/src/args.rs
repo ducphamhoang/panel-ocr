@@ -83,6 +83,11 @@ pub struct CleanArgs {
     #[arg(long)]
     pub skip_denoise: bool,
 
+    /// Disable inpainting entirely (spec §16.38 item 16(e) — this one is *disable*, not
+    /// *load from cache*).
+    #[arg(long)]
+    pub skip_inpaint: bool,
+
     /// Write only the cleaned image.
     #[arg(long, group = "save_only")]
     pub save_only_cleaned: bool,
@@ -242,17 +247,25 @@ pub enum CacheCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ModelsCommand {
-    /// Download all known detector/OCR models into the managed cache, repairing entries with mismatched digests. Requires network access; the detector model is about 90 MB. No `onnx` feature or ONNX Runtime is required.
+    /// Download the required detector/OCR models into the managed cache, repairing entries with mismatched digests. Requires network access; the detector model is about 90 MB. No `onnx` feature or ONNX Runtime is required.
     Download {
         /// Cache directory override (spec §16.12 item 21).
         #[arg(long, value_name = "DIR", hide = true)]
         cache_dir: Option<PathBuf>,
+        /// Also fetch optional models (the ~207 MB LaMa inpainting weights). Spec §13.1 as
+        /// superseded by §16.38 item 19. Visible on purpose, unlike `--cache-dir`.
+        #[arg(long)]
+        include_optional: bool,
     },
-    /// Verify model availability and digests without modifying the cache, reporting each model's status. Exits 1 if any model is missing or fails verification, making it useful as a preflight or CI check. No `onnx` feature or ONNX Runtime is required.
+    /// Verify model availability and digests without modifying the cache, reporting each model's status. Exits 1 if any required model is missing or if any reported model fails verification, making it useful as a preflight or CI check. No `onnx` feature or ONNX Runtime is required.
     Verify {
         /// Cache directory override (spec §16.12 item 21).
         #[arg(long, value_name = "DIR", hide = true)]
         cache_dir: Option<PathBuf>,
+        /// Also report optional models. An absent optional model is reported and is not a
+        /// failure; a corrupt one still is. Spec §13.1 as superseded by §16.38 item 19.
+        #[arg(long)]
+        include_optional: bool,
     },
     /// Print where models are looked up.
     Path {

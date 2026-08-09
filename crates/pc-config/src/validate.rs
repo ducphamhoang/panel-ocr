@@ -3,7 +3,8 @@
 
 use crate::error::ConfigError;
 use crate::profile::{
-    DenoiserConfig, GeneralConfig, MaskerConfig, PreprocessorConfig, TextDetectorConfig,
+    DenoiserConfig, GeneralConfig, InpainterConfig, MaskerConfig, PreprocessorConfig,
+    TextDetectorConfig,
 };
 use std::cmp::Ordering;
 
@@ -159,6 +160,44 @@ pub fn validate_denoiser(cfg: &DenoiserConfig, out: &mut Vec<ConfigError>) {
         out.push(ConfigError::Invalid {
             field: "denoiser.search_window_size".into(),
             message: "must be odd and at least 3".into(),
+        });
+    }
+}
+
+/// spec §6 as superseded by §16.38 item 13(b): the `[inpainter]` rules, mirroring
+/// `config.py:917-932`'s `fix()` as **errors** rather than silent clamps (this crate
+/// rejects, upstream repairs).
+///
+/// The five radius keys' `>= 0` rules are enforced by their `u32` type rather than by a
+/// check here — a `>= 0` comparison on an unsigned integer is a line that cannot fail, and
+/// this crate already handles `min_mask_thickness` / `noise_outline_size` /
+/// `noise_fade_radius` the same way. A negative literal fails the load as
+/// `ConfigError::Parse` naming the key; `validation.rs` asserts that at the load level.
+pub fn validate_inpainter(cfg: &InpainterConfig, out: &mut Vec<ConfigError>) {
+    if cfg.inpainting_min_std_dev.partial_cmp(&0.0) == Some(Ordering::Less)
+        || cfg.inpainting_min_std_dev.is_nan()
+    {
+        out.push(ConfigError::Invalid {
+            field: "inpainter.inpainting_min_std_dev".into(),
+            message: "must be at least 0".into(),
+        });
+    }
+    if cfg.inpainting_radius_multiplier.partial_cmp(&0.0) == Some(Ordering::Less)
+        || cfg.inpainting_radius_multiplier.is_nan()
+    {
+        out.push(ConfigError::Invalid {
+            field: "inpainter.inpainting_radius_multiplier".into(),
+            message: "must be at least 0".into(),
+        });
+    }
+    // upstream's own `config.py:932` invariant.
+    if cfg.max_inpainting_radius < cfg.min_inpainting_radius {
+        out.push(ConfigError::Invalid {
+            field: "inpainter.max_inpainting_radius".into(),
+            message: format!(
+                "must be at least `min_inpainting_radius` ({})",
+                cfg.min_inpainting_radius
+            ),
         });
     }
 }

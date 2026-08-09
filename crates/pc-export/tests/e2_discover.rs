@@ -70,7 +70,7 @@ fn a_category_is_requested_when_any_of_its_variants_is_listed() {
 fn a5_the_denoised_image_wins_over_the_masked_one() {
     // §12.7(A)5 / §12.3 step 2: `cleaned: denoised > masked`, exactly one is chosen.
     let sources = full_sources();
-    let selection = resolve(&sources, &all_exportable_outputs(), true);
+    let selection = resolve(&sources, &all_exportable_outputs(), true, false);
     assert_eq!(selection.cleaned, sources.denoised);
     assert_ne!(selection.cleaned, sources.masked);
 }
@@ -80,7 +80,7 @@ fn a5_with_denoising_disabled_the_masked_image_wins_even_if_a_denoised_one_is_ca
     // §12.3 step 2's explicit requirement: "a stale cached denoise artifact from a
     // previous run must not resurrect itself when denoising is now disabled".
     let sources = full_sources();
-    let selection = resolve(&sources, &all_exportable_outputs(), false);
+    let selection = resolve(&sources, &all_exportable_outputs(), false, false);
     assert_eq!(selection.cleaned, sources.masked);
     assert_eq!(
         selection.mask,
@@ -96,7 +96,7 @@ fn the_masked_image_is_used_when_no_denoised_one_exists() {
         denoise_mask: None,
         ..full_sources()
     };
-    let selection = resolve(&sources, &all_exportable_outputs(), true);
+    let selection = resolve(&sources, &all_exportable_outputs(), true, false);
     assert_eq!(selection.cleaned, sources.masked);
     assert_eq!(
         selection.mask,
@@ -111,7 +111,7 @@ fn the_denoise_composite_branch_needs_both_mask_handles() {
     // defined output -- it WARNs and exports no mask, rather than erroring (§5.6).
     let sources = full_sources();
     assert_eq!(
-        resolve(&sources, &all_exportable_outputs(), true).mask,
+        resolve(&sources, &all_exportable_outputs(), true, false).mask,
         Some(MaskChoice::WithDenoise {
             final_mask: sources.final_mask.clone().unwrap(),
             denoise_mask: sources.denoise_mask.clone().unwrap(),
@@ -122,14 +122,17 @@ fn the_denoise_composite_branch_needs_both_mask_handles() {
         final_mask: None,
         ..full_sources()
     };
-    assert_eq!(resolve(&orphan, &all_exportable_outputs(), true).mask, None);
+    assert_eq!(
+        resolve(&orphan, &all_exportable_outputs(), true, false).mask,
+        None
+    );
 
     let no_denoise_mask = ExportSources {
         denoise_mask: None,
         ..full_sources()
     };
     assert_eq!(
-        resolve(&no_denoise_mask, &all_exportable_outputs(), true).mask,
+        resolve(&no_denoise_mask, &all_exportable_outputs(), true, false).mask,
         Some(MaskChoice::FinalOnly(
             no_denoise_mask.final_mask.clone().unwrap()
         ))
@@ -140,7 +143,7 @@ fn the_denoise_composite_branch_needs_both_mask_handles() {
 fn a6_save_only_mask_selects_no_cleaned_and_no_text() {
     // §12.7(A)6.
     let sources = full_sources();
-    let selection = resolve(&sources, &only_mask(), true);
+    let selection = resolve(&sources, &only_mask(), true, false);
     assert!(selection.cleaned.is_none());
     assert!(selection.text.is_none());
     assert!(selection.mask.is_some());
@@ -151,11 +154,11 @@ fn a6_save_only_mask_selects_no_cleaned_and_no_text() {
 fn save_only_cleaned_and_save_only_text_narrow_the_same_way() {
     let sources = full_sources();
 
-    let cleaned_only = resolve(&sources, &only_cleaned(), true);
+    let cleaned_only = resolve(&sources, &only_cleaned(), true, false);
     assert_eq!(cleaned_only.cleaned, sources.denoised);
     assert!(cleaned_only.mask.is_none() && cleaned_only.text.is_none());
 
-    let text_only = resolve(&sources, &only_text(), true);
+    let text_only = resolve(&sources, &only_text(), true, false);
     assert_eq!(text_only.text, sources.isolated_text);
     assert!(text_only.cleaned.is_none() && text_only.mask.is_none());
 }
@@ -167,18 +170,32 @@ fn narrowing_is_applied_after_precedence_so_the_two_cannot_interact() {
     // narrowing that includes the cleaned category.
     let sources = full_sources();
     for outputs in [only_cleaned(), all_exportable_outputs()] {
-        assert_eq!(resolve(&sources, &outputs, true).cleaned, sources.denoised);
+        assert_eq!(
+            resolve(&sources, &outputs, true, false).cleaned,
+            sources.denoised
+        );
     }
 }
 
 #[test]
 fn an_empty_request_or_empty_sources_selects_nothing() {
     // §16.11 item 14: a valid, non-error outcome.
-    assert!(resolve(&full_sources(), &[], true).is_empty());
-    assert!(resolve(&ExportSources::default(), &all_exportable_outputs(), true).is_empty());
-    assert!(resolve(&ExportSources::default(), &[], false).is_empty());
+    assert!(resolve(&full_sources(), &[], true, false).is_empty());
+    assert!(resolve(
+        &ExportSources::default(),
+        &all_exportable_outputs(),
+        true,
+        false,
+    )
+    .is_empty());
+    assert!(resolve(&ExportSources::default(), &[], false, false).is_empty());
     assert_eq!(
-        resolve(&ExportSources::default(), &all_exportable_outputs(), true),
+        resolve(
+            &ExportSources::default(),
+            &all_exportable_outputs(),
+            true,
+            false,
+        ),
         pc_export::Selection::default()
     );
 }
@@ -189,7 +206,13 @@ fn text_selection_is_independent_of_the_denoise_state() {
     let sources = full_sources();
     for denoising_enabled in [true, false] {
         assert_eq!(
-            resolve(&sources, &all_exportable_outputs(), denoising_enabled).text,
+            resolve(
+                &sources,
+                &all_exportable_outputs(),
+                denoising_enabled,
+                false,
+            )
+            .text,
             sources.isolated_text
         );
     }

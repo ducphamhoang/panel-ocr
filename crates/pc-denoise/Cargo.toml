@@ -13,9 +13,20 @@ pc-core     = { path = "../pc-core" }
 # §16.5 item 1: every stage crate depends on pc-config -- the stage's config travels
 # by value inside its Input (§3).
 pc-config   = { path = "../pc-config" }
-# `BinaryMask` (M1). NOTE (§16.10 items 1-3): `nlm`, `gaussian`, `morph` and
-# `composite` live in THIS crate, not in pc-imageops -- pc-imageops was frozen at the
-# end of Stage 3 and none of those modules is used by another stage in v1.
+# `BinaryMask` (M1); `morph` since §16.38 item 16(a) (v1.5, task L1); `gaussian` since
+# task L4.
+# NOTE (§16.10 items 1-3): `nlm` and `composite` still live in THIS crate, not in
+# pc-imageops -- pc-imageops was frozen at the end of Stage 3 and neither is used by
+# another stage. That ground has expired for two of the four original modules: L1
+# hoisted `Kernel`/`kernel`/`dilate` (`pc-mask` and `pc-inpaint` need them) and L4
+# hoisted `taps`/`blur` (`pc-inpaint` needs the same Gaussian for
+# `inpainting_fade_radius`, §16.38 item 3(h)). Both are re-exported from here, so
+# `pc_denoise::morph::*` and `pc_denoise::gaussian::*` still resolve and the frozen
+# tests are untouched. `composite` is the remaining candidate and was deliberately NOT
+# hoisted: §16.10 item 3 *pins* its duplication with `pc_mask::combine` rather than
+# scheduling a consolidation, and `pc-inpaint` is now a third consumer -- see
+# `crates/pc-inpaint/src/compose.rs`, which reports that as an open question instead of
+# overturning the pin.
 pc-imageops = { path = "../pc-imageops" }
 image       = { workspace = true }
 # §11.3: NLM parallelises over output row bands (§16.10 item 10).

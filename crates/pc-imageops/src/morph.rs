@@ -1,15 +1,32 @@
-//! Growth kernels and binary dilation for the noise mask (spec §11.3 step 4,
-//! §16.10 item 2).
+//! Task L1 -- the single shared growth kernel + binary dilation (spec §16.38 item 16(a),
+//! §10.3 step 6, §11.3 step 4, §16.9 items 5, 6).
 //!
-//! DEVIATION-FREE COPY: this is a verbatim restatement of `pc_mask::grow::{kernel,
-//! dilate}`, which is itself a restatement of OpenCV `getStructuringElement`. §11.3
-//! step 4 says to use "the **same** `kernel()` from `pc-imageops`", but per §16.9 item 2
-//! that function actually lives in `pc-mask`, and §1 rule 2 forbids one stage crate
-//! depending on another. §16.10 item 2 resolves this in favour of rule 2 and requires a
-//! frozen test that pins the full 11x11 cell matrix, so the two copies cannot drift.
-//! v1.5 consolidation: hoist into `pc_imageops::morph` and re-export from both stages.
+//! This module is the **one** implementation. It arrived here by hoisting two verbatim
+//! copies -- `pc_mask::grow::{Kernel, kernel, dilate}` and
+//! `pc_denoise::morph::{Kernel, kernel, dilate}` -- which §16.10 item 2 had deliberately
+//! duplicated because §1 rule 2 forbids a stage crate depending on another stage crate,
+//! and which the same item scheduled for a "v1.5 consolidation ticket". §16.38 item 16(a)
+//! calls that consolidation in, as a **prerequisite** rather than cleanup: `pc-inpaint`
+//! needs the same primitives and a third copy is not acceptable. Both stage crates now
+//! re-export from here.
+//!
+//! Both hoisted copies were confirmed byte-identical in their bodies before the move, and
+//! `crates/pc-pipeline/tests/l1_morph_equivalence.rs` holds the frozen proof: it pins both
+//! crates' public paths against a hand-derived OpenCV `MORPH_ELLIPSE` oracle for
+//! thicknesses 0..=7 and against each other, and was green on the pre-hoist code.
+//!
+//! §16.38 item 16(a) requires §16.9 item 2's "no `pc-config` dependency" property of this
+//! crate to survive the hoist, so nothing here takes a config type: callers pass plain
+//! `u32` thicknesses. The `MaskerConfig`-shaped helpers (`growth_padding`,
+//! `growth_candidates`, `build_candidates`) stay in `pc-mask`, which is where the *policy*
+//! lives.
+//!
+//! Upstream grows the precise mask with `scipy.signal.convolve2d(mask, kernel) > 0`. For a
+//! non-negative kernel that is **exactly** binary dilation, so the reformulation here is
+//! an exact -- and vastly faster -- restatement, not an approximation (§10.3 step 6
+//! requires this equivalence to be stated at the implementation site).
 
-use pc_imageops::BinaryMask;
+use crate::BinaryMask;
 
 /// A square, symmetric structuring element of odd `diameter = thickness * 2 + 1`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,13 +65,15 @@ impl Kernel {
 
 /// spec §10.3 step 6 / §11.3 step 4.
 ///
-/// * `diameter <= 5` (i.e. `thickness <= 2`): a full square of 1s with the four corners
-///   zeroed -- **except** for `diameter == 1`, where the "corners" are the centre
-///   itself, so the kernel is the single centre pixel and dilation is the identity
-///   (§16.9 item 5; §11.3 step 4's "`size == 0` -> identity").
-/// * otherwise: OpenCV's `MORPH_ELLIPSE`:
-///   `dx = round(c * sqrt((r*r - dy*dy) / (r*r)))`, row `i` set on
-///   `[max(c-dx,0), min(c+dx+1, diameter))`.
+/// * `diameter <= 5` (i.e. `thickness <= 2`): a full square of 1s with the four
+///   corners zeroed -- **except** for `diameter == 1`, where the "corners" are the
+///   centre itself, so the kernel is the single centre pixel and dilation is the
+///   identity (§16.9 item 5; §11.3 step 4's "`size == 0` -> identity").
+/// * otherwise: OpenCV's `MORPH_ELLIPSE`, reproduced from `getStructuringElement`'s own
+///   code path: `dx = round(c * sqrt((r*r - dy*dy) / (r*r)))`, row `i` set on
+///   `[max(c-dx,0), min(c+dx+1, diameter))`. `saturate_cast<int>` rounds to nearest;
+///   `f64::round` (half away from zero) matches -- exact ties do not occur for these
+///   square-root values.
 pub fn kernel(thickness: u32) -> Kernel {
     let radius = thickness;
     let diameter = thickness * 2 + 1;
@@ -97,7 +116,8 @@ pub fn kernel(thickness: u32) -> Kernel {
 }
 
 /// Binary dilation, stamp formulation (§16.9 item 6): every set input pixel stamps the
-/// whole kernel footprint centred on it, writes outside the canvas being dropped.
+/// whole kernel footprint centred on it, writes outside the canvas being dropped (zero
+/// border). Kernels here are symmetric, so this equals the reflect-then-max definition.
 pub fn dilate(mask: &BinaryMask, kernel: &Kernel) -> BinaryMask {
     let (width, height) = mask.dimensions();
     let mut out = BinaryMask::new(width, height);

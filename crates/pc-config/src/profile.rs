@@ -17,6 +17,9 @@ pub struct Profile {
     pub preprocessor: PreprocessorConfig,
     pub masker: MaskerConfig,
     pub denoiser: DenoiserConfig,
+    /// v1.5, ratified by §16.38 item 13. Declared last so `TABLES` order, the default
+    /// document's table order and `validate_all`'s reporting order all agree.
+    pub inpainter: InpainterConfig,
 }
 
 impl Profile {
@@ -99,6 +102,19 @@ impl Profile {
                 "search_window_size",
             ],
         ),
+        (
+            "inpainter",
+            &[
+                "inpainting_enabled",
+                "inpainting_min_std_dev",
+                "inpainting_max_mask_radius",
+                "min_inpainting_radius",
+                "max_inpainting_radius",
+                "inpainting_radius_multiplier",
+                "inpainting_isolation_radius",
+                "inpainting_fade_radius",
+            ],
+        ),
     ];
 
     /// spec §6 validation paragraph. Returns the **first** violation in `TABLES` order
@@ -115,6 +131,7 @@ impl Profile {
         crate::validate::validate_preprocessor(&self.preprocessor, &mut errors);
         crate::validate::validate_masker(&self.masker, &mut errors);
         crate::validate::validate_denoiser(&self.denoiser, &mut errors);
+        crate::validate::validate_inpainter(&self.inpainter, &mut errors);
         errors
     }
 }
@@ -161,15 +178,6 @@ impl Default for GeneralConfig {
     }
 }
 
-impl GeneralConfig {
-    /// `None` when `preferred_file_type` is empty ("keep original suffix"), else the
-    /// normalised (ASCII-lowercased, dot-prefixed) suffix.
-    pub fn cleaned_suffix(&self) -> Option<String> {
-        (!self.preferred_file_type.is_empty())
-            .then(|| self.preferred_file_type.to_ascii_lowercase())
-    }
-}
-
 // ------------------------------------------------------------- [text_detector]
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -197,14 +205,6 @@ impl Default for TextDetectorConfig {
         }
     }
 }
-
-impl TextDetectorConfig {
-    /// `None` when `model_path` is empty.
-    pub fn model_path(&self) -> Option<&std::path::Path> {
-        (!self.model_path.is_empty()).then(|| std::path::Path::new(&self.model_path))
-    }
-}
-
 /// spec §8.3 step 5 / §15.2. Simple remains the shipped default; `Annotation` is
 /// accepted by config and opts into upstream refinement. The default remains a deliberate divergence from upstream's
 /// unconditional refinement.
@@ -216,6 +216,22 @@ pub enum MaskRefineMode {
     #[default]
     Simple,
     Annotation,
+}
+
+impl GeneralConfig {
+    /// `None` when `preferred_file_type` is empty ("keep original suffix"), else the
+    /// normalised (ASCII-lowercased, dot-prefixed) suffix.
+    pub fn cleaned_suffix(&self) -> Option<String> {
+        (!self.preferred_file_type.is_empty())
+            .then(|| self.preferred_file_type.to_ascii_lowercase())
+    }
+}
+
+impl TextDetectorConfig {
+    /// `None` when `model_path` is empty.
+    pub fn model_path(&self) -> Option<&std::path::Path> {
+        (!self.model_path.is_empty()).then(|| std::path::Path::new(&self.model_path))
+    }
 }
 
 // ------------------------------------------------------------- [preprocessor]
@@ -370,6 +386,63 @@ impl Default for DenoiserConfig {
             color_filter_strength: 10.0,
             template_window_size: 7,
             search_window_size: 21,
+        }
+    }
+}
+
+// ---------------------------------------------------------------- [inpainter]
+
+/// spec §6 as superseded by §16.38 item 13 — the eight-key v1.5 inpainting block.
+///
+/// Every default is `config.py:817-824`'s **dataclass** default, which §16.38 item 7(b)
+/// established is upstream's runtime authority: `media/default.conf` disagrees on two keys
+/// and is read by zero upstream Python files.
+///
+/// The five radius keys are `u32` rather than a signed type, matching this crate's
+/// existing treatment of `masker.min_mask_thickness` and `denoiser.noise_outline_size`:
+/// §6's `>= 0` rule for them is then enforced by the *type*, and a negative literal fails
+/// the load as a `ConfigError::Parse` naming the key (§16.5 item 5's precedent). The two
+/// non-`Pixels` keys are `f64` and carry real `validate_inpainter` rules.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct InpainterConfig {
+    /// §16.38 item 13(c): `true` must load and validate even in a build with no ONNX —
+    /// config accepts, the stage refuses. Same split §16.36 item 6 ruled for `device`.
+    pub inpainting_enabled: bool,
+    pub inpainting_min_std_dev: f64,
+    /// **INERT, in this port and upstream.** `pcleaner/inpainting.py` never reads it; the
+    /// gate its upstream comment describes is `inpainting.py:89`'s
+    /// `thickness <= min_inpainting_radius`. Parsed, validated and round-tripped, never
+    /// read by the eligibility filter. Setting it away from this default emits a one-time
+    /// WARN — `DEVIATION(26)`, §16.38 item 7(e).
+    pub inpainting_max_mask_radius: u32,
+    pub min_inpainting_radius: u32,
+    pub max_inpainting_radius: u32,
+    /// Live: it feeds §16.38 item 3(e)'s growth formula, which is why its `>= 0.0` rule is
+    /// checked rather than left to the type (it is the block's only non-`Pixels`,
+    /// non-threshold key).
+    pub inpainting_radius_multiplier: f64,
+    pub inpainting_isolation_radius: u32,
+    pub inpainting_fade_radius: u32,
+}
+
+impl InpainterConfig {
+    /// `config.py:819`'s dataclass default for the inert key. The WARN of `DEVIATION(26)`
+    /// fires when a loaded profile differs from this, and never at this value.
+    pub const DEFAULT_MAX_MASK_RADIUS: u32 = 6;
+}
+
+impl Default for InpainterConfig {
+    fn default() -> Self {
+        Self {
+            inpainting_enabled: false,
+            inpainting_min_std_dev: 15.0,
+            inpainting_max_mask_radius: Self::DEFAULT_MAX_MASK_RADIUS,
+            min_inpainting_radius: 7,
+            max_inpainting_radius: 20,
+            inpainting_radius_multiplier: 0.2,
+            inpainting_isolation_radius: 5,
+            inpainting_fade_radius: 4,
         }
     }
 }

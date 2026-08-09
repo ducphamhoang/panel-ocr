@@ -61,6 +61,9 @@ pub struct ExportInput {
     /// Config/`--skip-denoise` state. Excludes the denoise candidates from precedence
     /// even when they happen to be populated by a stale cache (§12.3 step 2).
     pub denoising_enabled: bool,
+    /// Config/`--skip-inpaint` state. Excludes inpainting candidates from precedence
+    /// even when a stale cache populated them (§16.38 item 12(b)).
+    pub inpainting_enabled: bool,
 }
 
 /// **Availability**, resolved by `pc-pipeline` before the call: `Some` iff that stage
@@ -71,10 +74,14 @@ pub struct ExportSources {
     pub masked: Option<ImageHandle>,
     /// `_clean_denoised.png`
     pub denoised: Option<ImageHandle>,
+    /// `_clean_inpaint.png`
+    pub inpainted: Option<ImageHandle>,
     /// `_combined_mask.png`
     pub final_mask: Option<ImageHandle>,
     /// `_noise_mask.png`
     pub denoise_mask: Option<ImageHandle>,
+    /// `_inpainting.png`
+    pub inpainted_mask: Option<ImageHandle>,
     /// `_text.png`
     pub isolated_text: Option<ImageHandle>,
 }
@@ -217,6 +224,20 @@ pub fn export_mask(
             alpha_composite_over(&mut combined, &noise, (0, 0));
             combined
         }
+        MaskChoice::WithInpaint {
+            final_mask,
+            denoise_mask,
+            inpainted_mask,
+        } => {
+            let mut combined = resize_nearest_rgba(&final_mask.load()?.to_rgba8(), original_size);
+            if let Some(denoise_mask) = denoise_mask {
+                let noise = resize_nearest_rgba(&denoise_mask.load()?.to_rgba8(), original_size);
+                alpha_composite_over(&mut combined, &noise, (0, 0));
+            }
+            let inpainting = resize_nearest_rgba(&inpainted_mask.load()?.to_rgba8(), original_size);
+            alpha_composite_over(&mut combined, &inpainting, (0, 0));
+            combined
+        }
     };
     formats::save(&image::DynamicImage::ImageRgba8(mask), dest, format, None)
 }
@@ -242,7 +263,7 @@ pub fn export_text(source: &ImageHandle, dest: &Path) -> Result<(), StageError> 
 ///
 /// 1. `destinations(&input)?`, then `std::fs::create_dir_all(&dests.base)` mapped to
 ///    `StageError::Io` (§16.11 item 4).
-/// 2. `discover::resolve(&input.sources, &input.outputs, input.denoising_enabled)`.
+/// 2. `discover::resolve` with both denoising and inpainting enablement flags.
 /// 3. For each selected category, in the fixed order **cleaned, mask, text** (steps
 ///    3-5), call the helper above and push the destination onto `files_written`. The
 ///    original's colour mode comes from `formats::read_color_mode(&input.original_path)`
@@ -260,7 +281,12 @@ pub fn run(input: ExportInput) -> Result<ExportOutput, StageError> {
         source,
     })?;
 
-    let selection = discover::resolve(&input.sources, &input.outputs, input.denoising_enabled);
+    let selection = discover::resolve(
+        &input.sources,
+        &input.outputs,
+        input.denoising_enabled,
+        input.inpainting_enabled,
+    );
     let mut files_written = Vec::new();
 
     if let Some(source) = selection.cleaned {

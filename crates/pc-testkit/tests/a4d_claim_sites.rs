@@ -307,8 +307,13 @@ const PRESENT: &[Site] = &[
         text: "historical final step; §16.39 subsequently landed it",
     },
     Site {
+        // Re-pinned 2026-08-09 (joint architect + rust-engineer ruling, unanimous):
+        // was line 7666 in mask-parity's standalone spec; the reconciled integration
+        // spec is longer (8172 lines, both branches' non-duplicative content), and
+        // this identical, single-occurrence claim now sits at line 8170. Location
+        // pointer only — the asserted text is unchanged.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 7666,
+        line: 8170,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {

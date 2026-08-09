@@ -47,6 +47,10 @@ pub enum ConfigWarning {
     /// The `tracing` WARN for this one fires **once per process** (§15.7 "one-time");
     /// this value is still returned on every parse.
     ColoredImagesApproximation,
+    /// §16.38 item 7(e) / `DEVIATION(26)`: `inpainter.inpainting_max_mask_radius` is set
+    /// away from its default, and the key is inert — in this port *and* upstream. The
+    /// `tracing` WARN fires **once per process**; this value is returned on every parse.
+    InertInpaintingMaxMaskRadius,
 }
 
 impl ConfigWarning {
@@ -67,6 +71,13 @@ impl ConfigWarning {
                 "`denoiser.colored_images = true` uses the v1 joint-channel ",
                 "approximation; `color_filter_strength` is ignored until the ",
                 "Lab-split implementation in v1.5"
+            )
+            .to_owned(),
+            Self::InertInpaintingMaxMaskRadius => concat!(
+                "`inpainter.inpainting_max_mask_radius` has no effect: it is inert in this ",
+                "port and in upstream PanelCleaner, whose `inpainting.py` never reads it. ",
+                "The key that actually gates inpainting eligibility is ",
+                "`inpainter.min_inpainting_radius`"
             )
             .to_owned(),
         }
