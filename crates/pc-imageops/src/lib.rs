@@ -1,7 +1,7 @@
 //! `pc-imageops` -- spec §1: pure image algorithms shared by stages, with no stage
 //! logic and no config dependency.
 //!
-//! Current content, four modules:
+//! Current content, five modules:
 //!   * `split` -- long-strip splitting (task D8, spec §8.5 / §8.7(A)7 / §8.7(B)8 /
 //!     §16.6 item 8)
 //!   * `mask`  -- the `BinaryMask` container + box-mask rasterisation (task M1,
@@ -10,6 +10,9 @@
 //!     see below)
 //!   * `gaussian` -- separable Gaussian blur, `sigma = radius` (task N2, hoisted here by
 //!     task L4; the module header carries the ground and what it does not claim)
+//!   * `composite` -- `blend_channel` / `resize_nearest_rgba` / `alpha_composite_over` /
+//!     `composite_rgb` (§16.42, which overturns §16.10 item 3's and §16.11 item 10's
+//!     duplication pins; the module header carries the ground and the scope limit)
 //!
 //! NLM denoise (task N1) is **not** here: §16.10 item 1 placed `nlm` in `pc-denoise`
 //! instead, since `pc-imageops` was frozen at the end of Stage 3 and no other v1 stage
@@ -28,12 +31,22 @@
 //! `pc-mask` stays there, including the `MaskerConfig`-shaped growth helpers -- which is
 //! what keeps this crate free of a `pc-config` dependency, a property §16.38 item 16(a)
 //! explicitly requires to survive the hoist.
+//!
+//! **§16.42 supersedes the "composition (M2-M5) is masking policy" part of that paragraph,
+//! for four functions only.** `blend_channel`, `resize_nearest_rgba`,
+//! `alpha_composite_over` and `composite_rgb` are config-free pixel math needed by
+//! `pc-mask`, `pc-denoise`, `pc-export` and `pc-inpaint`, so they move here as `composite`.
+//! §16.42 item 8 is explicit that this authorises nothing further: `cleaned_image`,
+//! `text_layer`, `mask_overlay` and `build_combined_mask` remain masking policy and remain
+//! in `pc-mask`. The `pc-config`-free property is unaffected -- see §16.42 item 3.
 
+pub mod composite;
 pub mod gaussian;
 pub mod mask;
 pub mod morph;
 pub mod split;
 
+pub use composite::{alpha_composite_over, blend_channel, composite_rgb, resize_nearest_rgba};
 pub use gaussian::{blur, taps};
 pub use mask::{rasterize_boxes, BinaryMask, PIL_BINARY_THRESHOLD};
 pub use morph::{dilate, kernel, Kernel};

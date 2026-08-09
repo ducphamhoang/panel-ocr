@@ -10,7 +10,7 @@
 //!   * `nlm`        — joint-channel non-local-means (N1, heavy)
 //!   * `gaussian`   — separable Gaussian blur, `sigma = radius` (N2); a **re-export**, see below
 //!   * `morph`      — growth kernel + binary dilation; a **re-export**, see below
-//!   * `composite`  — RGBA source-over + nearest resize (§16.10 item 3)
+//!   * `composite`  — RGBA source-over + nearest resize; a **re-export**, see below (since §16.42, which overturned §16.10 item 3's per-crate pin)
 //!   * `noise_mask` — region selection, crop, grow, fade, alpha attach, compose (N3)
 //!   * this file    — `run()` wiring, the 1-bit shortcut, analytics (N4)
 //!

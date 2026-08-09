@@ -211,5 +211,7 @@ pub fn alpha_channel(mask: &RgbaImage) -> GrayImage {
 }
 
 /// Re-exported for the frozen tests, which assert that Stage 4's composition is the
-/// same arithmetic Stage 3 used (§16.10 item 3).
+/// same arithmetic Stage 3 used — now trivially true by construction, since both are
+/// `pc_imageops::composite` re-exports (§16.42, which overturned §16.10 item 3's
+/// per-crate pin).
 pub use composite::{alpha_composite_over, composite_rgb, resize_nearest_rgba};

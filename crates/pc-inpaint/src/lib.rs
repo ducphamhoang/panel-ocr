@@ -20,7 +20,7 @@
 //!   * `tile`     — merged cover, the 512-lattice, and pixel ownership (items 5(b)–(e))
 //!   * `fade`     — the Gaussian fade and the isolation cut (item 3(h))
 //!   * `onnx`     — L5: the two NCHW input tensors (item 1(b)), the **runtime** output-shape validation (item 1(c)), and — behind the `onnx` feature — `OnnxInpainter`, built through `pc_core::device::resolve` (item 16(d))
-//!   * `compose`  — RGBA source-over + nearest resize (a **fourth** pinned copy, after `pc-mask`, `pc-denoise` and `pc-export`; the module states which of the four copies the equivalence test actually reaches, and which it does not)
+//!   * `compose`  — RGBA source-over + nearest resize; a **re-export** of [`pc_imageops::composite`], hoisted from what was a fourth pinned copy (after `pc-mask`, `pc-denoise` and `pc-export`) by §16.42, which overturned §16.10 item 3's per-crate pin
 //!   * `stub`     — the `testkit`-gated test double
 //!   * this file  — [`inpaint_page`], the tile loop and the page assembly
 //!

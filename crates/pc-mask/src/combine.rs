@@ -3,70 +3,25 @@
 //!
 //! The small pure helpers have fully pinned arithmetic; the four composition entry points
 //! are built on them (task M5), with signatures frozen by the tests.
+//!
+//! **§16.42: `blend_channel`, `resize_nearest_rgba`, `alpha_composite_over` and
+//! `composite_rgb` now live in `pc_imageops::composite`** and are re-exported below, so
+//! `pc_mask::combine::<name>` still resolves for every existing caller and for the frozen
+//! tests. That entry overturns §16.10 item 3's pin of the duplication across `pc-mask`,
+//! `pc-denoise`, `pc-export` and `pc-inpaint`; the arithmetic itself is unchanged and
+//! still pinned by §16.9 items 13 and 15. `pc-mask`'s former copy of `composite_rgb`
+//! carried a longer panic message (`"cleaned-image composition needs matching sizes"`);
+//! §16.42 item 7(a) resolved that to the shorter, crate-neutral wording, no frozen test
+//! pinning either form. §16.42 item 8 authorises exactly those four moves: the four
+//! composition entry points below (`build_combined_mask`, `cleaned_image`, `text_layer`,
+//! `mask_overlay`) are masking *policy* and stay here.
 
 use crate::fit::Fitment;
 use image::{DynamicImage, GenericImageView, Rgb, RgbImage, Rgba, RgbaImage};
 
-/// spec §16.9 item 13 -- nearest-neighbour resampling, pinned as
-/// `src = floor(dst * src_len / dst_len)`, so a 2x upscale of a binary mask is exactly
-/// 2x2 blocks (§10.7(A)13). Identity when the sizes already match.
-pub fn resize_nearest_rgba(mask: &RgbaImage, size: (u32, u32)) -> RgbaImage {
-    if mask.dimensions() == size || mask.width() == 0 || mask.height() == 0 {
-        return if mask.dimensions() == size {
-            mask.clone()
-        } else {
-            RgbaImage::new(size.0, size.1)
-        };
-    }
-    let (source_w, source_h) = mask.dimensions();
-    RgbaImage::from_fn(size.0, size.1, |x, y| {
-        let source_x = ((u64::from(x) * u64::from(source_w)) / u64::from(size.0)) as u32;
-        let source_y = ((u64::from(y) * u64::from(source_h)) / u64::from(size.1)) as u32;
-        *mask.get_pixel(source_x.min(source_w - 1), source_y.min(source_h - 1))
-    })
-}
-
-/// spec §10.3 step 4 -- alpha-composite `layer` onto `dst` at `at`, source-over.
-/// Named for what it is even though every alpha here is 0 or 255 (making it equivalent
-/// to a paste); pixels landing outside `dst` are dropped.
-pub fn alpha_composite_over(dst: &mut RgbaImage, layer: &RgbaImage, at: (i32, i32)) {
-    let (width, height) = dst.dimensions();
-    for (x, y, pixel) in layer.enumerate_pixels() {
-        let target_x = at.0 as i64 + i64::from(x);
-        let target_y = at.1 as i64 + i64::from(y);
-        if target_x < 0
-            || target_y < 0
-            || target_x >= i64::from(width)
-            || target_y >= i64::from(height)
-        {
-            continue;
-        }
-        let Rgba([r, g, b, a]) = *pixel;
-        if a == 0 {
-            continue;
-        }
-        let target = dst.get_pixel_mut(target_x as u32, target_y as u32);
-        if a == 255 {
-            *target = Rgba([r, g, b, 255]);
-            continue;
-        }
-        let alpha = f64::from(a) / 255.0;
-        let Rgba([br, bg, bb, ba]) = *target;
-        *target = Rgba([
-            blend_channel(br, r, alpha),
-            blend_channel(bg, g, alpha),
-            blend_channel(bb, b, alpha),
-            ba.max(a),
-        ]);
-    }
-}
-
-/// `round(base * (1 - alpha) + color * alpha)` (§16.9 item 15).
-pub fn blend_channel(base: u8, color: u8, alpha: f64) -> u8 {
-    (f64::from(base) * (1.0 - alpha) + f64::from(color) * alpha)
-        .round()
-        .clamp(0.0, 255.0) as u8
-}
+pub use pc_imageops::composite::{
+    alpha_composite_over, blend_channel, composite_rgb, resize_nearest_rgba,
+};
 
 /// `r == g == b` -- §15.3's condition for writing the cleaned image as `L`.
 pub fn is_achromatic(color: [u8; 3]) -> bool {
@@ -167,32 +122,5 @@ pub fn mask_layer_rgba(mask: &pc_imageops::BinaryMask, color: [u8; 3]) -> RgbaIm
         } else {
             Rgba([0, 0, 0, 0])
         }
-    })
-}
-
-/// Composite an RGBA mask (alpha 0 or 255) over an RGB canvas of the same size.
-pub fn composite_rgb(canvas: &RgbImage, mask: &RgbaImage) -> RgbImage {
-    assert_eq!(
-        canvas.dimensions(),
-        mask.dimensions(),
-        "cleaned-image composition needs matching sizes: {:?} vs {:?}",
-        canvas.dimensions(),
-        mask.dimensions()
-    );
-    RgbImage::from_fn(canvas.width(), canvas.height(), |x, y| {
-        let Rgba([r, g, b, a]) = *mask.get_pixel(x, y);
-        if a == 0 {
-            return *canvas.get_pixel(x, y);
-        }
-        if a == 255 {
-            return Rgb([r, g, b]);
-        }
-        let alpha = f64::from(a) / 255.0;
-        let Rgb([br, bg, bb]) = *canvas.get_pixel(x, y);
-        Rgb([
-            blend_channel(br, r, alpha),
-            blend_channel(bg, g, alpha),
-            blend_channel(bb, b, alpha),
-        ])
     })
 }

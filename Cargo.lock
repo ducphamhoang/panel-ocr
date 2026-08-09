@@ -1128,6 +1128,7 @@ dependencies = [
  "image",
  "pc-config",
  "pc-core",
+ "pc-imageops",
  "pc-testkit",
  "serde",
  "serde_json",

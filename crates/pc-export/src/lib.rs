@@ -8,7 +8,7 @@
 //! Module map (§12.1, §12.5, §16.11 item 15):
 //!   * `formats`    — suffix→format, per-format save options, colour modes, dpi (E1)
 //!   * `discover`   — availability→precedence resolution + `--save-only-*` (E2)
-//!   * `composite`  — nearest resize + source-over, for the mask branch (§16.11 item 10)
+//!   * `composite`  — nearest resize + source-over, for the mask branch; a **re-export** of [`pc_imageops::composite`] since §16.42, which overturned §16.11 item 10's per-crate pin
 //!   * `ocr_report` — CSV/TXT report writers for `panel-ocr ocr` (E4)
 //!   * this file    — destination resolution and `run()` wiring (E3)
 //!
@@ -220,6 +220,15 @@ pub fn export_mask(
             denoise_mask,
         } => {
             let mut combined = resize_nearest_rgba(&final_mask.load()?.to_rgba8(), original_size);
+            // DEVIATION(8): upstream uses BILINEAR for the denoise-mask upscale
+            // (`image_export.py:221`) and NEAREST at the other four sites; §15.8 normalises to
+            // nearest everywhere.
+            //
+            // §16.42 item 5: this belongs to *this* call, not to the shared
+            // `pc_imageops::composite::resize_nearest_rgba` it used to sit above — that
+            // primitive serves four crates and cannot know which of its callers upstream
+            // diverges on. The `WithInpaint` branch below performs the same denoise-mask
+            // upscale and is covered by the same deviation.
             let noise = resize_nearest_rgba(&denoise_mask.load()?.to_rgba8(), original_size);
             alpha_composite_over(&mut combined, &noise, (0, 0));
             combined
@@ -231,6 +240,8 @@ pub fn export_mask(
         } => {
             let mut combined = resize_nearest_rgba(&final_mask.load()?.to_rgba8(), original_size);
             if let Some(denoise_mask) = denoise_mask {
+                // DEVIATION(8), as above on the `WithDenoise` branch: nearest, not upstream's
+                // bilinear, for the denoise-mask upscale (§15.8, §16.42 item 5).
                 let noise = resize_nearest_rgba(&denoise_mask.load()?.to_rgba8(), original_size);
                 alpha_composite_over(&mut combined, &noise, (0, 0));
             }
