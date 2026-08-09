@@ -43,9 +43,6 @@ fn column(row: &str, index: usize) -> &str {
 }
 
 #[test]
-#[ignore = "RED BY DESIGN (§16.43 item 10): the Simple/Annotation measurement driver \
-            (§16.43 item 9, heavy task 2) implements --replay's measurement and un-ignores \
-            this test. Do not weaken its assertions to make it pass."]
 fn replay_mode_writes_a_report_with_the_ratified_structure() {
     let temp = tempfile::tempdir().expect("tempdir");
     let report = temp.path().join("MODE_COMPARISON.md");

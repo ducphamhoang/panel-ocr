@@ -1,15 +1,21 @@
 //! `cargo xtask mode-bench` — the Simple/Annotation/LaMa non-gating comparison
 //! benchmark (spec §16.43).
 //!
-//! **This module is the pure layer only** (§16.43 item 9's "simple" task): cell/segment
-//! types, CLI argument parsing, device-disclosure rendering and the report renderer.
-//! It performs no stage calls and no measurement I/O. The Simple/Annotation measurement
-//! driver and the LaMa integration are the two ratified **heavy** tasks that follow, and
-//! [`measure`] below is a deliberate placeholder until the first of them lands.
+//! The pure layer (cell/segment types, CLI argument parsing, device-disclosure rendering
+//! and the report renderer) came from §16.43 item 9's "simple" task. [`measure`] and the
+//! per-`(page, cell)` driver below are item 9's **first heavy** task: the three input
+//! sources and the `pc_detect::run` → `pc_preprocess::run` → `pc_mask::run` sequence per
+//! cell. The **LaMa integration is still the second heavy task** — nothing here calls an
+//! inpainting function or depends on `pc-inpaint`, and every cell is therefore recorded
+//! with `inpainting_ran: false` / `tiles_inferred: None`, which is what actually happened.
 
 use crate::paths;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use pc_config::{
+    InpainterConfig, MaskRefineMode, MaskerConfig, PreprocessorConfig, TextDetectorConfig,
+};
 use pc_core::device::{resolve, Device, DevicePolicy, DeviceSupport};
+use pc_core::{ImageHandle, MaskRegionStats};
 use pc_testkit::golden::GoldenReport;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -18,10 +24,15 @@ use std::path::{Path, PathBuf};
 /// D1's ruling (§16.43 item 3): the default cell set varies one factor at a time.
 pub(crate) const DEFAULT_CELLS_SPEC: &str = "simple,annotation,simple+lama";
 
-/// The reason [`measure`] records for every cell until the measurement driver lands.
-const MEASUREMENT_DRIVER_UNIMPLEMENTED: &str =
-    "the Simple/Annotation measurement driver is not implemented yet (§16.43 item 9, \
-     heavy task 2); this run rendered the report skeleton only";
+/// The one page `--replay` measures — the committed detector fixture, same stem
+/// `mask-sweep --replay` uses, so the two tools measure the same input.
+const REPLAY_STEM: &str = "ja_Pepper-and-Carrot_by-David-Revoy_E01P01";
+
+/// `--demo-bubbles` compares our cleaned output against the vendored `_clean.png` with
+/// the same dilation radius `calibrate-goldens` uses (`xtask/src/calibrate.rs`'s
+/// `GoldenReport::compare_gray_with_shape(..., 2)`), so the two reports' shape columns
+/// mean the same thing.
+const REFERENCE_DILATE_RADIUS: u32 = 2;
 
 /// §16.43 item 6's graft, quoted: the detector's row must state this.
 const DETECTOR_DEVICE_MECHANISM: &str =
@@ -95,6 +106,18 @@ impl CellId {
         match self {
             Self::Simple | Self::SimpleLama => "Simple",
             Self::Annotation | Self::AnnotationLama => "Annotation",
+        }
+    }
+
+    /// The `pc_config` enum value the cell's mask-mode component names, matched directly
+    /// rather than round-tripped through [`Self::mask_mode`]'s display string.
+    ///
+    /// §16.43 item 2(a): a `+lama` cell's *mask mode* is the same as its non-LaMa peer's,
+    /// because LaMa composes with a mask mode instead of being a peer of one.
+    pub(crate) const fn refine_mode(self) -> MaskRefineMode {
+        match self {
+            Self::Simple | Self::SimpleLama => MaskRefineMode::Simple,
+            Self::Annotation | Self::AnnotationLama => MaskRefineMode::Annotation,
         }
     }
 
@@ -190,14 +213,10 @@ pub(crate) struct Measured {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Outcome {
     /// Boxed so the enum is not dominated by the measurement variant.
-    // Constructed by the measurement driver (§16.43 item 9, heavy task 2).
-    #[allow(dead_code)]
     Measured(Box<Measured>),
     /// A whole cell was unavailable — e.g. the LaMa model is missing (§16.43 item 8).
     Blocked { reason: String },
     /// One page failed inside an otherwise-running cell.
-    // Constructed by the measurement driver (§16.43 item 9, heavy task 2).
-    #[allow(dead_code)]
     Failed { reason: String },
 }
 
@@ -305,8 +324,6 @@ impl Benchmark {
     }
 
     /// Record one `(page, cell)` outcome, registering the page on first sight.
-    // Called by the measurement driver (§16.43 item 9, heavy task 2).
-    #[allow(dead_code)]
     pub(crate) fn record(&mut self, page: &str, cell: CellId, outcome: Outcome) {
         if !self.pages.iter().any(|known| known == page) {
             self.pages.push(page.to_owned());
@@ -315,8 +332,6 @@ impl Benchmark {
     }
 
     /// Register a page even when no cell measured it, so a blocked cell still gets rows.
-    // Called by the measurement driver (§16.43 item 9, heavy task 2).
-    #[allow(dead_code)]
     pub(crate) fn register_page(&mut self, page: &str) {
         if !self.pages.iter().any(|known| known == page) {
             self.pages.push(page.to_owned());
@@ -325,6 +340,11 @@ impl Benchmark {
 
     /// Mark a whole cell unavailable. Every other cell in the run still reports
     /// (§16.43 item 8).
+    // Exercised by this module's tests; the *production* caller is the LaMa integration
+    // (§16.43 item 9's second heavy task), which blocks a LaMa cell whose model is
+    // absent. The Simple/Annotation driver blocks no cell — a LaMa cell's masking-stage
+    // numbers are real measurements here, only `inpainting_ran` is false.
+    #[allow(dead_code)]
     pub(crate) fn block_cell(&mut self, cell: CellId, reason: impl Into<String>) {
         self.blocked_cells.insert(cell, reason.into());
     }
@@ -480,8 +500,36 @@ pub(crate) fn inpainter_disclosure(
 
 /// The stage rows this invocation needs: always the detector, plus the inpainter when any
 /// requested cell inpaints.
+///
+/// **Placeholder detector facts** (`None, false, false`) — used by the pure-layer tests,
+/// which never run a real detector. [`run`] uses [`stage_disclosures_with_detector_facts`]
+/// instead, which carries what [`measure`] actually observed. Test-only: since the fix
+/// for F2, no non-test code needs the placeholder.
+#[cfg(test)]
 fn stage_disclosures(cells: &[CellId]) -> Vec<StageDisclosure> {
-    let mut stages = vec![detector_disclosure(None, false, false)];
+    stage_disclosures_with_detector_facts(cells, DetectorFacts::default())
+}
+
+/// What the detector stage actually did in this invocation, so the report's per-stage
+/// disclosure row states real facts rather than a placeholder (post-review fix, §16.43
+/// item 6: a row claiming `no`/`no`/`(not resolved)` when a real ONNX session was in fact
+/// resolved, digest-verified and constructed is a false disclosure, not a nit).
+#[derive(Debug, Clone, Default)]
+struct DetectorFacts {
+    model_path: Option<String>,
+    digest_verified: bool,
+    session_constructed: bool,
+}
+
+fn stage_disclosures_with_detector_facts(
+    cells: &[CellId],
+    detector: DetectorFacts,
+) -> Vec<StageDisclosure> {
+    let mut stages = vec![detector_disclosure(
+        detector.model_path.as_deref(),
+        detector.digest_verified,
+        detector.session_constructed,
+    )];
     if cells.iter().any(|cell| cell.inpainting()) {
         stages.push(inpainter_disclosure(None, false, false));
     }
@@ -777,7 +825,11 @@ pub(crate) struct Args {
     )]
     replay: bool,
     /// Measure the 7 vendored `demo_bubbles` crops — the only source with a reference.
-    #[arg(long, conflicts_with_all = ["replay", "pages"])]
+    ///
+    /// Requires `--detector`: `ReplayDetector` carries exactly one recorded page, so a
+    /// faithful per-crop detection needs the real ONNX detector, not a replay of some
+    /// other image's boxes.
+    #[arg(long, requires = "detector", conflicts_with_all = ["replay", "pages"])]
     demo_bubbles: bool,
     /// Directory of maintainer-local full pages (no reference; the only multi-tile source).
     #[arg(
@@ -787,8 +839,8 @@ pub(crate) struct Args {
         conflicts_with_all = ["replay", "demo_bubbles"]
     )]
     pages: Option<PathBuf>,
-    /// Real detector specification in the form `onnx:<path>` (requires --pages).
-    #[arg(long, value_name = "SPEC", requires = "pages")]
+    /// Real detector specification in the form `onnx:<path>` (with --pages or --demo-bubbles).
+    #[arg(long, value_name = "SPEC", conflicts_with = "replay")]
     detector: Option<String>,
     /// Cells to run: any comma-separated mix of `simple`, `annotation`, `simple+lama`,
     /// `annotation+lama`, or `all`.
@@ -821,13 +873,13 @@ pub(crate) fn run(args: Args) -> Result<()> {
         .out
         .unwrap_or_else(|| paths::docs_root().join("MODE_COMPARISON.md"));
 
-    let benchmark = measure(
+    let (benchmark, detector_facts) = measure(
         source,
         &args.cells.0,
         args.pages.as_deref(),
         args.detector.as_deref(),
     )?;
-    let stages = stage_disclosures(benchmark.cells());
+    let stages = stage_disclosures_with_detector_facts(benchmark.cells(), detector_facts);
     let document = render_document(&benchmark, &policy, &stages);
 
     std::fs::write(&target, &document).with_context(|| format!("writing {}", target.display()))?;
@@ -839,24 +891,401 @@ pub(crate) fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// **Placeholder for the two heavy tasks.**
+// ---------------------------------------------------------------------------
+// Measurement driver (§16.43 items 8 and 9's first heavy task)
+// ---------------------------------------------------------------------------
+
+/// One page to measure, plus the reference to compare against when the source has one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PageJob {
+    /// The name the report's row is keyed by.
+    name: String,
+    image: PathBuf,
+    /// `Some` only for `--demo-bubbles` (§16.43 item 8: the other two sources carry no
+    /// reference image at all).
+    reference: Option<PathBuf>,
+}
+
+/// **Mirror of `pc_inpaint::eligible::select_regions`**
+/// (`crates/pc-inpaint/src/eligible.rs:64-97`), duplicated deliberately.
 ///
-/// §16.43 item 9 ratifies the Simple/Annotation measurement driver and the LaMa
-/// integration as two separate implementation calls *after* this one. Until the first of
-/// them lands there is no measurement to report, so every requested cell is recorded as
-/// BLOCKED with a reason that says exactly that — rather than inventing numbers or
-/// panicking somewhere the report renderer cannot be exercised.
+/// §16.43 item 8 requires `eligible_regions` for **every** cell, LaMa or not, since that
+/// function reads only `MaskRegionStats`. §16.43 item 9 reserves the `xtask/Cargo.toml`
+/// edit — and therefore any new dependency, including `pc-inpaint` — for the LaMa task.
+/// So this counts the same two-set union over types xtask already depends on.
+///
+/// The predicate, quoted verbatim from `select_regions`' two loops:
+///
+/// ```text
+/// if region.failed { out.push(...) }                       // set 1: failed
+///
+/// let poorly_fitted = !region.failed
+///     && region.std_deviation >= config.inpainting_min_std_dev
+///     && region
+///         .thickness
+///         .is_some_and(|thickness| thickness <= config.min_inpainting_radius);
+/// ```
+///
+/// Both comparisons are inclusive, matching upstream's `>=` and `<=`; `thickness.is_some()`
+/// carries upstream's own comment *"For box masks, this is none. We don't need to inpaint
+/// those, they are always good."* The two sets are disjoint by construction (`failed` vs
+/// `!failed`) and `select_regions` pushes one entry per member, so this count is exactly
+/// `select_regions(regions, config).len()`.
+///
+/// **Accepted risk, named rather than solved:** this is a second independent copy of one
+/// predicate, and no cross-crate equivalence test can be written without the dependency
+/// this task must not add. `eligibility_mirror_*` below is a hand-derived-oracle drift
+/// guard local to this copy only.
+fn eligible_region_count(regions: &[MaskRegionStats], config: &InpainterConfig) -> usize {
+    regions
+        .iter()
+        .filter(|region| {
+            region.failed
+                || (region.std_deviation >= config.inpainting_min_std_dev
+                    && region
+                        .thickness
+                        .is_some_and(|thickness| thickness <= config.min_inpainting_radius))
+        })
+        .count()
+}
+
+/// mode-bench needs only the in-memory `MaskOutput`, never a persisted per-page image, so
+/// every destination stays `None`.
+///
+/// This is also what makes a cross-cell scratch collision impossible here: the
+/// `calibrate-goldens` analog (`planned_demo_bubbles_destinations`) builds a path with no
+/// cell component, so reusing it across cells would have had the second cell's
+/// `pc_mask::run` overwrite — and effectively re-read — the first cell's files. Writing
+/// nothing removes the shared name entirely. If a later task needs these files on disk,
+/// `mask_dests` must take the cell and the page into the path, and the collision test
+/// this property currently makes unnecessary has to be written then.
+fn mask_dests(_cell: CellId, _page: &str) -> pc_mask::MaskDests {
+    pc_mask::MaskDests::default()
+}
+
+/// Measure one `(page, cell)` pair: `pc_detect::run` → `pc_preprocess::run` →
+/// `pc_mask::run` with the cell's own `MaskRefineMode`.
+///
+/// Every error inside is per-`(page, cell)` (§16.43 item 8's own shape, and this
+/// project's per-image classification rule): it becomes [`Outcome::Failed`] for this one
+/// row and the caller continues with the next page and the next cell. Nothing here is
+/// run-fatal.
+fn measure_cell(job: &PageJob, cell: CellId, detector: &dyn pc_detect::TextDetector) -> Outcome {
+    match measure_cell_inner(job, cell, detector) {
+        Ok(measured) => Outcome::Measured(Box::new(measured)),
+        Err(error) => Outcome::Failed {
+            reason: format!("{error:#}"),
+        },
+    }
+}
+
+/// The one call in this module that runs the detector, always with the cell's own
+/// `detector_config(cell)`. [`measure_cell_inner`] (the production path) and the test
+/// `the_two_cells_configs_take_different_detector_branches_on_the_replay_fixture` both go
+/// through this same function — a mutation that hard-codes a mode at either call site can
+/// no longer diverge from what the test observes, closing the gap a post-review pass found
+/// (the test previously called `pc_detect::run` a second, independent time, so a mutation
+/// at `measure_cell_inner`'s own call site went undetected).
+fn detect_page(
+    job: &PageJob,
+    cell: CellId,
+    detector: &dyn pc_detect::TextDetector,
+) -> Result<pc_detect::DetectOutput> {
+    pc_detect::run(
+        pc_detect::DetectInput {
+            schema_version: pc_core::SCHEMA_VERSION,
+            source: ImageHandle::from_path(&job.image),
+            original_path: job.image.clone(),
+            target_height_lower: 1000,
+            target_height_upper: 4000,
+            base_image_dest: None,
+            raw_mask_dest: None,
+            min_mask_coverage: pc_detect::DEFAULT_MIN_MASK_COVERAGE,
+            config: detector_config(cell),
+        },
+        detector,
+    )
+    .map_err(|error| anyhow!(error.to_string()))
+    .with_context(|| "running the detector")
+}
+
+/// The detector config one cell runs under: the shipped defaults with **only**
+/// `mask_refine_mode` moved to that cell's own mode (§16.43 item 2(a)).
+fn detector_config(cell: CellId) -> TextDetectorConfig {
+    TextDetectorConfig {
+        mask_refine_mode: cell.refine_mode(),
+        ..TextDetectorConfig::default()
+    }
+}
+
+fn measure_cell_inner(
+    job: &PageJob,
+    cell: CellId,
+    detector: &dyn pc_detect::TextDetector,
+) -> Result<Measured> {
+    let detect_output = detect_page(job, cell, detector)?;
+    let detected_boxes = detect_output.analytics.blocks_detected;
+
+    let preprocess_output = pc_preprocess::run(
+        pc_preprocess::PreprocessInput {
+            schema_version: pc_core::SCHEMA_VERSION,
+            page: detect_output.page,
+            config: PreprocessorConfig::default(),
+            performing_ocr: false,
+        },
+        None,
+    )
+    .map_err(|error| anyhow!(error.to_string()))
+    .with_context(|| "running preprocessing")?;
+    let masking_regions = preprocess_output.page.masking_regions.len();
+
+    let mask_output = pc_mask::run(pc_mask::MaskInput {
+        schema_version: pc_core::SCHEMA_VERSION,
+        page: preprocess_output.page,
+        original_image: ImageHandle::from_path(&job.image),
+        config: MaskerConfig::default(),
+        extract_text: false,
+        debug_outputs: false,
+        dests: mask_dests(cell, &job.name),
+    })
+    .map_err(|error| anyhow!(error.to_string()))
+    .with_context(|| "running masking")?;
+
+    let regions = &mask_output.mask_data.regions;
+    let failed_regions = regions.iter().filter(|region| region.failed).count();
+    let succeeded_regions = regions.len() - failed_regions;
+    // A region whose precise mask was blank never reaches `regions` at all (§2.6, and
+    // `MaskData::regions`' own doc comment) — the same computation `mask_sweep.rs` makes.
+    let dropped_regions = masking_regions.saturating_sub(regions.len());
+    let eligible_regions = eligible_region_count(regions, &InpainterConfig::default());
+
+    let reference = match &job.reference {
+        Some(clean_path) => Some(compare_against_reference(
+            &job.name,
+            &job.image,
+            clean_path,
+            &mask_output,
+        )?),
+        None => None,
+    };
+
+    Ok(Measured {
+        detected_boxes,
+        masking_regions,
+        succeeded_regions,
+        failed_regions,
+        dropped_regions,
+        eligible_regions,
+        // §16.43 item 9: the LaMa integration is the *second* heavy task. Nothing in this
+        // module calls an inpainting function, so "did not inpaint" is the measured fact.
+        inpainting_ran: false,
+        tiles_inferred: None,
+        reference,
+    })
+}
+
+fn compare_against_reference(
+    name: &str,
+    raw_path: &Path,
+    clean_path: &Path,
+    mask_output: &pc_mask::MaskOutput,
+) -> Result<GoldenReport> {
+    let raw_luma = image::open(raw_path)
+        .map(|image| image.to_luma8())
+        .with_context(|| format!("decoding source `{}`", paths::display_relative(raw_path)))?;
+    let clean_luma = image::open(clean_path)
+        .map(|image| image.to_luma8())
+        .with_context(|| {
+            format!(
+                "decoding reference `{}`",
+                paths::display_relative(clean_path)
+            )
+        })?;
+    let cleaned_luma = mask_output
+        .cleaned
+        .load()
+        .map(|image| image.to_luma8())
+        .map_err(|error| anyhow!(error.to_string()))
+        .with_context(|| "loading the cleaned output")?;
+    if raw_luma.dimensions() != clean_luma.dimensions()
+        || raw_luma.dimensions() != cleaned_luma.dimensions()
+    {
+        bail!(
+            "dimension mismatch: source {:?}, reference {:?}, cleaned output {:?}",
+            raw_luma.dimensions(),
+            clean_luma.dimensions(),
+            cleaned_luma.dimensions()
+        );
+    }
+    Ok(GoldenReport::compare_gray_with_shape(
+        name,
+        &raw_luma,
+        &clean_luma,
+        &cleaned_luma,
+        REFERENCE_DILATE_RADIUS,
+    ))
+}
+
+/// Run every requested cell over every page, recording one outcome per pair.
+///
+/// The page is registered even when every cell on it failed, so a failing page still gets
+/// its rows in the report instead of vanishing from the table.
+fn measure_jobs(
+    benchmark: &mut Benchmark,
+    jobs: &[PageJob],
+    cells: &[CellId],
+    detector: &dyn pc_detect::TextDetector,
+) {
+    for job in jobs {
+        benchmark.register_page(&job.name);
+        for cell in cells {
+            benchmark.record(&job.name, *cell, measure_cell(job, *cell, detector));
+        }
+    }
+}
+
+fn demo_bubble_jobs() -> Vec<PageJob> {
+    pc_testkit::paths::DEMO_BUBBLES
+        .iter()
+        .map(|bubble| PageJob {
+            name: bubble.name.to_owned(),
+            image: bubble.path(pc_testkit::paths::BubbleKind::Raw),
+            reference: Some(bubble.path(pc_testkit::paths::BubbleKind::Clean)),
+        })
+        .collect()
+}
+
+/// The three input sources (§16.43 item 8).
+///
+/// Everything that fails here is **command-fatal**, not per-image: an unparseable
+/// `--detector` spec, a detector model that fails its digest check, an unreadable
+/// `--pages` directory. Per-page and per-cell failures are handled one level down, in
+/// [`measure_cell`], and never reach this signature.
 fn measure(
     source: Source,
     cells: &[CellId],
-    _pages: Option<&Path>,
-    _detector: Option<&str>,
-) -> Result<Benchmark> {
+    pages: Option<&Path>,
+    detector: Option<&str>,
+) -> Result<(Benchmark, DetectorFacts)> {
     let mut benchmark = Benchmark::new(source, cells);
-    for cell in cells {
-        benchmark.block_cell(*cell, MEASUREMENT_DRIVER_UNIMPLEMENTED);
+    let facts = match source {
+        Source::Replay => {
+            let fixture_dir = paths::recorded_root().join("detector");
+            let jobs = vec![PageJob {
+                name: REPLAY_STEM.to_owned(),
+                image: fixture_dir.join(format!("{REPLAY_STEM}.jpg")),
+                reference: None,
+            }];
+            let detector = pc_detect::ReplayDetector::new(&fixture_dir, REPLAY_STEM);
+            measure_jobs(&mut benchmark, &jobs, cells, &detector);
+            // No real model is ever resolved for `--replay` — `ReplayDetector` replays a
+            // committed fixture, so the placeholder facts are the honest ones here, not a
+            // stand-in for something unimplemented.
+            DetectorFacts::default()
+        }
+        Source::DemoBubbles => {
+            let spec = detector.ok_or_else(|| {
+                anyhow!("--demo-bubbles requires --detector onnx:<path> (clap enforces this)")
+            })?;
+            measure_with_real_detector(&mut benchmark, &demo_bubble_jobs(), cells, spec)?
+        }
+        Source::Pages => {
+            let dir = pages.ok_or_else(|| anyhow!("--pages is required for this source"))?;
+            let spec = detector.ok_or_else(|| {
+                anyhow!("--pages requires --detector onnx:<path> (clap enforces this)")
+            })?;
+            let jobs = local_page_jobs(dir)?;
+            measure_with_real_detector(&mut benchmark, &jobs, cells, spec)?
+        }
+    };
+    Ok((benchmark, facts))
+}
+
+fn local_page_jobs(dir: &Path) -> Result<Vec<PageJob>> {
+    if !dir.is_dir() {
+        bail!("--pages is not a directory: {}", dir.display());
     }
-    Ok(benchmark)
+    let mut paths = std::fs::read_dir(dir)
+        .with_context(|| format!("reading pages directory {}", dir.display()))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    paths.retain(|path| {
+        path.is_file()
+            && path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    matches!(
+                        extension.to_ascii_lowercase().as_str(),
+                        "png" | "jpg" | "jpeg" | "webp" | "tif" | "tiff" | "bmp" | "pnm"
+                    )
+                })
+    });
+    paths.sort();
+    if paths.is_empty() {
+        bail!("--pages contains no supported images: {}", dir.display());
+    }
+    paths
+        .into_iter()
+        .map(|path| {
+            let name = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(|| anyhow!("page has no UTF-8 file stem: {}", path.display()))?
+                .to_owned();
+            Ok(PageJob {
+                name,
+                image: path,
+                reference: None,
+            })
+        })
+        .collect()
+}
+
+#[cfg(feature = "onnx")]
+fn measure_with_real_detector(
+    benchmark: &mut Benchmark,
+    jobs: &[PageJob],
+    cells: &[CellId],
+    detector_spec: &str,
+) -> Result<DetectorFacts> {
+    let model = crate::env::parse_detector_spec(detector_spec)?;
+    let model = if model.is_relative() {
+        paths::workspace_root().join(model)
+    } else {
+        model
+    };
+    pc_models::verify_sha256(&model, pc_models::COMIC_TEXT_DETECTOR.sha256)
+        .map_err(|error| anyhow!(error.to_string()))
+        .with_context(|| format!("verifying detector model {}", model.display()))?;
+    let detector = pc_detect::onnx::OnnxDetector::from_path_with_config(
+        &model,
+        &TextDetectorConfig::default(),
+    )
+    .map_err(|error| anyhow!(error.to_string()))
+    .with_context(|| "constructing the ONNX detector")?;
+    measure_jobs(benchmark, jobs, cells, &detector);
+    // Reached only after verify_sha256 and from_path_with_config both succeeded above, so
+    // both facts are genuinely true here — not asserted ahead of the work that earns them.
+    Ok(DetectorFacts {
+        model_path: Some(model.display().to_string()),
+        digest_verified: true,
+        session_constructed: true,
+    })
+}
+
+#[cfg(not(feature = "onnx"))]
+fn measure_with_real_detector(
+    _benchmark: &mut Benchmark,
+    _jobs: &[PageJob],
+    _cells: &[CellId],
+    detector_spec: &str,
+) -> Result<DetectorFacts> {
+    let _ = crate::env::parse_detector_spec(detector_spec)?;
+    bail!(
+        "--demo-bubbles and --pages require the real ONNX detector; rerun with \
+         `cargo xtask --features onnx mode-bench ...`"
+    )
 }
 
 #[cfg(test)]
@@ -1455,6 +1884,339 @@ mod tests {
             .contains("**Generated in full by `cargo xtask mode-bench` — do not hand-edit.**"));
         assert!(document.contains("**non-gating**"));
         assert!(document.contains("gates no CI job and\nblocks no merge"));
+    }
+
+    // --- §16.43 item 8: the mirrored eligibility predicate ---------------------
+
+    fn region(failed: bool, std_deviation: f64, thickness: Option<u32>) -> MaskRegionStats {
+        MaskRegionStats {
+            rect: pc_core::Rect::new(0, 0, 4, 4),
+            std_deviation,
+            failed,
+            thickness,
+        }
+    }
+
+    /// Hand-derived oracle for [`eligible_region_count`], the local mirror of
+    /// `pc_inpaint::eligible::select_regions` (`crates/pc-inpaint/src/eligible.rs:64-97`).
+    ///
+    /// Every expectation below is derived from that function's *text* plus
+    /// `InpainterConfig::default()`'s two literals, never from running the mirror. The
+    /// two boundary rows are the ones that catch a `>=`→`>` or `<=`→`<` drift, and the
+    /// last row is the `thickness.is_some()` clause upstream comments as *"For box masks,
+    /// this is none. We don't need to inpaint those, they are always good."*
+    ///
+    /// **This cannot catch cross-crate drift** — asserting the two copies agree needs a
+    /// `pc-inpaint` dependency, which §16.43 item 9 reserves for the LaMa task. It is a
+    /// guard on this copy only, and that limitation is real, not solved.
+    #[test]
+    fn the_mirrored_eligibility_predicate_matches_the_hand_derived_upstream_cases() {
+        let config = InpainterConfig::default();
+        // The boundary rows below mean what their names say only at these two values.
+        assert_eq!(config.inpainting_min_std_dev, 15.0);
+        assert_eq!(config.min_inpainting_radius, 7);
+
+        let cases: [(&str, MaskRegionStats, bool); 5] = [
+            (
+                "a failed region is eligible whatever its std dev or thickness",
+                region(true, 0.0, None),
+                true,
+            ),
+            (
+                "both bounds met inclusively: std dev == 15.0 and thickness == 7",
+                region(false, 15.0, Some(7)),
+                true,
+            ),
+            (
+                "std dev just under the inclusive lower bound",
+                region(false, 14.999, Some(7)),
+                false,
+            ),
+            (
+                "thickness just over the inclusive upper bound",
+                region(false, 15.0, Some(8)),
+                false,
+            ),
+            (
+                "a box mask (thickness None) is never eligible, however high its std dev",
+                region(false, 1_000.0, None),
+                false,
+            ),
+        ];
+
+        for (why, stats, expected) in &cases {
+            assert_eq!(
+                eligible_region_count(std::slice::from_ref(stats), &config),
+                usize::from(*expected),
+                "{why}"
+            );
+        }
+
+        // Anti-vacuity literal: the whole table counted at once is 2 — a number a
+        // predicate that answered all-true (5) or all-false (0) cannot produce.
+        let all: Vec<MaskRegionStats> = cases.iter().map(|(_, stats, _)| stats.clone()).collect();
+        assert_eq!(eligible_region_count(&all, &config), 2);
+    }
+
+    // --- §16.43 item 9: per-cell mask-mode selection ---------------------------
+
+    #[test]
+    fn the_detector_config_a_cell_runs_under_carries_that_cells_own_refine_mode() {
+        // §16.43 item 2(a): a `+lama` cell's mask mode is its non-LaMa peer's.
+        assert_eq!(
+            detector_config(CellId::Simple).mask_refine_mode,
+            MaskRefineMode::Simple
+        );
+        assert_eq!(
+            detector_config(CellId::SimpleLama).mask_refine_mode,
+            MaskRefineMode::Simple
+        );
+        assert_eq!(
+            detector_config(CellId::Annotation).mask_refine_mode,
+            MaskRefineMode::Annotation
+        );
+        assert_eq!(
+            detector_config(CellId::AnnotationLama).mask_refine_mode,
+            MaskRefineMode::Annotation
+        );
+        // Only that one field moves; everything else stays the shipped default.
+        let default = TextDetectorConfig::default();
+        let annotation = detector_config(CellId::Annotation);
+        assert_eq!(annotation.model_path, default.model_path);
+        assert_eq!(annotation.concurrent_models, default.concurrent_models);
+        assert_eq!(annotation.intra_threads, default.intra_threads);
+        assert_eq!(annotation.inter_threads, default.inter_threads);
+    }
+
+    /// The teeth behind the test above: it asserts a *field value*, which would still
+    /// hold if `MaskRefineMode::Annotation` were a no-op. This runs the two configs the
+    /// driver actually builds through `pc_detect::run` on the committed replay fixture
+    /// and shows they take different branches — so the Annotation cell is a genuinely
+    /// different run, not a relabelled Simple one.
+    #[test]
+    fn the_two_cells_configs_take_different_detector_branches_on_the_replay_fixture() {
+        let fixture_dir = paths::recorded_root().join("detector");
+        let page = fixture_dir.join(format!("{REPLAY_STEM}.jpg"));
+        let detector = pc_detect::ReplayDetector::new(&fixture_dir, REPLAY_STEM);
+        let job = PageJob {
+            name: REPLAY_STEM.to_owned(),
+            image: page,
+            reference: None,
+        };
+
+        // Post-review fix (F1): calls `detect_page`, the SAME function
+        // `measure_cell_inner` — the real production path — calls with `detector_config
+        // (cell)`. Previously this test called `pc_detect::run` a second, independent
+        // time, so a mutation at the production call site went undetected; routing
+        // through `detect_page` closes that gap by construction.
+        let raw_mask_for = |cell: CellId| {
+            detect_page(&job, cell, &detector)
+                .expect("the committed replay fixture detects")
+                .page
+                .raw_mask
+                .load()
+                .expect("raw mask")
+                .to_luma8()
+                .into_raw()
+        };
+
+        let simple = raw_mask_for(CellId::Simple);
+        let annotation = raw_mask_for(CellId::Annotation);
+        assert_eq!(
+            simple.len(),
+            annotation.len(),
+            "the two modes produced different-sized masks; the comparison below is meaningless"
+        );
+        assert_ne!(
+            simple, annotation,
+            "the Simple and Annotation cells produced byte-identical raw masks, so the \
+             cell's `mask_refine_mode` is not reaching `pc_detect::run`"
+        );
+    }
+
+    // --- §16.43 item 9 / brief point 4: no scratch path to collide on ----------
+
+    /// The scratch-collision risk named in §16.43's planning history is removed by
+    /// construction rather than by naming paths carefully: mode-bench needs only the
+    /// in-memory `MaskOutput`, so it asks `pc_mask::run` to write nothing at all. There
+    /// is therefore no path any two cells could share. If a later task starts writing
+    /// files, this test goes red and that task owes the cell-and-page-qualified path plus
+    /// the collision test this one currently makes unnecessary.
+    #[test]
+    fn no_cell_asks_pc_mask_to_write_any_file_so_no_two_cells_can_share_an_output_path() {
+        for cell in CellId::ALL {
+            for page in ["p1", "p2"] {
+                let dests = mask_dests(*cell, page);
+                let named: [(&str, &Option<PathBuf>); 6] = [
+                    ("combined_mask", &dests.combined_mask),
+                    ("cleaned", &dests.cleaned),
+                    ("text_layer", &dests.text_layer),
+                    ("box_mask", &dests.box_mask),
+                    ("cut_mask", &dests.cut_mask),
+                    ("mask_overlay", &dests.mask_overlay),
+                ];
+                for (field, value) in named {
+                    assert_eq!(
+                        *value,
+                        None,
+                        "{}/{page} asks for a `{field}` output path",
+                        cell.name()
+                    );
+                }
+            }
+        }
+    }
+
+    // --- §16.43 item 8: a per-page failure is per-(page, cell) ------------------
+
+    /// Task 1 already has a *renderer* test for this shape against fabricated
+    /// `Outcome::Failed` values. This one drives the real
+    /// `pc_detect::run` → `pc_preprocess::run` → `pc_mask::run` sequence over two pages,
+    /// one of which cannot be decoded, and asserts the **driver** produces that outcome:
+    /// the bad page fails in every cell, the good page still measures in every cell, and
+    /// the run does not abort.
+    #[test]
+    fn an_undecodable_page_fails_only_its_own_rows_and_leaves_the_other_page_measured() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let good = temp.path().join("good.png");
+        image::GrayImage::from_fn(240, 1000, |x, y| {
+            let inside = (20..200).contains(&x) && (20..400).contains(&y);
+            image::Luma([if inside { 20 } else { 235 }])
+        })
+        .save(&good)
+        .expect("writing the decodable page");
+        let bad = temp.path().join("bad.png");
+        std::fs::write(&bad, b"this file is not a PNG at all").expect("writing the bad page");
+
+        let detector = pc_detect::MockDetector::new()
+            .with_blocks(vec![pc_detect::RawBlock {
+                rect: pc_core::Rect::new(20, 20, 200, 400),
+                class_index: 0,
+                confidence: 0.9,
+            }])
+            .with_block_fill(255);
+
+        let cells = [CellId::Simple, CellId::SimpleLama];
+        let jobs = vec![
+            PageJob {
+                name: "bad".to_owned(),
+                image: bad,
+                reference: None,
+            },
+            PageJob {
+                name: "good".to_owned(),
+                image: good,
+                reference: None,
+            },
+        ];
+        let mut benchmark = Benchmark::new(Source::Pages, &cells);
+        measure_jobs(&mut benchmark, &jobs, &cells, &detector);
+
+        for cell in cells {
+            match benchmark.outcome("bad", cell) {
+                Some(Outcome::Failed { reason }) => assert!(
+                    reason.contains("detector"),
+                    "the failure does not name the stage that failed: {reason}"
+                ),
+                other => panic!("bad page under {}: {other:?}", cell.name()),
+            }
+            assert!(
+                matches!(benchmark.outcome("good", cell), Some(Outcome::Measured(_))),
+                "the good page did not measure under {}: {:?}",
+                cell.name(),
+                benchmark.outcome("good", cell)
+            );
+        }
+        // Both pages are still in the report — identity, not a count.
+        assert_eq!(
+            benchmark.full_population(),
+            BTreeSet::from(["bad".to_owned(), "good".to_owned()]),
+        );
+    }
+
+    // --- §16.43 items 7 and 8: --demo-bubbles' reference-loading path -----------
+
+    /// The 7 vendored crops and their sizes, transcribed from
+    /// `tests/fixtures/upstream/ATTRIBUTION.md` via §7.1 — an oracle independent of the
+    /// driver, which reads `pc_testkit::paths::DEMO_BUBBLES` itself.
+    #[cfg(feature = "onnx")]
+    const VENDORED_CROPS: [(&str, (u32, u32)); 7] = [
+        ("black", (202, 319)),
+        ("darkrays", (208, 320)),
+        ("handwritten", (72, 132)),
+        ("nightmare", (219, 343)),
+        ("ray", (256, 329)),
+        ("spikey", (354, 354)),
+        ("square", (144, 270)),
+    ];
+
+    /// `--demo-bubbles` needs the real ONNX detector and a real model artifact, so this
+    /// skips with an actionable message on a machine with neither, exactly as
+    /// `xtask/src/bench.rs` does, rather than failing the whole `onnx` tier there.
+    ///
+    /// **No pass/fail assertion is made against `_clean.png`** (§15.2, and §16.43 item
+    /// 7's third binding condition): this asserts that the reference was *found, decoded
+    /// and compared*, never that the comparison met any threshold.
+    #[cfg(feature = "onnx")]
+    #[test]
+    fn demo_bubbles_attaches_a_reference_report_to_every_vendored_crop() {
+        let Some(model) = std::env::var_os("PANEL_OCR_ONNX_MODEL")
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
+        else {
+            println!(
+                "SKIPPED: no detector model; set PANEL_OCR_ONNX_MODEL=<comictextdetector.pt.onnx>"
+            );
+            return;
+        };
+        let spec = format!("onnx:{}", model.display());
+        let cells = [CellId::Simple];
+        let (benchmark, facts) = measure(Source::DemoBubbles, &cells, None, Some(&spec))
+            .expect("--demo-bubbles is a complete run");
+        // Post-review fix (F2): the real detector's facts must reach the disclosure row —
+        // confirm this run actually observed them, not the `--replay` placeholder.
+        assert!(
+            facts.model_path.is_some(),
+            "no model path recorded for a real detector run"
+        );
+        assert!(
+            facts.digest_verified,
+            "digest verification was not observed"
+        );
+        assert!(
+            facts.session_constructed,
+            "session construction was not observed"
+        );
+
+        // Identity, not cardinality: all 7 crops by name.
+        assert_eq!(
+            benchmark.full_population(),
+            VENDORED_CROPS
+                .iter()
+                .map(|(name, _)| (*name).to_owned())
+                .collect::<BTreeSet<String>>(),
+        );
+        for (name, size) in VENDORED_CROPS {
+            match benchmark.outcome(name, CellId::Simple) {
+                Some(Outcome::Measured(measured)) => {
+                    let report = measured
+                        .reference
+                        .as_ref()
+                        .unwrap_or_else(|| panic!("`{name}` carries no reference report"));
+                    assert_eq!(report.name, name);
+                    // The compared images really are the vendored crop, at its
+                    // independently transcribed size.
+                    assert_eq!(report.dims, size, "`{name}` compared the wrong image");
+                    // `compare_gray_with_shape` was used, not the shapeless `compare_gray`.
+                    assert!(
+                        report.shape_iou.is_some() && report.shape_subset_of_dilated.is_some(),
+                        "`{name}` has no shape columns, so the source-vs-reference change \
+                         sets were never computed"
+                    );
+                }
+                other => panic!("`{name}` did not measure: {other:?}"),
+            }
+        }
     }
 
     #[test]
