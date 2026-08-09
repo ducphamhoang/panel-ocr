@@ -14,6 +14,7 @@ mod calibrate;
 mod device;
 mod env;
 mod mask_sweep;
+mod mode_bench;
 mod model_signature;
 mod ocr_model_signature;
 mod paths;
@@ -83,6 +84,8 @@ enum Command {
     },
     /// Task T3 (§16.35): measure lowest-deviation mask-rescue opportunities.
     MaskSweep(mask_sweep::Args),
+    /// Task #16/#6 (§16.43): non-gating Simple/Annotation/LaMa comparison benchmark.
+    ModeBench(mode_bench::Args),
     /// Measure ONNX detector tuning candidates in fresh child processes.
     BenchDetector {
         /// Detector model, using `onnx:<path>`; falls back to PANEL_OCR_ONNX_MODEL.
@@ -174,6 +177,7 @@ fn main() -> Result<()> {
             calibrate::run(out.as_deref(), detector.as_deref(), &policy)
         }
         Command::MaskSweep(args) => mask_sweep::run(args),
+        Command::ModeBench(args) => mode_bench::run(args),
         Command::BenchDetector {
             detector,
             reps,
