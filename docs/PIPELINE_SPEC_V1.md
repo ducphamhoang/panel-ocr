@@ -1881,6 +1881,23 @@ verify-then-decide process as §15/§16.6/§16.8/§16.9. Each item is binding on
    `src = floor(dst · src_len / dst_len)`), so Stage 3's composite and Stage 4's agree
    pixel-for-pixel — which §11.3 step 2 depends on, since it *reproduces* Stage 3's clean
    output rather than reading `_clean.png`.
+   **SUPERSEDED by §16.42 — read it before citing this item's pin as current, and read
+   its own scope carefully: this item pins `pc-mask` and `pc-denoise` only.** §16.42
+   overturns the "restate rather than hoist" pin *for the functions this item names*
+   (`blend_channel`, `resize_nearest_rgba`, `alpha_composite_over`, `composite_rgb`),
+   which now hoist into `pc_imageops::composite` — matching the precedent this same
+   §16.10 already scheduled for `nlm`/`gaussian` (item 1) and that §16.38 items 16(a)
+   and 20 already executed for the morphology and the Gaussian blur. `pc-export`'s
+   later, separate copy of three of these four functions is pinned by §16.11 item 10,
+   not by this item (see the back-pointer there); `pc-inpaint`'s copy is required by
+   §16.38 item 3(h) and its own module doc cites this item's pin **by analogy**, not as
+   this item's direct authority, since `pc-inpaint` postdates this item. §16.42 covers
+   all of them, but this item's own scope was always `pc-mask`/`pc-denoise` only — do
+   not read it as having pinned the other two crates' copies itself. The rule-2
+   reasoning this item gives for WHY `pc-denoise` could not just import from `pc-mask`
+   is unaffected — that reasoning still forbids a stage crate depending on a sibling
+   stage crate, and is exactly what motivates hoisting into the shared, non-stage
+   `pc_imageops` crate instead of leaving the copies in place.
 
 4. **`DenoiseDests`' second field is `denoised`,** per §11.2. §4.3's diagram spells it
    `clean_denoised`; that is a typo, read `denoised` there (same treatment as §16.6 item 2).
@@ -2208,6 +2225,14 @@ capability claim about the `image` crate below was verified against the pinned
     neither operation. `resize_nearest_rgba` and `alpha_composite_over` are pinned
     byte-identically to `pc_denoise::composite`'s, so a mask exported at scale matches
     the one the denoiser saw. Same v1.5 consolidation ticket.
+
+    **SUPERSEDED by §16.42 — read it before citing "same v1.5 consolidation ticket" as
+    still pending.** The ticket this item named is cashed in: `resize_nearest_rgba` and
+    `alpha_composite_over` (this item covers only these two of the three functions
+    `pc-export` actually has — `blend_channel` is pinned by this same reasoning but not
+    named in this item's text) hoist into `pc_imageops::composite`, along with the
+    `pc-mask`/`pc-denoise` copies §16.10 item 3 pinned. `pc-export`'s
+    previously-absent `pc-imageops` dependency is added as part of this hoist.
 
 11. **The OCR report reads `OcrAnalytic.removed`, and returns a `String`**
     (`ocr_report`, §12.3 step 7, §12.6, §15.5). `pc_core::OcrAnalytic` carries per-box
@@ -7999,19 +8024,19 @@ Scope, quoted from §16.23 item 1 so it travels with this entry: **"v1.5 ships: 
    **OPEN, and deliberately not settled by this transcription: whether `:1527` (§16.6 item 1) needs its own back-pointer marker.** Item 3 above enumerates the clause markers this ratification authorises — §16.5 item 3, §8.3 step 5, §15 item 2 — and §16.6 item 1 is **not** among them; item 7 of §16.37 did not name it either. Reclassifying it from stale to false is a correction to *this* item's own bookkeeping and is within a transcription's remit; **adding a seventh marker would be a new ratification act and is not.** The argument for one is that §16.6 item 1 is a ratified decision whose stated rationale A4 falsifies, which is exactly the §16.19 trigger; the argument against is that the decision itself (`DetectInput` gains `config`) survives untouched and only its *because*-clause moves. This is recorded for the architects to close, not resolved here; the enumeration obligation of cookbook rule 14 is discharged by the site being listed either way.
 
    (d) **Sites that become STALE without becoming false** (they stop describing the tree; no marker is claimed for any of them, and item 3(c) explains why §15 item 2 is treated differently from these):
-   `docs/PIPELINE_SPEC_V1.md:1440` (§15 item 2's "v1.5 door" — the one that **does** get a marker) · the `MaskRefineMode::Annotation` bullet in §16's out-of-scope list at the end of this file · `:3781` (**§16.22 item 7**, not §16.23 — the line is inside §16.22, whose span ends at `:3783`, and it *points at* §16.23 item 2 without being in it; an earlier draft of this item attributed it to §16.23) · `:3812-3830` (§16.23 item 2's *"`MaskRefineMode::Annotation` must NOT land before F1 records"* — its precondition is satisfied, F1 recorded long ago, so the constraint is spent rather than violated) · `:3798` (§16.23's **v1.5-ships** list, which names `MaskRefineMode::Annotation` as still to come) · `:3876` (§16.23's v1.5 sequencing, *"**Annotation** last"*) — **these last two were missed by the first draft of this item and added on re-grep**; they are the same spent-constraint class as `:3812-3830`, from the same section · `crates/pc-detect/src/mask.rs:150-153` (`DEVIATION(12)`, item 2(c)-(d) above) · `README.md:102` (the roadmap checkbox).
+   `docs/PIPELINE_SPEC_V1.md:1440` (§15 item 2's "v1.5 door" — the one that **does** get a marker) · the `MaskRefineMode::Annotation` bullet in §16's out-of-scope list at the end of this file · `:3805` (**§16.22 item 7**, not §16.23 — the line is inside §16.22, whose span ends at `:3806`, and it *points at* §16.23 item 2 without being in it; an earlier draft of this item attributed it to §16.23) · `:3835-3854` (§16.23 item 2's *"`MaskRefineMode::Annotation` must NOT land before F1 records"* — its precondition is satisfied, F1 recorded long ago, so the constraint is spent rather than violated) · `:3821` (§16.23's **v1.5-ships** list, which names `MaskRefineMode::Annotation` as still to come) · `:3899` (§16.23's v1.5 sequencing, naming Annotation as the historical-final step — the exact words "Annotation is still last" are on the following line, `:3900`) — **these last two were missed by the first draft of this item and added on re-grep**; they are the same spent-constraint class as `:3835-3854`, from the same section · `crates/pc-detect/src/mask.rs:150-153` (`DEVIATION(12)`, item 2(c)-(d) above) · `README.md:102` (the roadmap checkbox). (Re-pinned 2026-08-09, corrected again 2026-08-09 after a fresh-reader mismatch: the five `docs/PIPELINE_SPEC_V1.md` line numbers above — `:3805`, `:3806`, `:3835-3854`, `:3821`, `:3899` — each independently re-verified against the actual quoted sentence at that line, not just shifted by a flat +25; content unchanged.)
 
    **(d.i) RECLASSIFIED out of this list, because they become FALSE and not merely stale — they carry 5(c)'s obligation, not this one.** The first draft of this item filed the "not wired" headers as stale; they are not. *"This module is not wired into anything"* and *"`d7_run.rs::run_rejects_annotation_refine_mode` still passes"* are propositions A4 falsifies outright, the second because item 3(d) replaces and renames that test. The live spans, each re-read rather than inherited: `crates/pc-detect/src/lib.rs:10-11`, `:13-15`, `:17-19` (three module doc comments, *"**Not wired into [`run`]**, which still rejects that mode"*; the first draft cited only `:14` and `:18` and missed `:10-11` entirely, because line 11 carries the claim without the token this grep searches for — see 5(f)) · `crates/pc-detect/src/annotate.rs:7-10` · `crates/pc-detect/src/annotate_merge.rs:14-16` · `crates/pc-detect/src/annotate_refine.rs:7-10` · `crates/pc-detect/tests/a1_annotate_topk.rs:19-21` · `crates/pc-detect/tests/a2_annotate_otsu.rs:65-67` · `crates/pc-detect/tests/a3_annotate_merge.rs:60-62`. That is **nine spans across seven files** — recounted by reading the list above item by item, after a draft of this sentence said "six module/scope headers", which is neither the number of spans nor the number of files. The seven files are `lib.rs` (three spans), `annotate.rs`, `annotate_merge.rs`, `annotate_refine.rs`, `a1_annotate_topk.rs`, `a2_annotate_otsu.rs` and `a3_annotate_merge.rs` (one span each). **The first draft named two of them**, not three: `lib.rs:14` and `lib.rs:18`, per this item's own parenthetical above, and 5(f) below independently records the additions as *"`lib.rs:10-11` and the six headers now in (d.i)"* — seven added to two already listed is the nine here, and the two statements corroborate each other rather than one being derived from the other. (Each of the nine spans was re-read on 2026-08-07 and the wording is not uniform, so it is recorded rather than summarised: `lib.rs`'s three carry *"**Not wired into [`run`]**, which still rejects that mode"*; `annotate.rs:7-10` carries *"**This module is not wired into anything.** `pc_detect::run` still rejects `MaskRefineMode::Annotation`"* citing §16.37's preamble and **not** the test name; `annotate_merge.rs:14-16` and `annotate_refine.rs:7-10` carry that sentence **plus** *"`d7_run.rs::run_rejects_annotation_refine_mode` still passes"*; the three test files carry a *"**Scope.** A1/A2/A3 is *not* Annotation mode"* header with the same two clauses and not the "not wired into anything" one.) Separately, three of them — `annotate_merge.rs:22`, `annotate_refine.rs:10`, `a3_annotate_merge.rs:68` — say A4 performs *"the `DEVIATION(12)` **retirement**"*, which **item 2 above makes false in a second, independent way**: the entry is narrowed, not retired.
 
    (e) **`crates/pc-cli/` is still NOT a site**, re-confirmed by this grep rather than inherited: `grep -rn -i annotation crates/pc-cli/` returns nothing.
 
-   (f) **What is asserted complete, and what the first draft of this item got wrong.** The first draft said *"This list is asserted complete for the token `annotation` … Hits inside [the Apache licence], [`spec_supersession.rs`]'s own comments, and every `annotate*` identifier are excluded as unrelated"* — i.e. that 5(c) and 5(d) between them covered every hit outside three exclusion classes. **That was false, and re-running the grep on 2026-08-07 refuted it rather than an argument doing so:** `docs/PIPELINE_SPEC_V1.md:3798` and `:3876` were in neither list and in no exclusion class, and so were `crates/pc-detect/src/lib.rs:10-11` and the six headers now in (d.i). All are added above.
+   (f) **What is asserted complete, and what the first draft of this item got wrong.** The first draft said *"This list is asserted complete for the token `annotation` … Hits inside [the Apache licence], [`spec_supersession.rs`]'s own comments, and every `annotate*` identifier are excluded as unrelated"* — i.e. that 5(c) and 5(d) between them covered every hit outside three exclusion classes. **That was false, and re-running the grep on 2026-08-07 refuted it rather than an argument doing so:** `docs/PIPELINE_SPEC_V1.md:3821` and `:3899` (re-pinned 2026-08-09; the prior pins `:3798`/`:3876` already carried a pre-existing 2-line drift before the §16.42 insertions, so the net move from those old numbers is +23, not a flat +25 — each line independently re-verified against its target passage, same as item 5(d)'s treatment of these same two sites) were in neither list and in no exclusion class, and so were `crates/pc-detect/src/lib.rs:10-11` and the six headers now in (d.i). All are added above.
 
    The command, re-run in full for this correction, is `grep -rn -i annotation crates/ README.md docs/PIPELINE_SPEC_V1.md`. It returned **138** hits before the first correction was written and **145** after — and **147** after the second correction pass (2026-08-07) that recounted 5(d.i)'s spans, re-classified `:1527`, and added 5(g). **The total is not a stable number, because this section's own prose is inside the search scope**: 34 of the 147 are in §16.39 itself, which now spans `:7504`–`:7653`. Anyone re-running it will get a different total the moment this section is edited again; the durable claim is the classification below, not the count. What is asserted, and only this: **every hit whose prose A4 makes false or stale is enumerated in 5(c), 5(d) or 5(d.i)**, and every remaining hit falls into one of these five named classes, each of which stays accurate after A4:
 
    1. **The Apache licence text**, `crates/pc-ocr/assets/LICENSE-APACHE-2.0.txt` (1 hit) — the licence's own wording, unrelated.
-   2. **Identifiers and literals rather than prose:** the `Annotation` variant itself (`crates/pc-config/src/profile.rs:216`), `ANNOTATION_EXPAND_R` and its re-export and uses (`crates/pc-detect/src/annotate.rs:41` and `:44`, `crates/pc-detect/src/lib.rs:35`, `annotate_refine.rs:98` and `:181`, and the A1 test call sites), the `"annotation"` TOML value under test (`crates/pc-config/tests/defaults.rs:345`, `:350`, `:360`, `:364`, and the test's own name at `:359`), upstream's `REFINEMASK_ANNOTATION` wherever it is quoted (including `docs/PIPELINE_SPEC_V1.md:3359`), the `annotation_*_matches_the_upstream_oracle` test names, `docs/PIPELINE_SPEC_V1.md:7389`'s reference to `annotation_refine_mode_loads_successfully` as a *pattern*, and every `annotate*` path or function name. Where a nearby **comment** rather than the identifier is what goes false, 5(c) lists it — `defaults.rs:113`, `:356-358` and `:361` are exactly that.
-   3. **The ordinary English word, no relation to the mode:** `docs/PIPELINE_SPEC_V1.md:1013` (*"σ/thickness text annotations"*), `:5318` (*"Its own annotation, added 2026-07-30"*), `:6056` (*"moving either annotation to a different row"*).
+   2. **Identifiers and literals rather than prose:** the `Annotation` variant itself (`crates/pc-config/src/profile.rs:216`), `ANNOTATION_EXPAND_R` and its re-export and uses (`crates/pc-detect/src/annotate.rs:41` and `:44`, `crates/pc-detect/src/lib.rs:35`, `annotate_refine.rs:98` and `:181`, and the A1 test call sites), the `"annotation"` TOML value under test (`crates/pc-config/tests/defaults.rs:345`, `:350`, `:360`, `:364`, and the test's own name at `:359`), upstream's `REFINEMASK_ANNOTATION` wherever it is quoted (including `docs/PIPELINE_SPEC_V1.md:3384`, re-pinned 2026-08-09 from `:3359`, +25, by the §16.42 spec insertions above this point; content unchanged), the `annotation_*_matches_the_upstream_oracle` test names, `docs/PIPELINE_SPEC_V1.md:7389`'s reference to `annotation_refine_mode_loads_successfully` as a *pattern* (**UNVERIFIED, flagged rather than re-pinned 2026-08-09, magnitude updated 2026-08-09 after a fresh-reader pass**: this citation does not land on that sentence even before the §16.42 shift — checked against the pre-§16.42 committed text, where the actual sentence sits at line 7387, two lines off; this looks like a pre-existing drift unrelated to §16.42. Since this citation's own line number (`:7389`) was left un-shifted while 25 lines of content were added above it (17 at the §16.10 item 3 back-pointer, 8 at the §16.11 item 10 back-pointer — the rest of §16.42's ~171 lines and the §16.39 5(d)/5(f) rewrites all sit *below* line 7389 and don't affect it), the citation is now roughly 25 lines further off its intended target than it was pre-§16.42 — the "two lines off" figure describes the pre-existing drift only, not the current gap. Left for the architects to re-derive and correct rather than silently guessed at here.), and every `annotate*` path or function name. Where a nearby **comment** rather than the identifier is what goes false, 5(c) lists it — `defaults.rs:113`, `:356-358` and `:361` are exactly that.
+   3. **The ordinary English word, no relation to the mode:** `docs/PIPELINE_SPEC_V1.md:1013` (*"σ/thickness text annotations"*), `:5341` (*"Its own annotation, added 2026-07-30"*), `:6079` (*"moving either annotation to a different row"*). (Re-pinned 2026-08-09: `:5341` and `:6079` were `:5318`/`:6056` before this pass — that pre-existing pair was already 2 lines off its target before the §16.42 insertions, a drift unrelated to this pass; re-verified against the actual quoted sentences and pinned to their exact current lines here, +25 relative to their pre-§16.42 correct locations of 5316/6054.)
    4. **Dated records that stay true as records.** §16.37 (`:7395`–`:7502`) and **the whole of §16.39** (`:7504`–`:7653`, 34 hits, this item included) describe the tree **at the time of writing** and say so explicitly in their preambles, so A4 does not falsify them; likewise `crates/pc-testkit/tests/spec_supersession.rs`'s registry comments, and the back-pointer markers this section itself installs at `:701`, `:705`, `:1389`, `:1399`, `:1442` and `:1479`, which are written *for* the post-A4 tree.
    5. **Doc comments about the ported algorithm rather than its wiring:** `annotate.rs:2`, `:14`, `:116`, `:122`; `annotate_merge.rs:68`, `:72`, `:602`; `annotate_refine.rs:16`, `:79`, `:133`; and the A1–A3 test bodies.
 
@@ -8019,9 +8044,9 @@ Scope, quoted from §16.23 item 1 so it travels with this entry: **"v1.5 ships: 
 
    (g) **Readers of `DEVIATION(12)`'s OLD LOCATION — a SECOND enumeration, from a DIFFERENT search, for a DIFFERENT reason.** Everything in (a)–(f) above is scoped to the token `annotation`. **This sub-item is not**, and none of the three sites below contains that token, so no re-run of (f)'s grep — at any scope — could ever have surfaced them. They are readers of a *fact* item 2(c) changes: that the primary `DEVIATION(12)` comment lives on `refine_simple` at `crates/pc-detect/src/mask.rs:150`. When A4-b moves that comment to `MaskRefineMode`'s `#[default] Simple` variant in `crates/pc-config/src/profile.rs`, each sentence below states a location that no longer holds. Cookbook rule 14: when a ratified decision changes a shared fact, enumerate every reader.
 
-   Command, run on 2026-08-07 and deliberately **whole-tree** rather than scoped to the three paths of (f): `git grep -n "DEVIATION(12)"` (tracked files only, so `target/` noise is excluded by construction rather than by a filter). It returned **18** hits when this sub-item was first drafted and **25** once the sub-item itself was written — the same instability caveat as (f) applies and for the same reason: **13** of the 25 are this section's own prose, and the other 12 are 6 elsewhere in this file (`:2779`, and §16.37's five at `:7397`, `:7429`, `:7431`, `:7472`, `:7478`), 4 in `crates/`, and 1 each in `docs/HANDOVER.md` and `docs/DETECTOR_ORACLE.md`. The durable claim is the three-row list below, not the total. The hits that state the location, and become **FALSE** when the comment moves:
+   Command, run on 2026-08-07 and deliberately **whole-tree** rather than scoped to the three paths of (f): `git grep -n "DEVIATION(12)"` (tracked files only, so `target/` noise is excluded by construction rather than by a filter). It returned **18** hits when this sub-item was first drafted and **25** once the sub-item itself was written — the same instability caveat as (f) applies and for the same reason: **13** of the 25 are this section's own prose, and the other 12 are 6 elsewhere in this file (`:2779` [re-pinned 2026-08-09 to `:2804`, +25, by the §16.42 spec insertions above this point; content unchanged], and §16.37's five at `:7397`, `:7429`, `:7431`, `:7472`, `:7478` [these five are a dated 2026-08-07 snapshot count, already noted elsewhere in this item as approximate — not individually re-verified or re-pinned here]), 4 in `crates/`, and 1 each in `docs/HANDOVER.md` and `docs/DETECTOR_ORACLE.md`. The durable claim is the three-row list below, not the total. The hits that state the location, and become **FALSE** when the comment moves:
 
-   - `docs/PIPELINE_SPEC_V1.md:2779` — §14 item 18's record of the comment-only change that added the marker: *"`DEVIATION(12)` at `pc-detect`'s `refine_simple`"*.
+   - `docs/PIPELINE_SPEC_V1.md:2804` (re-pinned 2026-08-09 from `:2779`, +25, by the §16.42 spec insertions above this point; content unchanged) — §14 item 18's record of the comment-only change that added the marker: *"`DEVIATION(12)` at `pc-detect`'s `refine_simple`"*.
    - `docs/HANDOVER.md:173` — *"`DEVIATION(17)` … does not exist anywhere in `crates/`/`xtask/` (`DEVIATION(12)` does, at `crates/pc-detect/src/mask.rs:150`)"*.
    - `docs/DETECTOR_ORACLE.md:52` — the `mask_coverage` row's closing note: *"`grep -rn DEVIATION` finds `DEVIATION(12)` at `crates/pc-detect/src/mask.rs:150` but no `DEVIATION(17)`"*.
 
@@ -8031,7 +8056,7 @@ Scope, quoted from §16.23 item 1 so it travels with this entry: **"v1.5 ships: 
 
    **`crates/pc-detect/src/mask.rs:150-153` itself is in 5(d)** and is not repeated here; the three code sites that say `DEVIATION(12)` **"retirement"** (`annotate_merge.rs:22`, `annotate_refine.rs:10`, `a3_annotate_merge.rs:68`) are in 5(d.i), where item 2 already falsifies the word. §16.37's own five mentions (`:7397`, `:7429`, `:7431`, `:7472`, `:7478`) also say "retirement" or cite `mask.rs:152`; they fall under 5(f)'s class 4 as a dated record, **but a reviewer should note that item 2 above contradicts §16.37 items 8 and 11(d) in substance while carrying a marker only against §14 item 12.** Whether §16.37 needs one is a call for the architects, exactly like the `:1527` question in 5(c); this transcription flags it and does not add a marker for it.
 
-   **No supersession marker is claimed for anything in this sub-item, and the reason is stated rather than assumed.** These three sentences are **true today**; they become false only when A4-b performs the move. A back-pointer marks a clause that a ratified decision has already displaced, and the decision that owns this move — item 2 — already carries its supersession marker against §14 item 12, at the register entry the comment belongs to. This list is an enumeration of readers, not a new supersession claim, so `EXPECTED_PARSED_CLAIMS` does not move on its account. A reviewer who disagrees should say so: the remedy is one marker at `:2779` and one registry row, not a rewrite.
+   **No supersession marker is claimed for anything in this sub-item, and the reason is stated rather than assumed.** These three sentences are **true today**; they become false only when A4-b performs the move. A back-pointer marks a clause that a ratified decision has already displaced, and the decision that owns this move — item 2 — already carries its supersession marker against §14 item 12, at the register entry the comment belongs to. This list is an enumeration of readers, not a new supersession claim, so `EXPECTED_PARSED_CLAIMS` does not move on its account. A reviewer who disagrees should say so: the remedy is one marker at `:2804` (re-pinned 2026-08-09 from `:2779`, +25, by the §16.42 spec insertions above this point) and one registry row, not a rewrite.
 
 6. **Task breakdown. Four tasks, two heavy and two simple, in this order.** A4-b is sequenced **after** A4-a and not batched with it: A4-a establishes that `Annotation` runs at all, and A4-b changes what the filter reads. Interleaved, a red test cannot be attributed to the wiring or to the operand.
 
@@ -8153,6 +8178,184 @@ is a defect independent of the section's content; see CLAUDE.md's step-1a
    its own ruling). It does not exempt hand edits, including hand edits rustfmt would
    also have produced: the byte-identity condition is satisfied by running the tool,
    not by resembling it. Exits 1–3 of COOKBOOK §8 are untouched.
+
+## 16.42 Composite-helper consolidation: overturning §16.10 item 3's duplication pin (joint architect + Senior Rust Engineer plan pass, converging independently, 2026-08-09)
+
+**Provenance.** Two independent joint architect + Senior Rust Engineer planning passes
+converged on the same conclusion in this session, without one reading the other's
+output first. This entry transcribes that convergence.
+
+1. **What is being overturned, quoted verbatim as the target.** §16.10 item 3 currently
+   reads: *"`pc-denoise` likewise gets its own `composite.rs`. Same rule-2 reason.
+   `blend_channel`, `alpha_composite_over`, `composite_rgb` and `resize_nearest_rgba`
+   are pinned **identically** to §16.9 items 13 and 15 ... so Stage 3's composite and
+   Stage 4's agree pixel-for-pixel — which §11.3 step 2 depends on, since it
+   *reproduces* Stage 3's clean output rather than reading `_clean.png`."* That pin —
+   restate the same functions verbatim in each stage crate rather than hoist them — is
+   **overturned**. §1 rule 2 (a stage crate may not depend on another stage crate) is
+   unaffected and is not what changes; what changes is that the shared arithmetic moves
+   into `pc_imageops`, a non-stage crate, exactly the same move already made for the
+   morphology (§16.38 item 16(a)) and the Gaussian blur (§16.38 item 20), both of which
+   were themselves scheduled by this same §16.10 as "v1.5 consolidation ticket[s]."
+
+2. **The four functions, confirmed duplicated (not four independent design choices) by
+   re-running the enumeration grep** (`grep -n "fn blend_channel\|fn resize_nearest_rgba\|fn
+   alpha_composite_over\|fn composite_rgb" -r crates/ --include=*.rs`, re-verified
+   2026-08-09):
+
+   * `blend_channel(base: u8, color: u8, alpha: f64) -> u8` — `crates/pc-mask/src/combine.rs`,
+     `crates/pc-denoise/src/composite.rs`, `crates/pc-export/src/composite.rs`,
+     `crates/pc-inpaint/src/compose.rs`. Four copies, same rounding/clamp formula
+     (`round(base·(1−a) + color·a)`, §16.9 item 15).
+   * `resize_nearest_rgba(mask: &RgbaImage, size: (u32, u32)) -> RgbaImage` — same four
+     crates. Same `src = floor(dst · src_len / dst_len)` formula (§16.9 item 13), same
+     size-match and zero-dimension early returns.
+   * `alpha_composite_over(dst: &mut RgbaImage, layer: &RgbaImage, at: (i32, i32))` —
+     same four crates. Same source-over blend, same `alpha_out = max(base_a, layer_a)`,
+     same out-of-bounds-drop behaviour.
+   * `composite_rgb(canvas: &RgbImage, mask: &RgbaImage) -> RgbImage` — **three** crates
+     only: `pc-mask`, `pc-denoise`, `pc-inpaint`. `pc-export` never had this function
+     (confirmed: it has no `composite_rgb` anywhere in `crates/pc-export/`).
+
+   `crates/pc-pipeline/tests/l4_composite_equivalence.rs`'s own header already records
+   this exact four-crate/three-crate split and states outright, at its "OPEN QUESTION"
+   paragraph, that L4 did not decide whether item 3's pin stands or a hoist supersedes
+   it — this entry is that decision.
+
+3. **None of the four functions' signatures touch `pc-config` or any other type that
+   would break `pc_imageops`'s "no `pc-config` dependency, independently
+   benchmarkable" property** (§16.10 item 1 / §16.38 item 20's precedent). All four
+   operate purely on `image` crate types (`RgbaImage`, `RgbImage`, `Rgba`) and
+   primitives. The hoist preserves that property by construction, the same way the
+   morph and Gaussian hoists did.
+
+4. **`pc-export` currently has no `pc-imageops` dependency**
+   (`crates/pc-export/Cargo.toml` carries an explicit `NOTE (§16.11 item 10)` citing
+   §16.10 item 3's precedent for why not — restated rather than hoisted). The
+   architecture diagram already lists `pc-imageops ← pc-detect, pc-mask, pc-denoise,
+   pc-export` as a sanctioned edge (§1's crate dependency graph, not §4.3 — corrected
+   2026-08-09, a fresh-reader pass found the citation pointed at the wrong section
+   number; the quoted edge itself was already verified accurate), so adding this
+   dependency fills in an
+   edge already authorised, not a new one, and the `pc-export/Cargo.toml` comment
+   must be updated or removed as part of the hoist rather than left asserting a
+   now-false "no dependency" claim.
+
+5. **Land-mine 1 — the `DEVIATION(8)` comment on `pc-export`'s copy must migrate to the
+   call site, not travel into the hoisted module.** `crates/pc-export/src/composite.rs`
+   carries, directly above `resize_nearest_rgba`:
+
+   ```
+   // DEVIATION(8): upstream uses BILINEAR for the denoise-mask upscale
+   // (`image_export.py:221`) and NEAREST at the other four sites; §15.8 normalises to
+   // nearest everywhere.
+   ```
+
+   This comment is about **one specific call site's** behaviour (the denoise-mask
+   upscale in `pc-export`'s own export composition, documented at
+   `crates/pc-export/src/lib.rs:200-206`), not about the general nearest-resampling
+   function. The hoisted `pc_imageops::composite::resize_nearest_rgba` serves four
+   crates and has no way to know which of its many call sites is the one upstream
+   diverges on; leaving the comment attached to the generic function would misattribute
+   a one-caller deviation to the shared primitive. The comment moves to
+   `crates/pc-export/src/lib.rs`, attached to the call that performs the denoise-mask
+   upscale, when the hoist happens.
+
+6. **Land-mine 2 — `pc-export`'s copy has zero test coverage anywhere in the workspace,
+   and a pre-hoist value-lock test is a binding sequencing requirement, not a
+   nice-to-have.** `crates/pc-pipeline/tests/l4_composite_equivalence.rs`'s header
+   states this explicitly and by name: *"`pc-export`'s copy is referenced by **no**
+   test in the workspace: nothing outside `pc-export` itself names its `composite`
+   module or its re-exported `blend_channel` / `alpha_composite_over` /
+   `resize_nearest_rgba`, so that copy is uncovered by any equivalence check, here or
+   elsewhere."* Confirmed independently by grep, checked both ways: no test file
+   **anywhere in the workspace, including inside `crates/pc-export/tests/` itself**,
+   referenced `pc_export::composite` at the time this entry was drafted (2026-08-09) —
+   re-check before relying on this, since item 9 requires exactly this gap to be closed
+   by a new test before the hoist starts, and a grep scoped only to "outside
+   `pc-export`" would wrongly report a gap already closed inside it. **Coverage of the
+   other three crates' copies is uneven, not uniform — corrected 2026-08-09, a
+   fresh-reader pass found this paragraph claiming more than the file it cites two
+   sentences above actually asserts.** `l4_composite_equivalence.rs`'s own header
+   states the real split: `blend_channel` and `composite_rgb` are checked across
+   `pc-mask`/`pc-denoise`/`pc-inpaint` (3 of 4 and 3 of 3 respectively), but
+   `resize_nearest_rgba` and `alpha_composite_over` are checked only across
+   `pc-denoise`/`pc-inpaint` — `pc-mask`'s copies of those two specific functions have
+   **no** cross-crate agreement coverage either, the same gap `pc-export` has for all
+   three. `pc-export` was, at drafting time, the only crate with zero coverage on any function — item 9's pre-hoist tests close exactly that gap; see the note there.
+
+   **Binding requirement:** a value-lock test for `pc-export`'s current, un-hoisted
+   `blend_channel`, `resize_nearest_rgba` and `alpha_composite_over` must be written
+   and observed **GREEN against the pre-hoist code** before the hoist implementation
+   task starts. A test written and run only **after** the hoist that merely checks
+   `pc-export`'s (now re-exported, now-identical-by-construction) functions "agree"
+   with the other three crates would pass vacuously — by the time the hoist has
+   happened, all four call sites resolve to the same function, so an agreement check
+   proves nothing about whether the pre-hoist `pc-export` copy actually matched the
+   other three's behaviour before it was deleted. This is cookbook rule 7/13's
+   "expectation must not be derived from the artifact under test," applied here as
+   "coverage must exist before the artifact it covers is replaced," not after.
+
+7. **Two cosmetic (non-behavioural) divergences, resolved during the hoist:**
+
+   (a) **Panic message wording on `composite_rgb`'s size-mismatch guard.** No frozen
+   test pins either wording. Of the three crates that have `composite_rgb`
+   (`pc-export` has none), two (`pc-denoise`, `pc-inpaint`) use the shorter form;
+   `pc-mask`'s reads longer. **Resolution: the hoisted function keeps the shorter, more general
+   `"composition needs matching sizes: …"` wording**, since the hoisted module serves
+   four crates generically and `pc-mask`'s longer `"cleaned-image composition needs
+   matching sizes: …"` embeds a `pc-mask`-specific noun (`"cleaned-image"`) that does
+   not describe what `pc-denoise` or `pc-inpaint` are compositing.
+
+   (b) **`if`/`else` vs. two early-return `if`s in `resize_nearest_rgba`'s size-match
+   and zero-dimension guards.** `pc-mask`'s copy merges the two checks into an
+   `if/else`; the other three use two separate early-return `if`s. Behaviourally
+   identical (confirmed: both forms return the same value for every input). **Resolution:
+   take whichever source form is clearer at the time of the hoist — this does not
+   matter and is not worth a rule.**
+
+8. **Explicit scope discipline: this ratification covers ONLY these four functions.**
+   It does **not** authorise hoisting any other function in `pc-mask::combine` —
+   `cleaned_image`, `text_layer`, `mask_overlay`, `build_combined_mask` stay exactly
+   where they are. Those four are masking-*policy* functions (they decide what gets
+   combined and how, per §9/§16.9's masking rules), not general pixel-math primitives,
+   and nothing above establishes that they are duplicated anywhere else in the
+   workspace. A future reader widening this entry's authority to cover them is taking
+   a separate, argued step this entry does not take.
+
+9. **Classification for the plan.** ONE heavy Codex call for the hoist itself — it
+   touches five crates simultaneously (`pc-imageops`, `pc-mask`, `pc-denoise`,
+   `pc-export`, `pc-inpaint`) — preceded by simple/batchable pre-hoist test-writing
+   (item 6's `pc-export` value-lock test, plus extending
+   `l4_composite_equivalence.rs`'s coverage to include `pc-export`'s three functions)
+   that must land and be observed GREEN, against the **un-hoisted** code, before the
+   heavy call starts. The pre-hoist tests are themselves frozen once written, per the
+   pipeline's ordinary TDD rule — they are not exempt because they predate the hoist.
+
+10. **What this entry does not decide.** It does not decide the exact module path
+    inside `pc_imageops` beyond "`pc_imageops::composite`" as named in the title. It
+    does not authorize any edit to `crates/pc-pipeline/tests/l4_composite_equivalence.rs`'s
+    **existing** assertions — but item 9 *does* authorize, and expects, an
+    **additive-only** extension of that same file (new test functions covering
+    `pc-export`, per item 6's binding requirement) as part of the pre-hoist test-writing
+    step; that file legitimately shows a diff once item 9's work lands, and the diff
+    being purely additive (no `-` lines against its current content) is precisely what
+    this entry does and does not permit there. This entry also does not resolve L4's
+    "OPEN QUESTION" note by editing that file's prose — the header's own note that "L4
+    did not decide it" stays accurate as a historical record of what L4 did, and this
+    entry is the decision that note said had not yet been made.
+
+   **SUPERSEDES: §16.10 item 3** — that item pins `pc-mask`'s and `pc-denoise`'s
+   copies of `blend_channel`, `resize_nearest_rgba`, `alpha_composite_over` and
+   `composite_rgb` as the permanent v1 shape rather than a hoist candidate (its own
+   text names only these two crates); this entry overturns that pin per items 1–9
+   above. `pc-inpaint`'s copy is required by §16.38 item 3(h) and cites item 3's pin by
+   analogy, not as item 3's direct authority; §16.42 overturns it the same way.
+
+   **SUPERSEDES: §16.11 item 10** — that item separately pins `pc-export`'s later copy
+   of `resize_nearest_rgba` and `alpha_composite_over` ("same v1.5 consolidation
+   ticket" as item 3, but its own, later-numbered ratification) as unhoisted; this
+   entry cashes in that ticket per items 1–9 above.
 
 ## 16. Summary of what v1 is NOT
 

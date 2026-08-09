@@ -23,7 +23,7 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 49;
+const EXPECTED_PARSED_CLAIMS: usize = 51;
 
 /// Claims whose declared sub-item identity must scope the target-side back-pointer independently.
 /// Most historical lettered claims retain §16.26 item 3(a)'s parent-item span. These two are pinned
@@ -301,6 +301,12 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // The two rows raise EXPECTED_PARSED_CLAIMS from 39 to 41.
     ("16.40", "16.38 item 25(a)"),
     ("16.40", "16.38 item 25(d)"),
+    // §16.42's two markers: the composite-helper hoist overturns both §16.10 item 3's
+    // pin (pc-mask/pc-denoise copies) and §16.11 item 10's separate, later pin
+    // (pc-export's copy) — two distinct targets, not one restated. Raises
+    // EXPECTED_PARSED_CLAIMS from 49 to 51.
+    ("16.42", "16.10 item 3"),
+    ("16.42", "16.11 item 10"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
