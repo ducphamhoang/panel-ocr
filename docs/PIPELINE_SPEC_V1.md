@@ -1898,6 +1898,9 @@ verify-then-decide process as §15/§16.6/§16.8/§16.9. Each item is binding on
    is unaffected — that reasoning still forbids a stage crate depending on a sibling
    stage crate, and is exactly what motivates hoisting into the shared, non-stage
    `pc_imageops` crate instead of leaving the copies in place.
+   **SUPERSEDED as to the `alpha_out = max(base_a, layer_a)` clause by §16.45 — read it
+   before citing that formula as current.** The destination-ignoring rule was a real
+   compositing defect, not a stable pin; §16.45 replaces it with real source-over.
 
 4. **`DenoiseDests`' second field is `denoised`,** per §11.2. §4.3's diagram spells it
    `clean_denoised`; that is a typo, read `denoised` there (same treatment as §16.6 item 2).
@@ -2218,6 +2221,10 @@ capability claim about the `image` crate below was verified against the pinned
    "every exported pixel's colour occurs in the source mask" assertion exact.
    "Original image's size" is `ExportInput.original_path`'s dimensions, read with
    `image::image_dimensions` (header only) — the same reason as item 5.
+   **SUPERSEDED as to the `alpha_out = max(base_a, layer_a)` clause by §16.45 — read it
+   before citing that formula as current.** This item's own destination (the resized
+   combined mask, transparent outside its footprint) is one of the two sites §16.45
+   measured the defect on directly; real source-over replaces the quoted formula here.
 
 10. **`pc-export` restates nearest resampling and source-over in its own
     `composite.rs`.** Same reasoning as §16.10 item 3: §1 rule 2 forbids depending on
@@ -8217,6 +8224,12 @@ output first. This entry transcribes that convergence.
      only: `pc-mask`, `pc-denoise`, `pc-inpaint`. `pc-export` never had this function
      (confirmed: it has no `composite_rgb` anywhere in `crates/pc-export/`).
 
+   **SUPERSEDED as to the `alpha_out = max(base_a, layer_a)` clause by §16.45 — read it
+   before citing that formula as current.** The four-copies-agree-identically finding
+   above is otherwise unaffected: all four (now hoisted into one) copies were wrong in
+   the same way, which is exactly why fixing the one hoisted implementation fixes all
+   former call sites at once, per §16.45 item 4.
+
    `crates/pc-pipeline/tests/l4_composite_equivalence.rs`'s own header already records
    this exact four-crate/three-crate split and states outright, at its "OPEN QUESTION"
    paragraph, that L4 did not decide whether item 3's pin stands or a hoist supersedes
@@ -8806,6 +8819,276 @@ paraphrasing it.
    what counts as a failure, whether §16.38 item 9(b)'s run-fatal classification
    applies) is unchanged by this entry and governed by §16.43 item 8 and §16.38 as
    already ratified — only the report-rendering consequences item 4 states are new.
+
+## 16.45 `alpha_composite_over` was not source-over: a transparent-destination compositing defect, root-cause diagnosis by `architect`, independent joint architect + Senior Rust Engineer planning pass, converging (2026-08-10)
+
+**Found by the user doing an actual visual comparison of real `panel-ocr.exe clean`
+output** — not by any test, and not by `docs/MODE_COMPARISON.md`'s own reference-agreement
+metric. **The real reason that metric could not have caught this, checked against the
+report rather than guessed: mode-bench's own stage sequence never runs `pc-denoise` at
+all** — `docs/MODE_COMPARISON.md:13` states it directly, `` `pc_detect::run` →
+`pc_preprocess::run` → `pc_mask::run` → `pc_pipeline::run_inpaint` ``. The defect lives
+entirely inside `pc-denoise`'s compositing, so no fixture size or crop count fed to
+mode-bench could have exercised it — this is a pipeline-coverage gap, not a
+fixture-size one. (Separately true, but not why mode-bench missed this: `docs/MODE_COMPARISON.md`'s own §1
+already notes the 7 vendored crops are too small — under 512px on both axes — to exercise
+LaMa's tiling behaviour per §16.38 items 5(c)/5(d); a different, already-disclosed
+limitation, not this one.)
+
+**Provenance, stated plainly rather than left to be assumed from the citations below.**
+The root-cause diagnosis was a dispatched `architect` agent (brief:
+`docs/briefs/gray_mask_edge_diagnosis_brief.md`); the fix design was an independent joint
+`architect` + Senior Rust Engineer planning pass, each agent working from the same brief
+(`docs/briefs/alpha_composite_fix_plan_brief.md`) without seeing the other's output
+first, per this project's standing disagreement-detection process. **Neither brief, nor
+either agent's full returned report, is a committed artifact**: `docs/briefs/` is
+gitignored by design (see `CLAUDE.md`'s "Agent dispatch briefs" section) and
+`docs/WORKSTATE.md`, which records the Orchestrator's own summary of what each agent
+concluded, is itself an uncommitted local continuation file in the main worktree, not
+part of this repository's history. This transcription is therefore the Orchestrator's own
+comparison of the two agents' returned reports, checked line-by-line against the live
+codebase and against a real PIL run where a check was possible (items 2 and 4 below
+distinguish what was independently re-verified from what rests on the reports alone) —
+not a claim that a reader can independently pull up the original two reports themselves.
+Where this entry says "both agents independently confirmed" or "converged," that is
+this characterization, not a pointer to a retrievable transcript.
+
+1. **The defect, root-caused by a dispatched `architect` diagnosis (read-only, brief
+   `docs/briefs/gray_mask_edge_diagnosis_brief.md`).** `crates/pc-imageops/src/composite.rs`'s
+   `alpha_composite_over` blends the layer's colour against the destination's RGB while
+   **ignoring the destination's own alpha** — `blend_channel(dst_rgb, layer_rgb, a)`,
+   correct only when the destination is opaque. `pc-denoise` composites its
+   Gaussian-faded noise-mask rim (`crates/pc-denoise/src/noise_mask.rs:158-171`) onto a
+   canvas that starts fully **transparent**, `(0,0,0,0)` (`noise_mask.rs:128`), so every
+   partial-alpha rim pixel's colour is pre-multiplied by α once there while its stored
+   alpha is left un-attenuated. `crates/pc-denoise/src/lib.rs:268`'s `composite_rgb` then
+   composites that already-wrong layer onto the real (opaque) page — this second step is
+   itself correct source-over onto an opaque canvas, so it does not introduce a second
+   error, it *reveals* the first one as a visible darkening. `crates/pc-export/src/lib.rs`'s
+   mask export (§16.11 item 9) hits the same bug a **second, independent** time on a
+   **different** destination — the resized combined mask, transparent outside the mask
+   footprint, which the padded noise rim reaches beyond. **Net formula stated for the
+   observed case specifically (uniform paper, where the denoised layer's colour equals
+   the base colour) — it does NOT generalise to `src ≠ base`:** with `src ≈ base`, the
+   two-step composite reduces to `out = base·(1 − α + α²)` instead of the correct
+   `base·(1−α) + src·α`, a real darkening with floor `0.75·base` at α = 0.5. In the
+   general case the two-step result is `out = base·(1−α) + src·α²`, which does not
+   simplify to a single-variable expression in `base` alone; the paper-darkening figure
+   above is the shape the defect takes on a page with uniform background, which is what
+   the real-page measurement in item 2 below actually is.
+
+2. **Confirmed against real measurements and against the tiebreak oracle, not argued.**
+   The diagnosing architect measured two real pixels on the user's real-page benchmark
+   (`docs/HANDOVER.md`'s "Choujin Locke" convention — local-only, never committed) and
+   matched the formula's prediction to the exact integer (base 248 → 196 and 187 at the
+   two sampled α values). Both independent planning-pass agents separately ran upstream
+   PanelCleaner's own compositor, PIL's `Image.alpha_composite` (proper, un-premultiplied
+   source-over) — **Pillow 11.3.0**, recorded here because a future re-derivation needs
+   the version, not only the claim that PIL was run — at the pinned commit, and both
+   independently confirmed their candidate Rust fix reproduces PIL's output bit-for-bit
+   on every case they each tried — including, separately, the exact case that matters
+   most (`base_a == 0`): a fully transparent destination must yield the layer's own
+   colour and alpha unchanged, not a premultiplied fraction of it.
+
+3. **Scope: `Simple` and `Annotation` alike, independent of inpainting.** Triggered by
+   `denoising_enabled = true` (default) plus any region passing
+   `noise_min_standard_deviation`; mask mode and whether LaMa runs are both irrelevant to
+   whether the defect fires. `pc-inpaint` does not introduce its own instance (its
+   `clean_inpaint` destination is opaque, `crates/pc-inpaint/src/lib.rs:300-309`) but
+   *inherits* the artifact because it composites the already-corrupted noise-mask layer
+   at line 307. `pc_mask::combine::build_combined_mask` is **not** affected today — its
+   own alpha is always exactly 0 or 255 by construction (§10.3 step 4, this file's line
+   ~1006), which happens to take the primitive's one already-correct fast path. This is
+   an accident of that function's current inputs, not a property the function itself
+   asserts, and is recorded here as a latent hazard, not fixed — no `src/` change is
+   authorised for `pc-mask` by this entry.
+
+4. **DECIDED: real (Porter-Duff) source-over replaces the current formula in
+   `alpha_composite_over`, and this is a supersession, not an additive fix — checked by
+   both planning agents independently rather than assumed from the diagnosis's own
+   summary, which was wrong on this point.** The diagnosing architect's own recommendation
+   (quoted in `docs/WORKSTATE.md`'s 2026-08-10 entry) asserted the fix "reduces to today's
+   formula when `da == 255` (keeps existing value locks green)." **That parenthetical is
+   false, independently caught by both planning agents**: neither of `composite_value_lock.rs`'s
+   two partial-alpha tests uses `da == 255` — they use `da = 180` and `da = 100` — and one
+   planning agent additionally found, **by actually applying the candidate fix in a
+   detached probe worktree and running `cargo test --workspace --no-fail-fast`**, that two
+   further frozen assertions in `crates/pc-export/tests/l6_inpaint_precedence.rs` also
+   change. The corrected, measured formula:
+
+   ```
+   out_a = sa + da·(1 − sa)
+   out_rgb[c] = round( (src[c]·sa + dst[c]·da·(1 − sa)) / out_a )     for out_a > 0
+   ```
+
+   where `sa = src_alpha/255`, `da = dst_alpha/255`, clamped to `0..=255`. This reduces
+   algebraically to the current formula when `da == 255` (verified: identical output on
+   the opaque-destination case both planning agents tested) and to a plain copy of the
+   source layer when `da == 0` (verified: PIL and both candidate Rust implementations
+   agree exactly). It does **not** reduce to `alpha_out = max(base_a, layer_a)` in the
+   general partial/partial case, which is why this supersedes rather than extends the
+   existing pin. **No division-by-zero guard is needed or wanted**: the primitive's
+   existing `a == 0 { continue }` early return already guarantees `sa > 0`, hence
+   `out_a > 0`, on every code path that reaches the division; a defensive branch here
+   would be dead code no reviewer could falsify (cookbook rule 6).
+
+   **Explicitly rejected: a narrower `if dst_alpha == 0 { copy the layer }` special
+   case**, raised and rejected independently by both planning agents on the same
+   grounds. It would be fully additive (no frozen test moves, no ratification needed)
+   and fixes the reported symptom, which is exactly why it is tempting and exactly why
+   it is wrong: it leaves `0 < da < 255` still wrong, and that regime is reachable in
+   production — `build_noise_mask` composites multiple regions' padded, faded rims onto
+   one shared canvas in sequence, so two nearby rims overlapping at partial alpha is
+   ordinary, not exotic. It would also leave the function's own doc comment's claim of
+   "source-over" false for exactly the regime that already escaped review once. Rejected.
+
+   **Byte-parity with PIL is not claimed as a general property and must not be pinned as
+   one.** One planning agent measured 68/8400 (0.8%) of randomised partial-over-partial
+   pairs disagree with PIL by ±1 in one channel — PIL uses a different (integer,
+   premultiplied-path) rounding scheme internally. Every literal this entry authorises
+   below was independently obtained by *running* PIL on that exact input, not derived
+   from a general parity claim; a future test must do the same, never assert "matches
+   PIL" as a blanket property.
+
+5. **AUTHORISED: the frozen-test amendment, with exact replacement values, so a fresh
+   reader has something concrete to check rather than trusting either planning agent's
+   arithmetic.** This is cookbook rule 8 exit 2 (a frozen test contradicting the
+   now-ratified formula) — the corrected assertions do not claim less about the system,
+   so this routes through joint planning rather than a unilateral edit, which is what
+   happened. The first two replacement values below were independently obtained by both
+   planning agents running PIL's `Image.alpha_composite` (Pillow 11.3.0) and agree
+   exactly between the two independent runs; the last two were measured, not predicted,
+   by one agent actually applying the candidate fix in a detached probe worktree and
+   running the real suite — see the paragraph below the list for what that changes about
+   their evidentiary weight:
+
+   - `crates/pc-export/tests/composite_value_lock.rs:208`,
+     `alpha_composite_over_partial_alpha_blend_matches_the_hand_derived_result`:
+     `Rgba([60, 150, 100, 180])` → **`Rgba([53, 168, 82, 218])`**
+     (dst `(100,50,200,180)`, layer `(20,250,0,128)`).
+   - `crates/pc-export/tests/composite_value_lock.rs:224`,
+     `alpha_composite_over_partial_alpha_blend_alpha_out_is_the_max_not_just_base_alpha`:
+     `Rgba([60, 150, 100, 128])` → **`Rgba([42, 194, 56, 178])`**
+     (dst `(100,50,200,100)`, layer `(20,250,0,128)`). This test's own stated purpose —
+     distinguishing `alpha_out` from a bug that writes plain `base_a` — survives under
+     the corrected value: `178 ≠ base_a = 100`, so the two readings still diverge. It
+     also gains a second discriminating property worth stating in the amended doc
+     comment rather than leaving implicit: `178` now also separates real source-over
+     from the superseded `max` rule (which would have kept asserting `128` here).
+     **AUTHORISED: this test's own NAME and assertion message must also change, not
+     only its literal and doc comment.** The name
+     (`…alpha_out_is_the_max_not_just_base_alpha`) and the message
+     (`"alpha_out must be max(base_a, layer_a) = 128, not base_a = 100"`) both assert
+     the superseded rule as the property being verified; after this amendment the
+     assertion refutes that rule rather than confirming it, so an unrenamed test would
+     state the old, wrong claim as its own name while its body proves the new one — the
+     "name claims more than the assertion verifies" defect this same paragraph names
+     below, in its sharpest form, inside a frozen file. Rename to
+     `alpha_composite_over_partial_alpha_blend_uses_real_alpha_out_not_the_max_rule`,
+     with the message updated to state what `178` actually demonstrates (real
+     source-over's `alpha_out`, distinct from both `base_a` and the superseded `max`).
+   - `crates/pc-export/tests/l6_inpaint_precedence.rs:280` (measured, not predicted, by
+     actually running the candidate fix — found only because one planning agent applied
+     it rather than reasoning about it — `exported_inpaint_mask_pixel_is_combined_then_noise_then_inpainting`):
+     `[92, 75, 67, 180]` → **`[102, 79, 69, 227]`**.
+   - `crates/pc-export/tests/l6_inpaint_precedence.rs` (measured the same way,
+     `exported_inpaint_mask_omits_noise_when_denoising_is_disabled`):
+     `[17, 83, 52, 180]` → **`[17, 95, 50, 199]`**.
+
+   Each amended test's doc comment must be corrected in the same change to stop
+   asserting the superseded `max(base_a, layer_a)` rule in prose — a value-only edit
+   leaving the comment would be the "name claims more than the assertion verifies"
+   defect in reverse (`docs/COOKBOOK.md`). The same doc-comment correction (never a value
+   change — none of these are frozen assertions) also applies to every OTHER place in the
+   tree that still asserts the superseded rule in prose, enumerated in item 8 below, so
+   the fix does not leave stale claims standing merely because they sit outside the four
+   amended assertions. **This is the complete, measured red list for the fix's blast
+   radius on ASSERTION VALUES specifically** — one planning agent applied the candidate
+   fix in a detached probe worktree and ran `cargo test --workspace --no-fail-fast` to
+   confirm no further frozen test changes; a real implementation must re-confirm this
+   against the actual integration worktree rather than trusting this list as exhaustive
+   by construction.
+
+6. **AUTHORISED: `pc-export`'s mask export needs its own new test, not just a
+   `pc-denoise`-level one.** One planning agent checked this directly against the
+   brief's explicit question and disagreed with treating it as structurally covered: the
+   mask export composites onto a *different* destination (the resized combined mask,
+   transparent outside its footprint) producing a *different* artifact (`_mask.png`),
+   and measured, unfixed, a rim pixel exported as `[50,25,13,64]` where the true noise
+   layer was `[200,100,50,64]` — the same defect, independently occurring. A gate at
+   `pc-denoise`'s own output does not cover it; treating it as covered would be
+   `docs/COOKBOOK.md`'s "gate a copy of the risk, not the risk" failure. New test
+   required at this call site as part of the same implementation task.
+
+7. **SUPERSEDES: §16.10 item 3, §16.11 item 9, §16.42 item 2** — each pinned
+   `alpha_out = max(base_a, layer_a)` as the compositing rule; all three now read real
+   source-over per item 4 above. Markers placed at each target site, back-pointing here,
+   per this project's supersession-marker convention (`docs/COOKBOOK.md` rule 14 /
+   `CLAUDE.md`'s supersession cross-check test). §16.10 item 3's own duplication pin
+   (already superseded in part by §16.42, as to *location*) is untouched by this entry;
+   only the arithmetic clause changes here.
+
+8. **Correction, unprompted, found independently while re-verifying the citation for
+   item 4's replaced formula (bonus finding, not this entry's main subject).**
+   `§16.9 item 15`
+   is cited as the authority for `alpha_out = max(base_a, layer_a)`. **The most direct
+   instance, checked separately from the derivative ones below, is
+   `crates/pc-imageops/src/composite.rs:62`** — `alpha_composite_over`'s own doc comment:
+   `` `alpha_out = max(base_a, layer_a)` (§16.9 item 15) ``, a direct first-hand
+   attribution, not a paraphrase of something else. The other sites cited here are
+   derivative, transitively repeating that attribution rather than independently
+   asserting it: `crates/pc-mask/src/combine.rs:12` reads only "the arithmetic itself is
+   unchanged and still pinned by §16.9 items 13 and 15" — generic, naming no `alpha_out`
+   clause specifically; `composite_value_lock.rs:14`, `:175` and `:193` — three separate
+   doc comments in the same file, only two of which this entry's first draft named — each
+   restate the `alpha_out` claim in their own words; §16.10 item 3 and §16.42 item 2
+   restate it as part of their own pins, now overturned per item 7 below. But §16.9
+   item 15, read at source,
+   is entirely about `mask_overlay`'s constant-alpha RGB blend applied only where the
+   combined mask's alpha is 255, and contains no statement about `alpha_out` or about
+   `alpha_composite_over` at all (`grep -n alpha` over that item's line range returns
+   exactly two hits, both inside the `mask_overlay` text). Item 15's
+   `round(base·(1−a)+colour·a)` legitimately grounds `blend_channel`; the `alpha_out`
+   half was attached to it by paraphrase, not by anything item 15 actually says — the "a
+   claim's scope travels with it" failure class this project has hit before.
+
+   **Two further sites, not previously enumerated (beyond `composite_value_lock.rs`'s own
+   three doc comments above), will still assert the superseded rule in prose after the H3
+   fix lands and are not covered by item 5's per-test obligation** (item 5 amends four
+   tests' comments; these are two *different* files/tests, neither among the four, and
+   neither of their own assertion VALUES move — this is a comment-only obligation, added
+   here so it is not silently missed): `crates/pc-export/tests/e3_run.rs:311`
+   ("…§16.11 items 3 and 9's nearest-everywhere and `alpha_out = max(base_a, layer_a)`
+   rules"); and `crates/pc-pipeline/tests/l4_composite_equivalence.rs:147` ("…must agree,
+   including on `alpha_out = max(base_a, layer_a)` (§16.9 item 15)"). Both are
+   comment-only corrections, batchable with the fix's own doc-comment updates; neither
+   needs a supersession marker (no rule is being cited as still current at these sites
+   once corrected) and neither needs the exit-2 joint-ratification treatment item 5's
+   value changes required, since no assertion these files make is changing. That makes
+   seven comment sites total needing correction in the same change as the fix:
+   `composite.rs:62`, `combine.rs:12`, `composite_value_lock.rs:14/175/193`,
+   `e3_run.rs:311`, and `l4_composite_equivalence.rs:147` — plus the four amended tests'
+   own doc comments per item 5. Re-derive this list with a fresh grep at implementation
+   time rather than trusting it as exhaustive by construction (cookbook rule 14).
+
+9. **Task sequencing, per one planning agent's explicit disagreement with treating this
+   as "simple" — both effectively converged on treating it as multi-staged rather than a
+   single batchable edit.** **H1** (this ratification, no `src/` change). **H2**
+   (**heavy**): land the new additive tests — `composite_value_lock.rs`'s two new
+   fully-transparent-destination cases (including a **non-black** transparent
+   destination, e.g. `(99,99,99,0)`, specifically so the test cannot pass by "blend
+   against black" instead of "copy the layer") and its opaque-destination regression
+   case; a new `pc-denoise` test file gated at the denoise-stage *output* (not only the
+   primitive), asserting a uniform-paper page denoises to itself exactly, with a
+   mandatory anti-vacuity assertion that a faded rim of a minimum size actually exists in
+   the test fixture; a new `pc-export` test per item 6 — **red** against current code,
+   committed on its own. **H3** (**heavy**, own isolated call, not batched): implement
+   the corrected formula in `alpha_composite_over`, apply item 5's four amendments plus
+   their doc-comment corrections and item 8's citation corrections, iterate to green,
+   independent review (§16.13 item 4 — not the implementer), full verification bar.
+   Recommendation only, not authorised for implementation here: harden
+   `pc_mask::combine::build_combined_mask` with an assertion pinning its alpha inputs to
+   `{0, 255}`, converting item 3's "accident of current inputs" into a stated invariant.
 
 ## 16. Summary of what v1 is NOT
 

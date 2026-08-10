@@ -164,14 +164,17 @@ const ABSENT: &[Site] = &[
         text: "crates/pc-detect/src/mask.rs:150",
     },
     Site {
-        // Re-pinned 2026-08-09: shifted 2779→2804 by the §16.42 spec insertions
-        // (task #22 ratification + its two back-pointers, +25 net lines above this
-        // point). Content at the new line unchanged from what previously sat at the
-        // old line. Note (added after a fresh-reader pass, 2026-08-09): for an ABSENT
-        // row the gate only checks THIS line does not contain the text — it cannot
-        // verify "occurs nowhere else in the file", so that is not claimed here.
+        // Re-pin history (each event distinct, none overwritten):
+        //   2779→2804 (2026-08-09, §16.42 spec insertions, task #22 ratification +
+        //     its two back-pointers, +25 net lines above this point)
+        //   →2811 (2026-08-10, Orchestrator, mechanical — §16.45's two small marker
+        //     insertions at §16.10 item 3 and §16.11 item 9, above this point)
+        // Content at the new line unchanged from what previously sat at the old line.
+        // Note (added after a fresh-reader pass, 2026-08-09): for an ABSENT row the
+        // gate only checks THIS line does not contain the text — it cannot verify
+        // "occurs nowhere else in the file", so that is not claimed here.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 2804,
+        line: 2811,
         text: "pc-detect's `refine_simple`",
     },
     Site {
@@ -309,43 +312,43 @@ const PRESENT: &[Site] = &[
         text: "The door is open: A4 ships `Annotation`",
     },
     Site {
-        // Re-pinned 2026-08-09: shifted 3780→3805 by the §16.42 spec insertions above
-        // this point (task #22 ratification + its two back-pointers). Content unchanged,
-        // single occurrence verified.
+        // Re-pin history: 3780→3805 (2026-08-09, §16.42 spec insertions) →3812
+        // (2026-08-10, Orchestrator, mechanical — §16.45's two small marker
+        // insertions above this point). Content unchanged, single occurrence verified.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3805,
+        line: 3812,
         text: "§16.39 later ratified and landed that opt-in path",
     },
     Site {
-        // Re-pinned 2026-08-09: shifted 3792→3817 by the §16.42 spec insertions
-        // (task #22 ratification + its two back-pointers, +25 net lines above this
-        // point). Content unchanged, single occurrence verified.
+        // Re-pin history: 3792→3817 (2026-08-09, §16.42 spec insertions) →3824
+        // (2026-08-10, Orchestrator, mechanical — §16.45's two small marker
+        // insertions above this point). Content unchanged, single occurrence verified.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3817,
+        line: 3824,
         text: "The 2026-07-29 plan recorded these as v1.5 scope",
     },
     Site {
-        // Re-pinned 2026-08-09: shifted 3810→3835 by the §16.42 spec insertions
-        // (task #22 ratification + its two back-pointers, +25 net lines above this
-        // point). Content unchanged, single occurrence verified.
+        // Re-pin history: 3810→3835 (2026-08-09, §16.42 spec insertions) →3842
+        // (2026-08-10, Orchestrator, mechanical — §16.45's two small marker
+        // insertions above this point). Content unchanged, single occurrence verified.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3835,
+        line: 3842,
         text: "Historical sequencing (2026-07-29)",
     },
     Site {
-        // Re-pinned 2026-08-09: shifted 3829→3854 by the §16.42 spec insertions
-        // (task #22 ratification + its two back-pointers, +25 net lines above this
-        // point). Content unchanged, single occurrence verified.
+        // Re-pin history: 3829→3854 (2026-08-09, §16.42 spec insertions) →3861
+        // (2026-08-10, Orchestrator, mechanical — §16.45's two small marker
+        // insertions above this point). Content unchanged, single occurrence verified.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3854,
+        line: 3861,
         text: "§16.39 subsequently landed the path",
     },
     Site {
-        // Re-pinned 2026-08-09: shifted 3874→3899 by the §16.42 spec insertions
-        // (task #22 ratification + its two back-pointers, +25 net lines above this
-        // point). Content unchanged, single occurrence verified.
+        // Re-pin history: 3874→3899 (2026-08-09, §16.42 spec insertions) →3906
+        // (2026-08-10, Orchestrator, mechanical — §16.45's two small marker
+        // insertions above this point). Content unchanged, single occurrence verified.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3899,
+        line: 3906,
         text: "historical final step; §16.39 subsequently landed it",
     },
     Site {
@@ -357,17 +360,24 @@ const PRESENT: &[Site] = &[
         //     ruling, unanimous — shifts during §16.42's own step-1a review cycle)
         //   → 8608 (2026-08-09, Orchestrator, mechanical — the §16.43 mode-bench
         //     ratification inserted directly above "## 16. Summary of what v1 is NOT")
-        //   → 8638, 8667, 8803, 8815, now 8823 (2026-08-09/10, Orchestrator,
+        //   → 8638, 8667, 8803, 8815, 8823 (2026-08-09/10, Orchestrator,
         //     mechanical — §16.43's own step-1a review fix-up passes, then the §16.44
         //     Fable tie-break ratification (2026-08-10) and its own step-1a review
         //     fix-up passes, each inserted/edited directly above "## 16. Summary of
         //     what v1 is NOT", each adding more lines above this point)
+        //   → 9027 (2026-08-10, Orchestrator, mechanical — the §16.45 alpha-composite
+        //     ratification and its three supersession back-pointers, inserted directly
+        //     above "## 16. Summary of what v1 is NOT")
+        //   → now 9106 (2026-08-10, Orchestrator, mechanical — §16.45's own step-1a
+        //     fresh-reader review fix-up pass: one BLOCKING finding (a frozen test's
+        //     name/message would have stated the superseded rule) plus several
+        //     non-blocking content corrections, all applied above this point)
         // Content unchanged, single occurrence verified each time. Given how many
         // times this one site has moved, ALWAYS re-verify with `grep -n
         // "Upstream .refine_mask" docs/PIPELINE_SPEC_V1.md` before trusting this
         // number if this test ever fails again — do not just add/subtract a delta.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 8823,
+        line: 9106,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {
@@ -386,11 +396,14 @@ const PRESENT: &[Site] = &[
         text: "DEVIATION(12)` at the default `Simple` variant in `crates/pc-config/src/profile.rs`",
     },
     Site {
-        // Re-pinned 2026-08-09: shifted 2779→2804 by the §16.42 spec insertions
-        // (task #22 ratification + its two back-pointers, +25 net lines above this
-        // point). Content unchanged, single occurrence verified.
+        // Re-pin history (each event distinct, none overwritten):
+        //   2779→2804 (2026-08-09, §16.42 spec insertions, task #22 ratification +
+        //     its two back-pointers, +25 net lines above this point)
+        //   →2811 (2026-08-10, Orchestrator, mechanical — §16.45's two small marker
+        //     insertions at §16.10 item 3 and §16.11 item 9, above this point)
+        // Content unchanged, single occurrence verified each time.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 2804,
+        line: 2811,
         text: "DEVIATION(12)` on the default `Simple` variant of `MaskRefineMode`",
     },
     Site {

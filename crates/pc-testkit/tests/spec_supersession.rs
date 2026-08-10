@@ -23,7 +23,10 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 51;
+// §16.45 raises this from 51 to 54: three new SUPERSEDES markers (§16.10 item 3,
+// §16.11 item 9, §16.42 item 2 — all pinning the same superseded `alpha_out =
+// max(base_a, layer_a)` compositing formula).
+const EXPECTED_PARSED_CLAIMS: usize = 54;
 
 /// Claims whose declared sub-item identity must scope the target-side back-pointer independently.
 /// Most historical lettered claims retain §16.26 item 3(a)'s parent-item span. These two are pinned
@@ -307,6 +310,13 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // EXPECTED_PARSED_CLAIMS from 49 to 51.
     ("16.42", "16.10 item 3"),
     ("16.42", "16.11 item 10"),
+    // §16.45's three markers: real (Porter-Duff) source-over replaces the
+    // `alpha_out = max(base_a, layer_a)` formula, which was pinned identically at all
+    // three of these sites (a genuine compositing defect, not a stable convention worth
+    // three independent pins). Raises EXPECTED_PARSED_CLAIMS from 51 to 54.
+    ("16.45", "16.10 item 3"),
+    ("16.45", "16.11 item 9"),
+    ("16.45", "16.42 item 2"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
