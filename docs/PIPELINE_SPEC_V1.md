@@ -8587,7 +8587,11 @@ item, quoting Fable's own reasoning rather than paraphrasing it.
    - A LaMa cell whose model is unavailable is recorded as **BLOCKED** with a reason
      naming the acquisition remedy; every other cell in the run still reports. A
      benchmark that produces no report because one optional ~207 MB model is absent
-     is a worse artifact than a report with one blocked column.
+     is a worse artifact than a report with one blocked column. (This sentence's
+     antecedent — "whose model is unavailable" — never fires on `--replay`: see
+     §16.44, which rules that `--replay`'s LaMa cells never seek the model at all, so
+     they are never in a position to find it unavailable. Read §16.44 before
+     implementing this bullet for `--replay`.)
    - `--device cuda` on a build that cannot provide it is a hard, non-zero-exit
      refusal carrying `pc_core`'s own refusal message verbatim — never a silent
      downgrade to CPU.
@@ -8650,6 +8654,150 @@ item, quoting Fable's own reasoning rather than paraphrasing it.
     does not amend §16.36, §16.37, §16.13, §15.2, or §16.24 — every quoted ruling
     above states explicitly that its binding force is scoped to mode-bench's own
     report, not to those sections' general rules.
+
+## 16.44 mode-bench task 3: `--replay` never attempts LaMa acquisition; a LaMa cell that ran on zero pages does not enter the eligibility-restricted intersection mean (Fable tie-break ruling, 2026-08-10)
+
+**Provenance.** Task 3's own implementation brief (which the Orchestrator wrote) rested
+on a false premise — that the committed `--replay` fixture has zero eligible regions.
+It has one. Implementing §16.43 item 8's BLOCKED rule as written against that fact
+would render `simple+lama` `**BLOCKED**` on `--replay`, in the default no-`onnx` test
+tier, on every machine, deterministically — a state the FROZEN
+`xtask/tests/mode_bench_cli.rs:95-101` explicitly forbids. This is the project's
+"a test found to contradict the spec" exception (`CLAUDE.md`'s TDD-loop escalation
+rule): the implementer correctly stopped rather than picking a reading unilaterally,
+and the Orchestrator convened the two Opus architects jointly rather than resolving it
+alone. They converged on most of the resolution but disagreed on one structural
+question; Fable was convened as tie-breaker per the standing disagreement rule, and
+this entry transcribes that ruling, quoting Fable's own reasoning rather than
+paraphrasing it.
+
+1. **What both joint rulings converged on independently, transcribed once as binding
+   since neither side contested it:**
+
+   - A LaMa cell that does not (or cannot) run inpainting on a given source must
+     **keep its own real mask-stage measurement** (detected boxes, masking regions,
+     succeeded/failed/dropped/eligible counts) — never erase it to render a bare
+     `**BLOCKED**` row with no other data. Both rulings grounded this in §16.43 item
+     8's own requirement that eligibility is computed and reported "for every cell,
+     LaMa or not."
+   - `Benchmark::common_eligible`/`common_eligible_contributing_cells`
+     (`xtask/src/mode_bench.rs:393-419` as committed at task 2's `a3d8d24`) must stop
+     keying "actually run" on absence from the blocked-cells map, and key it on
+     **having produced at least one `Measured` row** instead — both independently
+     verified this redefinition is additive against the two existing frozen-adjacent
+     unit tests (`a_blocked_cell_does_not_poison_the_intersection_even_though_it_was_requested`,
+     `an_intersection_over_only_blocked_cells_is_empty_not_a_false_full_match`), which
+     both continue to pass unchanged under it. **Item 4 below refines this predicate
+     further for LaMa cells specifically — read it before implementing this point in
+     isolation; this bullet's predicate as stated is exactly the shape item 4 finds a
+     hidden hazard in.**
+   - `xtask/tests/mode_bench_cli.rs` needs **zero assertion changes**.
+   - The stale header comment at `xtask/tests/mode_bench_cli.rs:3-9` (still describes
+     the now-passing, now-un-ignored test as "RED BY DESIGN" and ignored "only so the
+     workspace suite stays readable") is factually false as of task 2's `a3d8d24` —
+     both rulings independently ran `cargo test -p xtask --test mode_bench_cli` and
+     confirmed 7/7 passing, 0 ignored. Comment-only correction to past tense,
+     transcribing this ruling — no assertion touched.
+   - Provider acquisition happens once per invocation/cell (the existing `OnceLock`
+     latch, §16.38 item 8(d)), never per page.
+   - Upstream PanelCleaner is not an oracle for this question — mode-bench has no
+     upstream equivalent to run.
+
+2. **The disputed question, resolved: `--replay` never attempts LaMa acquisition for
+   any cell, by mode-bench's own deliberate source policy — not because the model is
+   unavailable, but because that source does not exercise LaMa at all.** Fable's
+   ruling, quoted: *"Only the architect's reading keeps all ratified text
+   simultaneously satisfiable without amendment — this is decisive. §16.43 item 8 ...
+   says, unqualified by source: 'A LaMa cell whose model is unavailable is recorded as
+   BLOCKED with a reason naming the acquisition remedy...' The frozen test ... forbids
+   BLOCKED on `--replay` for `simple+lama`, and item 10 makes that test the CI gate of
+   the `--replay` contract. Under the rust-engineer's ruling, `--replay` in the default
+   tier attempts and genuinely fails acquisition — item 8's sentence then mandates
+   BLOCKED, and the only way to keep the frozen test green is to render that same
+   failure as something other than BLOCKED. That is a source-scoped exception to a
+   ratified sentence, achieved by renaming the state the sentence names — an
+   unratified amendment in implementation clothing. Under the architect's ruling,
+   item 8's antecedent ('whose model is unavailable') simply never fires on `--replay`,
+   because unavailability is only meaningful relative to a need; both the ratified
+   sentence and the frozen test hold as written, on every source."*
+
+   Second ground, quoted: *"The per-source enumeration in item 8 ... discriminates
+   only under the architect's reading ... Under the rust-engineer's design, a machine
+   with the `onnx` tier and a cached model runs real LaMa on `--replay` — on a 1200 ×
+   1660 full page (measured). That makes item 8's ratified clause '`--pages` ... the
+   only source that reaches multi-tile LaMa' contingent on the fixture's particular
+   eligible-region geometry, rather than true by construction ... Under the
+   architect's ruling it is true by construction. The same collapse hits 'no model
+   needed': under the rust-engineer's design that phrase is true of every source
+   (item 8's BLOCKED design already guarantees a report without the model everywhere),
+   so it discriminates nothing — unlike the other two clauses in the same list."*
+
+   **Correction to the architect's own original phrasing, made by Fable and binding
+   as the corrected version, quoted:** *"Under the rust-engineer's actual design
+   (Measured-with-note rendering), the gate's pass/fail would not depend on the 207 MB
+   artifact — only row content would vary between machines. The architect's
+   conclusion survives, but via ground 1, not via 'the gate's subject flips': the
+   artifact-independence is purchased only by the unratified renaming. Transcribe the
+   winning argument, not the original phrasing."*
+
+3. **Binding grafts from the losing position — required, not optional, per Fable's
+   ruling:** *"Distinguishability is required, not optional. The `--replay` 'not
+   attempted — source policy' state must be textually distinct from (a) 'eligible
+   regions = 0, nothing to inpaint' and (b) a real failed acquisition on
+   `--demo-bubbles`/`--pages`. This was the honest core of the rust-engineer's design;
+   keep it, as an additive assertion in a new test, never an edit to
+   `mode_bench_cli.rs`."* And: *"The disclosure already half-exists:
+   `Source::Replay.describe()` (`mode_bench.rs:255`) says 'no model is loaded' — the
+   rust-engineer's ruling would have made that shipped sentence false too; under this
+   ruling it becomes load-bearing and the per-row note should agree with it."*
+
+4. **A hidden hazard Fable found by combining two of the converged-on points, and the
+   binding correction to item 1's `common_eligible` predicate that closes it.** Fable's
+   ruling, quoted in full because the reasoning is the binding content: *"If a
+   failed-acquisition LaMa cell on `--demo-bubbles`/`--pages` keeps its mask-stage
+   measurement as `Measured` rows (agreed point 1), and `common_eligible` counts any
+   cell with ≥1 `Measured` row as 'actually run' (agreed point 2), then a
+   never-inpainted LaMa cell re-enters the common-eligible cross-cell mean — the exact
+   shape §16.43 item 4 quotes Fable's D2 ruling against: '"inpainted" output is
+   actually the bare masking output ... inside a segment whose caption claims
+   comparability. That is the different-populations bug, hidden.'"* **Binding
+   condition, quoted:** *"a cell whose inpainting factor was requested but ran on zero
+   pages must not contribute to the eligibility-restricted cross-cell mean (disclosure
+   alone is not enough; disclosure-instead-of-exclusion is what D2 already
+   rejected)."* This refines item 1's "produced at least one `Measured` row" predicate
+   for LaMa cells specifically: a LaMa cell must have **genuinely run inpainting on at
+   least one page** (i.e. `run_inpaint` returned `Ok(Some(...))` somewhere in that
+   cell's pages, not merely `Ok(None)` or a `Measured` row with `inpainting_ran:
+   false` everywhere) to count as "actually run" for the common-eligible intersection.
+   A non-LaMa cell's "actually run" predicate is unaffected — it is still "produced at
+   least one `Measured` row," since it has no inpainting factor to have run or not.
+   Fable explicitly scoped this: *"On `--replay` under Ruling 1 this hazard does not
+   arise in hidden form — the LaMa cell is a disclosed duplicate of its mask-mode
+   sibling, not a silently degraded comparand — and I decide nothing further about
+   section 4.3's captions beyond D2's existing requirements."*
+
+5. **What this entry does not decide.** It does not touch §16.38 item 13(c)'s closing
+   clause, which the architect's ruling separately flagged as empirically false (a
+   `--detector replay`/`mock` run *does* reach the inpainting model when a region
+   fails and `inpainting_enabled` is true) — Fable explicitly declined to fix it here,
+   ruling it "a separate future erratum" requiring its own joint-architect pass as a
+   spec-text correction, not a graft onto this ruling. **Corrected during step-1a
+   review: the original transcription said this entry "does not decide anything about
+   `--demo-bubbles` or `--pages` beyond confirming they do attempt real acquisition"
+   — that overreached past what items 1 and 4 above actually do.** It does not amend
+   §16.43 item 8's BLOCKED rule in general — that rule still governs
+   `--demo-bubbles`/`--pages` exactly as written, and this entry only establishes that
+   its antecedent ("whose model is unavailable") never fires on `--replay`, because
+   `--replay`'s LaMa cells never seek the model at all. But item 4's binding
+   exclusion — a LaMa cell that ran on zero pages does not enter the
+   eligibility-restricted `common_eligible` intersection — is **not** scoped to
+   `--replay`; it is introduced by, and binds on, `--demo-bubbles` and `--pages`
+   whenever a LaMa cell there fails acquisition (item 4's own quoted grounds open with
+   exactly that case). What this entry does not decide about `--demo-bubbles`/`--pages`
+   is narrower: their model-acquisition **mechanism** (how the provider is obtained,
+   what counts as a failure, whether §16.38 item 9(b)'s run-fatal classification
+   applies) is unchanged by this entry and governed by §16.43 item 8 and §16.38 as
+   already ratified — only the report-rendering consequences item 4 states are new.
 
 ## 16. Summary of what v1 is NOT
 
