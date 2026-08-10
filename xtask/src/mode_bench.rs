@@ -1206,6 +1206,47 @@ struct InpaintRunner<'a> {
     attempted: bool,
 }
 
+/// One page's inpainting attempt: the status the report prints, **and** the image that
+/// attempt produced.
+///
+/// The second half exists because the status alone is not enough to measure the cell. A
+/// LaMa cell's final output is `InpaintOutput.clean_inpaint` — the mask-stage page with the
+/// inpainted regions composited over it — and comparing that cell against the reference
+/// while reading `MaskOutput.cleaned` measures the *pre*-inpaint image, making every LaMa
+/// row's reference numbers byte-identical to its non-LaMa sibling's however much the
+/// inpainter changed. That is exactly the defect this type was introduced to remove, and it
+/// was invisible for as long as `inpaint` returned only a status.
+struct InpaintRun {
+    status: InpaintStatus,
+    /// `Some` exactly when `status.ran()`; `None` in every other state, where the cell's
+    /// final output is still the mask stage's `cleaned`.
+    ///
+    /// That pairing is a convention held by two things, neither of which is the type system:
+    /// every non-`Ran` value in [`InpaintRunner::inpaint`] is built through the `From` impl
+    /// below, whose `debug_assert` rejects a `Ran`, and the single `Ran` site fills this
+    /// field. A hand-written struct literal could still break it. **The `debug_assert` is
+    /// compiled out under `--release` — the profile the real benchmark runs under — so in
+    /// that build the convention rests entirely on there being one `Ran` construction site.**
+    /// If a second one is ever added, add a real (non-debug) check or encode the pairing in
+    /// the type (e.g. `enum InpaintRun { Ran { clean_inpaint: ImageHandle, .. }, DidNot(...) }`)
+    /// rather than trusting this comment.
+    clean_inpaint: Option<ImageHandle>,
+}
+
+impl From<InpaintStatus> for InpaintRun {
+    /// Every state except `Ran`: no image was produced, so there is nothing to carry.
+    fn from(status: InpaintStatus) -> Self {
+        debug_assert!(
+            !status.ran(),
+            "`Ran` must carry its composited page; build it directly, not through `From`"
+        );
+        Self {
+            status,
+            clean_inpaint: None,
+        }
+    }
+}
+
 impl InpaintRunner<'_> {
     fn inpaint(
         &mut self,
@@ -1213,16 +1254,16 @@ impl InpaintRunner<'_> {
         original: &ImageHandle,
         raw_mask: &ImageHandle,
         mask_data: &pc_core::MaskData,
-    ) -> InpaintStatus {
+    ) -> InpaintRun {
         if !cell.inpainting() {
-            return InpaintStatus::NotRequested;
+            return InpaintStatus::NotRequested.into();
         }
         // §16.44 item 2: `--replay` never seeks the model, for any cell.
         if !self.source.attempts_inpainting() {
-            return InpaintStatus::NotAttempted;
+            return InpaintStatus::NotAttempted.into();
         }
         if let Some(message) = self.acquisition_failures.get(&cell) {
-            return InpaintStatus::AcquisitionFailed(message.clone());
+            return InpaintStatus::AcquisitionFailed(message.clone()).into();
         }
         // Handled here rather than left to `run_inpaint`, which reports a missing provider
         // as a `Stage` error and so would land in the *inference*-failure bucket — a
@@ -1230,7 +1271,8 @@ impl InpaintRunner<'_> {
         if self.provider.is_none() {
             return InpaintStatus::AcquisitionFailed(
                 "no inpainter provider was built for this invocation".to_owned(),
-            );
+            )
+            .into();
         }
         match run_inpaint(
             original,
@@ -1247,23 +1289,30 @@ impl InpaintRunner<'_> {
             Ok(Some(output)) => {
                 self.any_ran = true;
                 self.attempted = true;
-                InpaintStatus::Ran {
-                    tiles_inferred: output.tiles_inferred,
+                InpaintRun {
+                    status: InpaintStatus::Ran {
+                        tiles_inferred: output.tiles_inferred,
+                    },
+                    // The composited page, not the raw `inpainting` layer: this is what the
+                    // export precedence hands a LaMa run as its final image
+                    // (`pc-pipeline`'s `export_sources`, `inpainted: clean_inpaint`), so it
+                    // is what this cell must be measured on.
+                    clean_inpaint: Some(output.clean_inpaint),
                 }
             }
             // `run_inpaint`'s own short-circuit: zero eligible regions, so no model is
             // sought even here. Accurate on these sources, and distinct from `--replay`'s
             // source policy (§16.44 item 3).
-            Ok(None) => InpaintStatus::NothingEligible,
+            Ok(None) => InpaintStatus::NothingEligible.into(),
             Err(PipelineError::RunFatal(error)) => {
                 self.attempted = true;
                 let message = error.to_string();
                 self.acquisition_failures.insert(cell, message.clone());
-                InpaintStatus::AcquisitionFailed(message)
+                InpaintStatus::AcquisitionFailed(message).into()
             }
             Err(PipelineError::Stage(error)) => {
                 self.attempted = true;
-                InpaintStatus::InferenceFailed(error.to_string())
+                InpaintStatus::InferenceFailed(error.to_string()).into()
             }
         }
     }
@@ -1403,19 +1452,30 @@ fn measure_cell_inner(
     let eligible_regions =
         pc_inpaint::eligible::select_regions(regions, &InpainterConfig::default()).len();
 
-    let inpaint = runner.inpaint(
+    let InpaintRun {
+        status: inpaint,
+        clean_inpaint,
+    } = runner.inpaint(
         cell,
         &ImageHandle::from_path(&job.image),
         &raw_mask,
         &mask_output.mask_data,
     );
 
+    // This cell's **actual final output** on this page: the composited inpaint when
+    // inpainting genuinely ran, and the mask stage's cleaned page in every other state —
+    // including `NothingEligible` and a failed inference, where no inpainted image exists and
+    // the pipeline's own export precedence would likewise fall back to the masked page.
+    // Comparing a LaMa cell against `mask_output.cleaned` unconditionally is what made every
+    // LaMa row's reference numbers identical to its non-LaMa sibling's.
+    let final_output = clean_inpaint.as_ref().unwrap_or(&mask_output.cleaned);
+
     let reference = match &job.reference {
         Some(clean_path) => Some(compare_against_reference(
             &job.name,
             &job.image,
             clean_path,
-            &mask_output,
+            final_output,
         )?),
         None => None,
     };
@@ -1432,11 +1492,16 @@ fn measure_cell_inner(
     })
 }
 
+/// Compare one cell's final output for one page against the vendored reference.
+///
+/// `final_output` is the cell's **own** last-stage image — `InpaintOutput.clean_inpaint` for
+/// a LaMa cell that inpainted, `MaskOutput.cleaned` otherwise — never unconditionally the
+/// mask stage's.
 fn compare_against_reference(
     name: &str,
     raw_path: &Path,
     clean_path: &Path,
-    mask_output: &pc_mask::MaskOutput,
+    final_output: &ImageHandle,
 ) -> Result<GoldenReport> {
     let raw_luma = image::open(raw_path)
         .map(|image| image.to_luma8())
@@ -1449,12 +1514,11 @@ fn compare_against_reference(
                 paths::display_relative(clean_path)
             )
         })?;
-    let cleaned_luma = mask_output
-        .cleaned
+    let cleaned_luma = final_output
         .load()
         .map(|image| image.to_luma8())
         .map_err(|error| anyhow!(error.to_string()))
-        .with_context(|| "loading the cleaned output")?;
+        .with_context(|| "loading the cell's final output")?;
     if raw_luma.dimensions() != clean_luma.dimensions()
         || raw_luma.dimensions() != cleaned_luma.dimensions()
     {
@@ -3015,6 +3079,167 @@ mod tests {
             provider.attempts.load(Ordering::SeqCst),
             2,
             "an inference failure on page-a latched the whole cell out"
+        );
+    }
+
+    // --- The reference comparison measures the cell's OWN final output -----------
+    //
+    // Found by running the real benchmark: every LaMa row in section 3 carried a
+    // `Reference agreement` cell byte-identical to its non-LaMa sibling's on all 6 pages
+    // where inpainting actually ran, because `compare_against_reference` was handed
+    // `mask_output` unconditionally — the mask stage's image, computed before inpainting.
+    // The two tests below are the pair that distinguishes "identical because inpainting
+    // changed nothing here" (correct) from "identical because the inpainted image was never
+    // looked at" (the bug).
+
+    /// The whole-page reference these two tests compare against: a constant **white** page
+    /// at [`synthetic_page`]'s dimensions.
+    ///
+    /// White is chosen so the expectation below is an argument, not a measurement. The stub
+    /// inpainter also writes pure white, and `to_luma8` maps `Rgb([255,255,255])` to `255`
+    /// for any weighting whose coefficients sum to one — so every pixel the inpainter wrote
+    /// *must* agree exactly with this reference, while the same pixels in the non-inpainted
+    /// sibling carry page content (luma 20 inside the detected block). The direction of both
+    /// inequalities below therefore follows from the construction, and is not read off the
+    /// artifact under test.
+    fn white_reference(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(format!("{name}_reference.png"));
+        image::GrayImage::from_pixel(240, 1000, image::Luma([255]))
+            .save(&path)
+            .expect("writing the white reference");
+        path
+    }
+
+    fn reference_of(benchmark: &Benchmark, page: &str, cell: CellId) -> GoldenReport {
+        match benchmark.outcome(page, cell) {
+            Some(Outcome::Measured(measured)) => measured
+                .reference
+                .clone()
+                .unwrap_or_else(|| panic!("{page}/{} carries no reference", cell.name())),
+            other => panic!("{page}/{} is not a Measured row: {other:?}", cell.name()),
+        }
+    }
+
+    /// Run `simple` and `simple+lama` over one synthetic page carrying a white reference,
+    /// with a stub inpainter that paints pure white.
+    fn measure_against_white_reference(
+        temp: &Path,
+        page: &str,
+        eligible: bool,
+    ) -> (Benchmark, Arc<StubInpainter>) {
+        let mut job = synthetic_page(temp, page, eligible);
+        job.reference = Some(white_reference(temp, page));
+        let cells = [CellId::Simple, CellId::SimpleLama];
+        let inpainter = Arc::new(StubInpainter::new(StubMode::Flat(image::Rgb([
+            255, 255, 255,
+        ]))));
+        let provider =
+            WorkingProvider::new(Arc::clone(&inpainter) as Arc<dyn pc_inpaint::Inpainter>);
+        let mut benchmark = Benchmark::new(Source::DemoBubbles, &cells);
+        measure_jobs(
+            &mut benchmark,
+            &[job],
+            &cells,
+            &synthetic_detector(),
+            &mut runner_with(Source::DemoBubbles, Some(&provider)),
+        );
+        (benchmark, inpainter)
+    }
+
+    /// The LaMa cell's reference numbers are taken from the **inpainted** page, so on a page
+    /// where inpainting genuinely ran they agree with the white reference strictly better
+    /// than its non-LaMa sibling's do.
+    ///
+    /// Verified capable of failing: reverting the fix — passing `&mask_output.cleaned` for
+    /// both cells — makes the two reports identical (`exact_fraction` 0.0027791666… for each)
+    /// and the `exact_fraction` assertion below fails. The status and `dims` assertions above
+    /// it are guards and stay green either way.
+    #[test]
+    fn a_lama_cell_that_inpainted_scores_strictly_closer_to_the_white_reference_than_its_sibling() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (benchmark, inpainter) = measure_against_white_reference(temp.path(), "eligible", true);
+
+        // Guards first: without these, "the numbers differ" could mean anything.
+        match status_of(&benchmark, "eligible", CellId::SimpleLama) {
+            InpaintStatus::Ran { tiles_inferred } => assert!(
+                tiles_inferred >= 1,
+                "the LaMa cell reports Ran with zero tiles inferred"
+            ),
+            other => {
+                panic!("the LaMa cell did not inpaint, so this test proves nothing: {other:?}")
+            }
+        }
+        assert_eq!(
+            status_of(&benchmark, "eligible", CellId::Simple),
+            InpaintStatus::NotRequested
+        );
+        assert!(
+            inpainter.calls() >= 1,
+            "the stub inpainter was never asked for a tile"
+        );
+
+        let simple = reference_of(&benchmark, "eligible", CellId::Simple);
+        let lama = reference_of(&benchmark, "eligible", CellId::SimpleLama);
+        // Both cells measured the same page at the same size, so nothing below is a
+        // dimension artifact. The literal is `synthetic_page`'s own hard-coded shape.
+        assert_eq!(simple.dims, (240, 1000));
+        assert_eq!(lama.dims, (240, 1000));
+
+        // The detected block is 20..200 x 20..400 = 68_400 px of a 240x1000 = 240_000 px
+        // page, i.e. 28.5% of it. The inpaint mask is that region's mask (grown), and every
+        // pixel of it is written pure white, which matches this reference exactly while the
+        // sibling's same pixels hold the block's luma-20 content. Even if only a fifth of
+        // the block is written, the exactly-equal fraction must rise by more than 0.05.
+        // This literal is derived from the fixture's geometry, never from a measured run.
+        assert!(
+            lama.exact_fraction - simple.exact_fraction > 0.05,
+            "the LaMa cell's agreement with the reference barely moved, so its numbers are \
+             not being taken from the inpainted page: simple {:?}, lama {:?}",
+            simple.exact_fraction,
+            lama.exact_fraction
+        );
+        assert!(
+            lama.mean_abs_diff < simple.mean_abs_diff,
+            "painting white over a white reference did not lower the mean abs diff: \
+             simple {:?}, lama {:?}",
+            simple.mean_abs_diff,
+            lama.mean_abs_diff
+        );
+    }
+
+    /// The control for the test above: when nothing is eligible the LaMa cell's final output
+    /// **is** the mask stage's output, so identical reference numbers are correct there.
+    ///
+    /// This is what keeps the fix from being "make the LaMa row differ": a change that
+    /// perturbed the LaMa cell unconditionally would pass the test above and fail this one.
+    #[test]
+    fn a_lama_cell_with_nothing_eligible_reports_the_same_reference_numbers_as_its_sibling() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (benchmark, inpainter) =
+            measure_against_white_reference(temp.path(), "ineligible", false);
+
+        assert_eq!(
+            status_of(&benchmark, "ineligible", CellId::SimpleLama),
+            InpaintStatus::NothingEligible
+        );
+        assert_eq!(
+            inpainter.calls(),
+            0,
+            "nothing was eligible, yet a tile was inferred"
+        );
+
+        let simple = reference_of(&benchmark, "ineligible", CellId::Simple);
+        let lama = reference_of(&benchmark, "ineligible", CellId::SimpleLama);
+        assert_eq!(
+            simple, lama,
+            "no inpainting happened, so both cells' final output is the same image"
+        );
+        // Anti-vacuity: the two reports are equal because both measured a real page against
+        // the white reference, not because both are empty. A masked page over a white
+        // reference cannot be an exact match — the block's content is not white.
+        assert!(
+            simple.mean_abs_diff > 0.0 && simple.exact_fraction < 1.0,
+            "both cells reported a perfect match, so the equality above is vacuous: {simple:?}"
         );
     }
 
