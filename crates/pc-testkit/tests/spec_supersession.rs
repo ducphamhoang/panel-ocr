@@ -26,7 +26,10 @@ const MARKER: &str = "**SUPERSEDES:";
 // §16.45 raises this from 51 to 54: three new SUPERSEDES markers (§16.10 item 3,
 // §16.11 item 9, §16.42 item 2 — all pinning the same superseded `alpha_out =
 // max(base_a, layer_a)` compositing formula).
-const EXPECTED_PARSED_CLAIMS: usize = 54;
+// §16.46 raises it from 54 to 64: ten new markers, listed and reasoned at the end of
+// RATIFIED_SUPERSESSIONS below. Counted by reading that block, not by arithmetic on this
+// line — the rows are the record and this number is derived from them.
+const EXPECTED_PARSED_CLAIMS: usize = 64;
 
 /// Claims whose declared sub-item identity must scope the target-side back-pointer independently.
 /// Most historical lettered claims retain §16.26 item 3(a)'s parent-item span. These two are pinned
@@ -187,19 +190,35 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // §16.21/§16.22), so placing a supersession verb on that line would manufacture a phantom Layer
     // B prose claim out of a line break. Cookbook rule 14b, applied before it bit rather than after.
     //
-    // **Seven of these eight back-pointers are individually load-bearing; `("16.38", "6")` is NOT,
-    // and the difference is sharper than the leniency noted above.** A step-1a fresh reader deleted
-    // each of the eight in turn and watched the gate: seven turn it red, and §6's does not. Cause,
-    // re-measured here: §6's span carries **five** separate `§16.38` mentions, because §16.38 also
-    // added the `[inpainter]` TOML block and a validation clause to that section, and each of those
-    // cites §16.38 in its own comments — while §2.8, §12.2 and §12.3 carry exactly one each.
-    // `contains_back_pointer` asks only whether the span mentions the host, so any one of the five
-    // satisfies the claim and the header note could be deleted with the suite green. The leniency
-    // paragraph above says PLACEMENT within a section is unenforced; this is one step further — for
-    // §6 alone, the marker's EXISTENCE is unenforced too. Do not read a green suite as proof that
-    // all eight notes are present. Closing this would need a per-target expected mention count,
-    // which is a hard-coded number derived from prose and would go stale on every edit to §6; the
-    // trade was made deliberately in favour of disclosure.
+    // **CORRECTED 2026-08-10 (Senior Rust Engineer, while transcribing §16.46). The paragraph that
+    // stood here was measurably wrong. It is quoted below rather than deleted, so the next reader
+    // sees which claim changed and does not reintroduce it.** It read:
+    //
+    //   > **Seven of these eight back-pointers are individually load-bearing; `("16.38", "6")` is
+    //   > NOT, and the difference is sharper than the leniency noted above.** A step-1a fresh
+    //   > reader deleted each of the eight in turn and watched the gate: seven turn it red, and
+    //   > §6's does not. Cause, re-measured here: §6's span carries **five** separate `§16.38`
+    //   > mentions, because §16.38 also added the `[inpainter]` TOML block and a validation clause
+    //   > to that section, and each of those cites §16.38 in its own comments […] Do not read a
+    //   > green suite as proof that all eight notes are present.
+    //
+    // Re-measured 2026-08-10 against the current file: §6's span (`## 6.` through `## 7.`) carries
+    // **exactly one** `§16.38` token, on the back-pointer line itself — not five. Removing that
+    // line turns `every_supersession_marker_has_a_back_pointer_at_its_target` RED, verified by
+    // doing it and restoring rather than inferred from a count. So **all eight of §16.38's
+    // back-pointers are individually load-bearing**, `6` included, and the "do not read a green
+    // suite as proof" warning does not apply to this row.
+    //
+    // Two limits on this correction, so it is not read wider than its evidence. (1) Whether the
+    // original count was wrong when written or went stale afterwards was NOT investigated; only
+    // the present state was measured. (2) The leniency the paragraphs above describe is untouched
+    // and still real — `contains_back_pointer` asks only whether the span mentions the host, so
+    // PLACEMENT within §6 remains unenforced, and a future edit adding a second `§16.38` citation
+    // anywhere in §6 would restore exactly the condition the quoted paragraph described. What
+    // changed is the measurement and the conclusion drawn from it, not the mechanism. Closing that
+    // residue would need a per-target expected mention count, which is a hard-coded number derived
+    // from prose and would go stale on every edit to §6; the trade stays as it was, in favour of
+    // disclosure.
     //
     // **The ninth row, `("16.38", "13.1")`, landed later than the other eight** — with task
     // L3, when decision D1 was resolved and transcribed as §16.38 item 19. It is
@@ -317,6 +336,64 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.45", "16.10 item 3"),
     ("16.45", "16.11 item 9"),
     ("16.45", "16.42 item 2"),
+    // §16.46's TEN markers (the shipped-defaults flip). Raises EXPECTED_PARSED_CLAIMS
+    // from 54 to 64. Four things about this block are worth stating rather than leaving
+    // to be rediscovered:
+    //
+    // 1. **Three of the ten re-target anchors an earlier host already claimed, and that is
+    //    deliberate rather than duplication.** `("16.46", "8.3 step 5")` joins §16.37's
+    //    (the `expand_textwindow` parenthetical) and §16.39's (the `Annotation ->
+    //    StageError::InvalidInput` parenthetical); §16.46 claims a third sentence of the
+    //    same bullet, the one naming `Simple` as the default. `("16.46", "14 item 17")`
+    //    joins §16.37's ("never fired") and §16.39's (the operand sentence); §16.46 claims
+    //    only the "and is still the shipped default" clause of §16.39's own note. All of
+    //    them collapse to the same span, so one back-pointer satisfies each group — the
+    //    rows stay distinct because the hosts differ and the multiset comparison keeps
+    //    them so.
+    //
+    // 2. **`("16.46", "15 item 2")` uses the anchor spelling §16.37 item 7 settled**: `15
+    //    item 2`, never `15.2 item 2`. There is no `## 15.2` header, and an unresolvable
+    //    anchor PANICS `every_supersession_marker_has_a_back_pointer_at_its_target` rather
+    //    than being skipped.
+    //
+    // 3. **`("16.46", "6")` is a BARE-SECTION target**, the same ratified §16.26 item 3(c)
+    //    leniency as §16.30's `9.5`/`13`, §16.33's `16` and §16.38's `6`: §6 is prose plus
+    //    a TOML fence and carries no `^N. ` item marker, so a back-pointer anywhere in §6
+    //    satisfies the claim and the line-level precision of that note is a convention this
+    //    constant cannot enforce. It IS load-bearing today: §6's span carries exactly one
+    //    `§16.46` mention, the note itself, and removing it turns
+    //    `every_supersession_marker_has_a_back_pointer_at_its_target` red — measured
+    //    2026-08-10 by doing it and restoring, not inferred from the count.
+    //
+    //    **And so is `("16.38", "6")`, contrary to what the older comment above this block
+    //    says.** That comment asserts §6's span carries "five separate `§16.38` mentions"
+    //    and concludes the row is not load-bearing. Re-measured 2026-08-10: the span
+    //    (`## 6.` through `## 7.`) carries **exactly one** `§16.38` token, at the
+    //    back-pointer line itself, and deleting that line turns the same gate red. The
+    //    older paragraph has been corrected in place rather than deleted, and the
+    //    correction is recorded there. Both `6` rows are therefore falsifiable today, by
+    //    the same measurement and to the same degree. Both counts are facts about §6's
+    //    current text and not properties of the rows: a later edit adding a second citation
+    //    of either section anywhere in §6 would quietly make that row unfalsifiable, and
+    //    nothing here would notice.
+    //
+    // 4. **Three rows declare a sub-item letter** — `16.37 item 9` does not, but
+    //    `16.38 item 9(f)`, `16.38 item 13(a)` and `16.38 item 15(e)` do, and each names the
+    //    single sub-clause §16.46 claims rather than the whole item. None is added to
+    //    SUB_ITEM_SCOPED_BACKPOINTERS, so all three still resolve to their parent item's
+    //    span under §16.26 item 3(a); the letters are carried for row identity, exactly as
+    //    §16.27's three `16.24 item 18(_)` rows carry theirs, so that losing any one of them
+    //    names WHICH sub-clause lost its marker instead of leaving a bare count intact.
+    ("16.46", "14 item 12"),
+    ("16.46", "14 item 17"),
+    ("16.46", "15 item 2"),
+    ("16.46", "6"),
+    ("16.46", "8.3 step 5"),
+    ("16.46", "16.37 item 9"),
+    ("16.46", "16.38 item 9(f)"),
+    ("16.46", "16.38 item 13(a)"),
+    ("16.46", "16.38 item 15(e)"),
+    ("16.46", "16.39 item 2"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
