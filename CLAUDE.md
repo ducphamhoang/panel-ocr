@@ -12,8 +12,10 @@ not evidence of progress.
 After every meaningful transition — task start, test freeze, implementation commit,
 review result, verification result, blocker, or merge — update `docs/WORKSTATE.md` with
 the observed HEAD and actual command results. Re-read it before updating so a newer
-state is not silently overwritten. Keep `docs/HANDOVER.md` as temporary historical
-scaffolding only; do not use its stale branch/task descriptions as the current plan.
+state is not silently overwritten. If a future session needs one-off continuation
+scaffolding (e.g. `docs/HANDOVER.md`), mark it "TEMPORARY, delete when consumed" and
+actually delete it once consumed — do not let it accumulate as a second, silently
+stale source of truth alongside this file.
 
 **Unified-spec rule for feature worktrees:** `docs/PIPELINE_SPEC_V1.md` is maintained as
 one canonical document on the main/integration line. Do not add ratification sections,
@@ -24,11 +26,13 @@ clean integration branch after the ordered merges. When a feature branch has a
 ratified documentation decision, record the decision and blocker in `WORKSTATE.md` and
 carry the transcription to the unified integration spec.
 
-The Orchestrator must trace the ordered queue in `docs/WORKSTATE.md`: complete A4-d and
-branch verification, complete LaMa L6-4 then L6-5 and branch verification, create a clean
-integration branch, merge mask-parity before lama-inpaint, reconcile the shared spec and
-supersession gate, verify the integrated tree, and only then run the Simple/Annotation/LaMa
-benchmark. Do not reorder or merge early unless the user explicitly changes that decision.
+(Historical: the mask-parity/lama-inpaint integration sequence this paragraph used to
+describe — A4-d, LaMa L6-4/L6-5, the clean integration branch, the ordered merge, spec
+reconciliation, and the Simple/Annotation/LaMa benchmark — completed 2026-08-10 and is
+now on `main`. See `docs/WORKSTATE.md`'s Mission section for the closure record. The
+general rule stands for any future multi-worktree sequence: trace the ordered queue
+`docs/WORKSTATE.md` actually declares for that work, and do not reorder or merge early
+unless the user explicitly changes the decision.)
 
 ## Model routing
 
@@ -367,58 +371,3 @@ not verification (re-run the actual checks).
   reviewer/date/method. That review needs a human reviewer independent of whoever
   produced the snapshot — the same self-reference rule as §16.13 item 4. Derive and
   present the expected values; do not self-attest them.
-
-## Handover — 2026-08-07
-
-This section mirrors the temporary `docs/HANDOVER.md`; use it as the continuation point.
-
-### Blocking issue
-
-Codex cannot currently write to either active feature worktree:
-
-- `D:\Duc\panel-ocr-mask-parity`
-- `D:\Duc\panel-ocr-lama-inpaint`
-
-The main repo has session-specific `Modify` ACL entries, while those worktrees only have
-the generic `CodexSandboxUsers` entry. A completed companion job confirmed the failure
-before any edit. `--cwd` scopes jobs correctly but does not repair the ACL. Do not retry
-implementation work until the worktrees are onboarded: run Codex interactively once
-inside each worktree, check the `/codex:setup` onboarding path, or have a human provision
-matching session-SID ACL entries.
-
-Once writable, dispatch directly with the worktree scoped on both task and status:
-
-```text
-node "<codex plugin path>/scripts/codex-companion.mjs" task --background --write --fresh \
-  --cwd "<worktree-path>" --prompt-file "<path-to-prompt-file>"
-node ".../codex-companion.mjs" status <job-id> --cwd "<worktree-path>"
-```
-
-### Worktree state and next tasks
-
-- Main: `D:\Duc\panel-ocr`, branch `claude/codex-plugin-install-jxirxa`, HEAD `78fecb7`, clean.
-- `mask-parity`: HEAD `aa6f3c7`, clean; A1–A4 ratification is landed (§16.39). Next is
-  **A4-a** (heavy), wiring `Annotation` into `pc_detect::run` with the drafted tests,
-  then **A4-b** for the coverage-operand implementation. The open §16.39 back-pointer
-  question needs Opus architect confirmation but does not block implementation.
-- `lama-inpaint`: HEAD `66cf7e4`, clean; L1–L6 ratification is landed (§16.38). Next:
-  **L6-1 + L6-2** batched (simple), **L6-3** (heavy export precedence), **L6-4** (heavy
-  pipeline wiring with eligibility-first model creation), and **L6-5** (simple CLI
-  `--skip-inpaint` and provider handoff). Remove the stale `#[ignore]` from the resolved
-  precedence test before L6-3.
-
-Last verified `cargo test --workspace`: mask-parity 1194 passed / 0 failed / 3 ignored;
-lama-inpaint 1218 passed / 0 failed / 3 ignored. Re-run before trusting those counts;
-ONNX, clippy, and fmt have not been rerun after ratification. After A4 and L6 land,
-run the real-page benchmark, then reconcile the independently diverged
-`PIPELINE_SPEC_V1.md` files before merging.
-
-### Not started / process reminders
-
-- Task #22: consolidate the four duplicated image-operation helpers into `pc_imageops`.
-- Task #16/#6: Simple vs Annotation vs LaMa benchmark, blocked on A4 and L6.
-- Watch file mtimes/diffs, not only background-job status; completed jobs can write nothing.
-  Use a fresh task for retries rather than a colliding resume. Keep fresh-reader review and
-  scope-quoted transcriptions.
-- Read `docs/COOKBOOK.md` before audits, deviations, or trusting green tests. If `cargo`
-  is missing in Bash, export `/c/Users/ducph/.cargo/bin` into `PATH`.

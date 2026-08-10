@@ -14,8 +14,13 @@ struct Site {
     text: &'static str,
 }
 
-const EXPECTED_ABSENT: usize = 32;
-const EXPECTED_PRESENT: usize = 34;
+// 2026-08-10: dropped one ABSENT and one PRESENT site each, both at `docs/HANDOVER.md:39`.
+// That file was self-marked "TEMPORARY, delete when consumed" and was deleted once its
+// content was fully consumed into `docs/WORKSTATE.md` (see WORKSTATE's "Known stale
+// sources" entry and CLAUDE.md's removed `## Handover` section) -- the site this gate
+// pinned no longer exists, not because the claim it recorded became false again.
+const EXPECTED_ABSENT: usize = 31;
+const EXPECTED_PRESENT: usize = 33;
 
 const ABSENT: &[Site] = &[
     Site {
@@ -152,11 +157,6 @@ const ABSENT: &[Site] = &[
         path: "crates/pc-detect/tests/a3_annotate_merge.rs",
         line: 68,
         text: "DEVIATION(12) retirement",
-    },
-    Site {
-        path: "docs/HANDOVER.md",
-        line: 39,
-        text: "still pending",
     },
     Site {
         path: "docs/DETECTOR_ORACLE.md",
@@ -381,14 +381,11 @@ const PRESENT: &[Site] = &[
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {
+        // Re-pinned 103->173 (2026-08-10, README rewritten as end-user guide for the
+        // v1.2.0 release; the v2 heading is unchanged content, just moved further down).
         path: "README.md",
-        line: 103,
+        line: 173,
         text: "### v2",
-    },
-    Site {
-        path: "docs/HANDOVER.md",
-        line: 39,
-        text: "was removed under §16.39 item 3(d)",
     },
     Site {
         path: "docs/DETECTOR_ORACLE.md",

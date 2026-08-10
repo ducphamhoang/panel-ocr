@@ -1,6 +1,9 @@
 /target/
 *.snap.new
 
+# graphify knowledge-graph output (/graphify skill) -- generated, regenerable, not repo content
+/graphify-out/
+
 # Orchestrator agent-dispatch briefs (see CLAUDE.md "Agent dispatch briefs") -- scratch
 # instructions written for subagent/Codex/cmdc dispatches, not repo content.
 /docs/briefs/
