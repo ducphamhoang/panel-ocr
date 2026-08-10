@@ -8,8 +8,14 @@
 //! `composite_rgb` now live in `pc_imageops::composite`** and are re-exported below, so
 //! `pc_mask::combine::<name>` still resolves for every existing caller and for the frozen
 //! tests. That entry overturns §16.10 item 3's pin of the duplication across `pc-mask`,
-//! `pc-denoise`, `pc-export` and `pc-inpaint`; the arithmetic itself is unchanged and
-//! still pinned by §16.9 items 13 and 15. `pc-mask`'s former copy of `composite_rgb`
+//! `pc-denoise`, `pc-export` and `pc-inpaint`; the arithmetic itself was unchanged by that
+//! move, and `resize_nearest_rgba` / `blend_channel` / `composite_rgb` are still pinned by
+//! §16.9 items 13 and 15. `alpha_composite_over` is no longer: §16.45 item 4 replaced its
+//! rule with real (Porter-Duff) source-over, `out_a = sa + da*(1 - sa)` and
+//! `out_rgb[c] = round((src[c]*sa + dst[c]*da*(1 - sa)) / out_a)`. `build_combined_mask`
+//! below is unaffected in practice — its alpha is always exactly 0 or 255 by construction
+//! (§10.3 step 4), a regime both formulas agree on — and §16.45 item 3 records that as a
+//! latent hazard, deliberately not fixed here. `pc-mask`'s former copy of `composite_rgb`
 //! carried a longer panic message (`"cleaned-image composition needs matching sizes"`);
 //! §16.42 item 7(a) resolved that to the shorter, crate-neutral wording, no frozen test
 //! pinning either form. §16.42 item 8 authorises exactly those four moves: the four

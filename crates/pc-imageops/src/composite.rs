@@ -1,10 +1,13 @@
 //! Nearest resampling + source-over composition -- the shared pixel arithmetic hoisted
 //! here by spec §16.42 ("Composite-helper consolidation").
 //!
-//! The formulas are unchanged and stay pinned where they were pinned: §16.9 item 13 for
-//! `resize_nearest_rgba`'s `src = floor(dst * src_len / dst_len)` mapping, §16.9 item 15
-//! for `blend_channel`'s `round(base * (1 - alpha) + color * alpha)` and for
-//! `alpha_composite_over`'s `alpha_out = max(base_a, layer_a)`.
+//! Two of the three formulas stay pinned where they were pinned: §16.9 item 13 for
+//! `resize_nearest_rgba`'s `src = floor(dst * src_len / dst_len)` mapping, and §16.9
+//! item 15 for `blend_channel`'s `round(base * (1 - alpha) + color * alpha)`.
+//! `alpha_composite_over` is the exception: §16.45 item 4 replaced its arithmetic with
+//! real (Porter-Duff) source-over, superseding the `alpha_out = max(base_a, layer_a)`
+//! rule this header used to attribute to §16.9 item 15 — an attribution §16.45 item 8
+//! found to be a paraphrase item 15 never made.
 //!
 //! **What §16.42 changed, and what it did not.** §16.10 item 3 pinned the duplication of
 //! these four functions across the stage crates rather than scheduling a hoist; §16.11
@@ -58,8 +61,35 @@ pub fn resize_nearest_rgba(mask: &RgbaImage, size: (u32, u32)) -> RgbaImage {
     })
 }
 
-/// Alpha-composite `layer` onto `dst` at `at`, source-over; pixels landing outside `dst`
-/// are dropped. `alpha_out = max(base_a, layer_a)` (§16.9 item 15).
+/// Alpha-composite `layer` onto `dst` at `at`, real (Porter-Duff) source-over; pixels
+/// landing outside `dst` are dropped.
+///
+/// ```text
+/// out_a      = sa + da*(1 - sa)
+/// out_rgb[c] = round( (src[c]*sa + dst[c]*da*(1 - sa)) / out_a )
+/// ```
+///
+/// with `sa = layer_a / 255` and `da = dst_a / 255`, each channel clamped to `0..=255`
+/// (§16.45 item 4).
+///
+/// **This supersedes the former `alpha_out = max(base_a, layer_a)` rule**, which was
+/// attributed to §16.9 item 15 by paraphrase — item 15 read at source is entirely about
+/// `mask_overlay`'s constant-alpha RGB blend and says nothing about `alpha_out` (§16.45
+/// item 8). The old formula blended the layer against the destination's RGB while
+/// ignoring the destination's own alpha, which is correct only for an opaque destination;
+/// against a *transparent* one it premultiplied the layer's colour, producing the visible
+/// darkening §16.45 item 1 root-causes in `pc-denoise` and §16.45 item 6 in `pc-export`'s
+/// mask export. The corrected formula reduces to the old one when `da == 255`, and to a
+/// plain copy of the layer when `da == 0`.
+///
+/// §16.9 item 15 still legitimately grounds [`blend_channel`]'s
+/// `round(base * (1 - alpha) + color * alpha)`; only the `alpha_out` half was
+/// misattributed.
+///
+/// No division-by-zero guard is present or wanted (§16.45 item 4): the `a == 0 { continue }`
+/// early return below already guarantees `sa > 0`, hence `out_a > 0`, on every path that
+/// reaches the division — a defensive branch here would be dead code no reviewer could
+/// falsify (cookbook rule 6).
 pub fn alpha_composite_over(dst: &mut RgbaImage, layer: &RgbaImage, at: (i32, i32)) {
     let (width, height) = dst.dimensions();
     for (x, y, pixel) in layer.enumerate_pixels() {
@@ -81,13 +111,23 @@ pub fn alpha_composite_over(dst: &mut RgbaImage, layer: &RgbaImage, at: (i32, i3
             *target = Rgba([r, g, b, 255]);
             continue;
         }
-        let alpha = f64::from(a) / 255.0;
         let Rgba([br, bg, bb, ba]) = *target;
+        // Real source-over (§16.45 item 4). `source_alpha > 0` here (the `a == 0` early
+        // return above), so `out_alpha > 0` and the division is total.
+        let source_alpha = f64::from(a) / 255.0;
+        let destination_weight = (f64::from(ba) / 255.0) * (1.0 - source_alpha);
+        let out_alpha = source_alpha + destination_weight;
+        let channel = |source: u8, destination: u8| {
+            ((f64::from(source) * source_alpha + f64::from(destination) * destination_weight)
+                / out_alpha)
+                .round()
+                .clamp(0.0, 255.0) as u8
+        };
         *target = Rgba([
-            blend_channel(br, r, alpha),
-            blend_channel(bg, g, alpha),
-            blend_channel(bb, b, alpha),
-            ba.max(a),
+            channel(r, br),
+            channel(g, bg),
+            channel(b, bb),
+            (out_alpha * 255.0).round().clamp(0.0, 255.0) as u8,
         ]);
     }
 }

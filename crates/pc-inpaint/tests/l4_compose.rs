@@ -193,9 +193,12 @@ fn the_fade_yields_partially_blended_pixels_rather_than_a_hard_edge() {
     assert_eq!(partial_composed, partial_expected);
 }
 
-/// §16.9 item 15's arithmetic, reaching this stage through §16.38 item 3(h)'s alpha composite:
+/// §16.9 item 15's lerp, reaching this stage through §16.38 item 3(h)'s alpha composite:
 /// `round(base * (1 - alpha) + color * alpha)`. Asserted at the first partially faded pixel found, with
 /// the expected value computed in the test from the recomputed alpha — not read back from the output.
+/// **Post-§16.45, `alpha_composite_over`'s general rule is real source-over, not this plain lerp** —
+/// this citation still holds here only because `clean_inpaint`'s destination is opaque (`da == 255`),
+/// the one case where real source-over and item 15's lerp coincide exactly.
 #[test]
 fn a_partially_faded_pixel_equals_the_hand_computed_source_over_lerp() {
     let config = InpainterConfig::default();

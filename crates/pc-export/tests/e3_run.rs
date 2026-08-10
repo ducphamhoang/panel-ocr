@@ -307,8 +307,11 @@ fn a7_the_mask_is_upscaled_with_nearest_neighbour_only() {
 
 #[test]
 fn the_denoise_branch_composites_the_noise_mask_over_the_upscaled_combined_mask() {
-    // §12.3 step 4's second bullet, with §16.11 items 3 and 9's nearest-everywhere and
-    // `alpha_out = max(base_a, layer_a)` rules.
+    // §12.3 step 4's second bullet, with §16.11 item 3's nearest-everywhere rule. §16.11
+    // item 9's compositing half is superseded by §16.45 item 4: real (Porter-Duff)
+    // source-over, `out_a = sa + da*(1 - sa)`, not `alpha_out = max(base_a, layer_a)`.
+    // The layers below are fully opaque (a = 255), the regime both formulas agree on, so
+    // no assertion in this test moves.
     let dir = tempfile::tempdir().expect("a temp dir");
     let original = write_original_png(dir.path());
     let base = dir.path().join("out");

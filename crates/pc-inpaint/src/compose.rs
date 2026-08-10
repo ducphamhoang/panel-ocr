@@ -1,8 +1,14 @@
-//! RGBA composition helpers — spec §16.38 item 3(h), arithmetic pinned by §16.9 items 13 and 15.
+//! RGBA composition helpers — spec §16.38 item 3(h). `resize_nearest_rgba`, `blend_channel` and
+//! `composite_rgb` are pinned by §16.9 items 13 and 15; `alpha_composite_over` is pinned by §16.45
+//! item 4's real (Porter-Duff) source-over, `out_a = sa + da*(1 - sa)`, which superseded the
+//! `alpha_out = max(base_a, layer_a)` rule.
 //!
 //! **The arithmetic now lives in `pc_imageops::composite` (§16.42)** and is re-exported here, so
 //! `pc_inpaint::compose::<name>` still resolves for every existing caller and for the frozen tests.
-//! It is unchanged.
+//! It was unchanged by that move; §16.45 item 4 changed `alpha_composite_over` afterwards. §16.45
+//! item 3 records that this crate introduces no instance of the defect of its own (`clean_inpaint`'s
+//! destination is opaque) but *inherits* the artifact by compositing the already-corrupted
+//! noise-mask layer.
 //!
 //! **This module used to hold a FOURTH verbatim copy, and recorded that as an open question rather
 //! than resolving it.** `pc_mask::combine` held the original (§16.9 items 13, 15),
@@ -28,8 +34,9 @@
 //! function, so those particular assertions no longer discriminate between implementations and are
 //! kept as a regression guard on the re-export paths. The check that carries weight for the copy
 //! that had none is `crates/pc-export/tests/composite_value_lock.rs`, whose expectations are
-//! hand-derived from §16.9 items 13/15 and which was observed green against the **un-hoisted**
-//! `pc-export` copy before this move (§16.42 item 6's binding sequencing requirement).
+//! hand-derived (from §16.9 items 13/15 for the resampling and lerp, and from §16.45 item 4 for
+//! `alpha_composite_over`) and which was observed green against the **un-hoisted** `pc-export` copy
+//! before this move (§16.42 item 6's binding sequencing requirement).
 
 pub use pc_imageops::composite::{
     alpha_composite_over, blend_channel, composite_rgb, resize_nearest_rgba,

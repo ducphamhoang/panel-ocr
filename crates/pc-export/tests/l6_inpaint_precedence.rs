@@ -278,11 +278,21 @@ fn an_inpainted_mask_without_a_final_mask_selects_no_mask() {
 
 #[test]
 fn exported_inpaint_mask_pixel_is_combined_then_noise_then_inpainting() {
-    // §16.38 items 22(f), 22(h), and 24(c). Hand trace using
-    // round(base * (1-alpha) + layer * alpha):
-    // [20,40,60,180] overlaid by [220,20,100,128] => [120,30,80,180], then
-    // [10,210,30,64] => [92,75,67,180]. Every permutation of these three source
-    // colours yields a different pixel; the literal therefore pins identity and order.
+    // §16.38 items 22(f), 22(h), and 24(c), with the compositing arithmetic now real
+    // (Porter-Duff) source-over per §16.45 item 4 -- `out_a = sa + da*(1 - sa)`,
+    // `out_rgb[c] = round((src[c]*sa + dst[c]*da*(1 - sa)) / out_a)` -- rather than the
+    // superseded `alpha_out = max(base_a, layer_a)` rule this trace used to use.
+    // Hand trace:
+    //   [20,40,60,180] under [220,20,100,128]: sa=128/255, da=180/255,
+    //     da*(1-sa)=0.351557093, out_a=0.853517877 -> 218; R 117.462515/0.853518 -> 138,
+    //     G 24.101500/0.853518 -> 28, B 71.289504/0.853518 -> 84  =>  [138,28,84,218]
+    //   [138,28,84,218] under [10,210,30,64]: sa=64/255, da=218/255,
+    //     da*(1-sa)=0.640338332, out_a=0.891318724 -> 227; R 90.876494/0.891319 -> 102,
+    //     G 70.635355/0.891319 -> 79, B 61.317832/0.891319 -> 69  =>  [102,79,69,227]
+    // §16.45 item 5 authorises replacing the former [92,75,67,180]; that value was
+    // measured, not predicted, by applying the candidate fix in a probe worktree. Every
+    // permutation of these three source colours still yields a different pixel, so the
+    // literal continues to pin identity and order, not just cardinality.
     let dir = tempfile::tempdir().expect("temp dir");
     let original = write_grayscale_original(dir.path());
     let output_dir = dir.path().join("out");
@@ -313,14 +323,18 @@ fn exported_inpaint_mask_pixel_is_combined_then_noise_then_inpainting() {
     .expect("mask export succeeds");
 
     let exported = pc_testkit::images::load_rgba8(output_dir.join("page_mask.png"));
-    assert_eq!(exported.get_pixel(0, 0).0, [92, 75, 67, 180]);
+    assert_eq!(exported.get_pixel(0, 0).0, [102, 79, 69, 227]);
 }
 
 #[test]
 fn exported_inpaint_mask_omits_noise_when_denoising_is_disabled() {
     // §16.38 items 22(b)(ii), 22(f), and 22(h): disabled denoising gives the two-layer
     // base -> inpainting result. The stale noise handle is deliberately still populated.
-    // Hand trace: [20,40,60,180] overlaid by [10,210,30,64] => [17,83,52,180].
+    // Hand trace under §16.45 item 4's real source-over (not the superseded
+    // `alpha_out = max(base_a, layer_a)` rule): [20,40,60,180] under [10,210,30,64],
+    // sa=64/255, da=180/255, da*(1-sa)=0.528719723, out_a=0.779700115 -> 199;
+    // R 13.084198/0.779700 -> 17, G 73.854671/0.779700 -> 95, B 39.252595/0.779700 -> 50
+    // => [17,95,50,199]. §16.45 item 5 authorises replacing the former [17,83,52,180].
     let dir = tempfile::tempdir().expect("temp dir");
     let original = write_grayscale_original(dir.path());
     let output_dir = dir.path().join("out");
@@ -351,7 +365,7 @@ fn exported_inpaint_mask_omits_noise_when_denoising_is_disabled() {
     .expect("mask export succeeds");
 
     let exported = pc_testkit::images::load_rgba8(output_dir.join("page_mask.png"));
-    assert_eq!(exported.get_pixel(0, 0).0, [17, 83, 52, 180]);
+    assert_eq!(exported.get_pixel(0, 0).0, [17, 95, 50, 199]);
 }
 
 #[test]

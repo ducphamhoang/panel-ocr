@@ -2,7 +2,11 @@
 //!
 //! **The arithmetic now lives in `pc_imageops::composite` (§16.42)** and is re-exported
 //! here, so `pc_export::composite::<name>` still resolves for every existing caller and
-//! for the frozen tests. It is unchanged, and still pinned by §16.9 items 13 and 15.
+//! for the frozen tests. `resize_nearest_rgba` and `blend_channel` are unchanged and still
+//! pinned by §16.9 items 13 and 15; `alpha_composite_over` is not — §16.45 item 4 replaced
+//! its rule with real (Porter-Duff) source-over, `out_a = sa + da*(1 - sa)`. §16.45 item 6
+//! records this crate's mask export as the second, independent site the old
+//! destination-alpha-ignoring rule corrupted.
 //!
 //! The mask this stage upscales is the same artifact the denoiser saw, so its arithmetic
 //! must agree with `pc-denoise`'s pixel-for-pixel. §1 rule 2 forbids importing it from a

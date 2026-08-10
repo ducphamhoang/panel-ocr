@@ -144,8 +144,11 @@ fn composite_rgb_agrees_across_pc_mask_pc_denoise_and_pc_inpaint() {
     );
 }
 
-/// The three `alpha_composite_over` implementations must agree, including on `alpha_out = max(base_a,
-/// layer_a)` (§16.9 item 15) and on dropping pixels that land outside the destination.
+/// The three `alpha_composite_over` implementations must agree, including on `alpha_out` — which
+/// §16.45 item 4 fixed as real (Porter-Duff) source-over's `sa + da*(1 - sa)`, superseding the
+/// `max(base_a, layer_a)` rule this comment used to cite to §16.9 item 15 — and on dropping pixels
+/// that land outside the destination. This test compares the implementations against each other, so
+/// it does not pin the formula's value; `crates/pc-export/tests/composite_value_lock.rs` does.
 #[test]
 fn alpha_composite_over_agrees_across_pc_denoise_and_pc_inpaint_including_the_offset_clip() {
     let make_base = || {

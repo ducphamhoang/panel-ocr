@@ -11,9 +11,15 @@
 //! this file exists to prove the CURRENT, independently-implemented copy is correct *before*
 //! it is deleted and replaced with a re-export.
 //!
-//! Every expected value below is computed by hand from the formulas §16.9 items 13/15 pin, not
-//! by running `pc_export::composite` once and pasting its output -- an expectation derived from
-//! the artifact under test would prove nothing (cookbook rules 7/13).
+//! Every expected value below is computed by hand from the pinned formulas, not by running
+//! `pc_export::composite` once and pasting its output -- an expectation derived from the artifact
+//! under test would prove nothing (cookbook rules 7/13). `resize_nearest_rgba` and
+//! `blend_channel` are pinned by §16.9 items 13 and 15; `alpha_composite_over` is pinned by
+//! **§16.45 item 4**'s real (Porter-Duff) source-over, which superseded the
+//! `alpha_out = max(base_a, layer_a)` rule this file originally hand-derived from (§16.45 item 8
+//! records that the `alpha_out` half was attributed to §16.9 item 15 by paraphrase, and that item
+//! 15 says nothing about it). §16.45 item 5 authorises the two amended literals below, and only
+//! those two; every other expectation in this file is unchanged from the pre-hoist freeze.
 
 use image::{Rgba, RgbaImage};
 use pc_export::composite::{alpha_composite_over, blend_channel, resize_nearest_rgba};
@@ -172,8 +178,10 @@ fn alpha_composite_over_opaque_layer_fully_onscreen_replaces_every_pixel() {
 }
 
 /// Added 2026-08-09 after a fresh-reader pass found the alpha=0 skip and the partial-alpha
-/// blend branch (the one line most likely to diverge, `alpha_out = max(base_a, layer_a)`)
-/// had no hand-derived coverage for `pc-export` specifically — only an agreement check,
+/// blend branch (the one most likely to diverge; its arithmetic is now §16.45 item 4's real
+/// source-over, not the superseded `alpha_out = max(base_a, layer_a)` rule this comment
+/// originally named) had no hand-derived coverage for `pc-export` specifically — only an agreement
+/// check,
 /// which §16.42 item 6 explicitly says goes vacuous once the hoist lands. A fully
 /// transparent source pixel (`a == 0`) must be skipped entirely: `dst` unchanged.
 #[test]
@@ -188,18 +196,100 @@ fn alpha_composite_over_fully_transparent_layer_pixel_is_skipped() {
     );
 }
 
-/// Partial-alpha blend, hand-derived from the pinned formulas (§16.9 item 15):
-/// `blend_channel(base, color, alpha) = round(base*(1-alpha) + color*alpha)`,
-/// `alpha_out = max(base_a, layer_a)`. base = (100, 50, 200, 180), layer = (20, 250, 0, 128),
-/// alpha = 128/255 ≈ 0.501960784:
-///   R: round(100*0.498039216 + 20*0.501960784)  = round(59.843137) = 60
-///   G: round(50*0.498039216 + 250*0.501960784)  = round(150.392157) = 150
-///   B: round(200*0.498039216 + 0*0.501960784)   = round(99.607843)  = 100
-///   A: max(180, 128) = 180
+/// §16.45 item 9 (H2), the case the whole entry exists for: a **fully transparent
+/// destination** must receive the layer's own colour and alpha unchanged — real
+/// source-over's `da == 0` reduction, where `out_a = sa` and
+/// `out_rgb = (src·sa + dst·0)/sa = src`.
 ///
-/// `base_a` (180) is the larger of the two here, so this case alone cannot distinguish
-/// `alpha_out = max(base_a, layer_a)` from a bug that just writes `alpha_out = base_a` --
-/// see the second test below, added after a fresh-reader pass named exactly this gap.
+/// The destination is deliberately **non-black**, `(99, 99, 99, 0)`: against a black
+/// transparent destination the buggy "blend the layer against dst's RGB, ignore dst's
+/// alpha" formula and the correct "copy the layer" answer differ only by the
+/// premultiplication factor, so a `(0,0,0,0)` destination lets a partially-correct
+/// implementation look right for the wrong reason. With `dst_rgb = 99` the two readings
+/// are separated on every channel.
+///
+/// What turns this red: reinstating the destination-alpha-ignoring blend. Under it this
+/// input yields `Rgba([59, 175, 49, 128])` (`round(99·(1−a) + src·a)` per channel,
+/// `alpha_out = max(0, 128)`), which shares no channel with the expected value except
+/// alpha.
+#[test]
+fn alpha_composite_over_transparent_destination_copies_the_layer_unchanged() {
+    let mut dst = RgbaImage::from_pixel(1, 1, Rgba([99, 99, 99, 0]));
+    let layer = RgbaImage::from_pixel(1, 1, Rgba([20, 250, 0, 128]));
+    alpha_composite_over(&mut dst, &layer, (0, 0));
+    assert_eq!(
+        *dst.get_pixel(0, 0),
+        Rgba([20, 250, 0, 128]),
+        "a fully transparent destination contributes nothing: out = the layer itself, \
+         not the layer premultiplied against the destination's RGB (§16.45 item 4)"
+    );
+}
+
+/// Same as above but with a fully **opaque** layer over the fully transparent,
+/// non-black destination: `sa = 1` takes the primitive's `a == 255` fast path, so this
+/// pins that the fast path and the general formula agree at their boundary rather than
+/// leaving the `da == 0` behaviour asserted only on the partial-alpha branch.
+///
+/// What turns this red: dropping the `a == 255` fast path in favour of an arithmetic
+/// path that still consults `dst`'s RGB, or an `out_a` that is not saturated to 255.
+#[test]
+fn alpha_composite_over_opaque_layer_on_transparent_destination_is_the_layer() {
+    let mut dst = RgbaImage::from_pixel(1, 1, Rgba([99, 99, 99, 0]));
+    let layer = RgbaImage::from_pixel(1, 1, Rgba([20, 250, 0, 255]));
+    alpha_composite_over(&mut dst, &layer, (0, 0));
+    assert_eq!(*dst.get_pixel(0, 0), Rgba([20, 250, 0, 255]));
+}
+
+/// §16.45 item 9 (H2)'s **opaque-destination regression case**. Unlike the two
+/// transparent-destination cases above this one is GREEN before the fix as well as
+/// after, by design: §16.45 item 4 states real source-over "reduces algebraically to
+/// the current formula when `da == 255`", and this test is what holds the implementation
+/// to that claim rather than leaving it as prose.
+///
+/// Hand-derived, `dst = (100, 50, 200, 255)`, `layer = (20, 250, 0, 128)`,
+/// `sa = 128/255 ≈ 0.501960784`, `da = 1`:
+///   `out_a  = sa + 1·(1 − sa) = 1` -> 255
+///   `out[c] = (src[c]·sa + dst[c]·1·(1 − sa)) / 1` — exactly `blend_channel`
+///   R: 20·0.501960784 + 100·0.498039216 = 10.039216 + 49.803922 = 59.843 -> 60
+///   G: 250·0.501960784 + 50·0.498039216 = 125.490196 + 24.901961 = 150.392 -> 150
+///   B: 0 + 200·0.498039216 = 99.608 -> 100
+///
+/// What turns this red: a fix that changes the opaque-destination regime — e.g. one that
+/// premultiplies unconditionally, or that writes `out_a = sa·255 = 128` instead of 255.
+#[test]
+fn alpha_composite_over_opaque_destination_still_matches_the_plain_lerp() {
+    let mut dst = RgbaImage::from_pixel(1, 1, Rgba([100, 50, 200, 255]));
+    let layer = RgbaImage::from_pixel(1, 1, Rgba([20, 250, 0, 128]));
+    alpha_composite_over(&mut dst, &layer, (0, 0));
+    assert_eq!(
+        *dst.get_pixel(0, 0),
+        Rgba([60, 150, 100, 255]),
+        "with da = 255 real source-over must still be round(dst·(1−sa) + src·sa) with \
+         alpha_out = 255 (§16.45 item 4)"
+    );
+}
+
+/// Partial-alpha blend over a *partially transparent* destination, hand-derived from real
+/// (Porter-Duff) source-over, which §16.45 item 4 ratified in place of the superseded
+/// `alpha_out = max(base_a, layer_a)` rule this test used to assert:
+///
+/// ```text
+/// out_a      = sa + da·(1 − sa)
+/// out_rgb[c] = round( (src[c]·sa + dst[c]·da·(1 − sa)) / out_a )
+/// ```
+///
+/// base = (100, 50, 200, 180), layer = (20, 250, 0, 128), `sa = 128/255 ≈ 0.501960784`,
+/// `da = 180/255 ≈ 0.705882353`, `da·(1 − sa) ≈ 0.351557093`:
+///   out_a: 0.501960784 + 0.351557093 = 0.853517877 -> round(217.647) = 218
+///   R: (20*0.501960784 + 100*0.351557093) / 0.853517877 = 45.194926/0.853518 = 52.951 -> 53
+///   G: (250*0.501960784 + 50*0.351557093) / 0.853517877 = 143.068051/0.853518 = 167.614 -> 168
+///   B: (0*0.501960784 + 200*0.351557093) / 0.853517877 = 70.311419/0.853518 = 82.378 -> 82
+///
+/// The old expectation was `Rgba([60, 150, 100, 180])` — the destination's own alpha
+/// ignored on every channel and `alpha_out` taken as `max(180, 128)`. §16.45 item 5
+/// authorises this replacement, whose value both planning agents independently obtained by
+/// running PIL's `Image.alpha_composite` (Pillow 11.3.0) on this exact input; it is *not*
+/// read back from `pc_export::composite` (cookbook rules 7/13).
 #[test]
 fn alpha_composite_over_partial_alpha_blend_matches_the_hand_derived_result() {
     let mut dst = RgbaImage::from_pixel(1, 1, Rgba([100, 50, 200, 180]));
@@ -207,23 +297,38 @@ fn alpha_composite_over_partial_alpha_blend_matches_the_hand_derived_result() {
     alpha_composite_over(&mut dst, &layer, (0, 0));
     assert_eq!(
         *dst.get_pixel(0, 0),
-        Rgba([60, 150, 100, 180]),
-        "partial-alpha blend must match the hand-derived per-channel result and alpha_out = max(base_a, layer_a)"
+        Rgba([53, 168, 82, 218]),
+        "partial-alpha blend must match the hand-derived real source-over result (§16.45 item 4)"
     );
 }
 
-/// Same RGB computation as above (identical `base`/`color`/`alpha` for R/G/B), but with
-/// `base_a` (100) SMALLER than `layer_a` (128), so `alpha_out = max(100, 128) = 128`. A
-/// bug that writes `alpha_out = base_a` (dropping the layer's alpha entirely) would give
-/// 100 here and pass the test above unchanged, which is exactly why this case exists.
+/// Same `base`/`layer` RGB and the same `sa` as above, but with `base_a` (100) SMALLER
+/// than `layer_a` (128) — the case that discriminates between three different readings of
+/// `alpha_out`, which is why it exists and why §16.45 item 5 renamed it:
+///   * a bug writing plain `base_a` would give 100;
+///   * the superseded `max(base_a, layer_a)` rule would give 128;
+///   * real source-over gives 178, matching neither.
+///
+/// Hand-derived, `sa = 128/255 ≈ 0.501960784`, `da = 100/255 ≈ 0.392156863`,
+/// `da·(1 − sa) ≈ 0.195309496`:
+///   out_a: 0.501960784 + 0.195309496 = 0.697270280 -> round(177.804) = 178
+///   R: (20*0.501960784 + 100*0.195309496) / 0.697270280 = 29.570165/0.697270 = 42.410 -> 42
+///   G: (250*0.501960784 + 50*0.195309496) / 0.697270280 = 135.255671/0.697270 = 193.980 -> 194
+///   B: (0*0.501960784 + 200*0.195309496) / 0.697270280 = 39.061899/0.697270 = 56.020 -> 56
+///
+/// §16.45 item 5 authorises the value, the name and the message changing together: the
+/// former name (`…alpha_out_is_the_max_not_just_base_alpha`) named the superseded rule as
+/// the property under test, which this assertion now refutes rather than confirms. Value
+/// independently obtained by running PIL's `Image.alpha_composite` (Pillow 11.3.0).
 #[test]
-fn alpha_composite_over_partial_alpha_blend_alpha_out_is_the_max_not_just_base_alpha() {
+fn alpha_composite_over_partial_alpha_blend_uses_real_alpha_out_not_the_max_rule() {
     let mut dst = RgbaImage::from_pixel(1, 1, Rgba([100, 50, 200, 100]));
     let layer = RgbaImage::from_pixel(1, 1, Rgba([20, 250, 0, 128]));
     alpha_composite_over(&mut dst, &layer, (0, 0));
     assert_eq!(
         *dst.get_pixel(0, 0),
-        Rgba([60, 150, 100, 128]),
-        "alpha_out must be max(base_a, layer_a) = 128, not base_a = 100"
+        Rgba([42, 194, 56, 178]),
+        "alpha_out must be real source-over's round((sa + da*(1 - sa)) * 255) = 178 -- \
+         neither base_a = 100 nor the superseded max(base_a, layer_a) = 128 (§16.45 items 4 and 5)"
     );
 }
