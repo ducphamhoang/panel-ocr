@@ -843,8 +843,19 @@ fn spec() -> String {
     // legitimately contains the literal marker text inside inline code while discussing it;
     // widening the scan to all docs would therefore trip on prose about the gate.
     let path = paths::workspace_root().join("docs/PIPELINE_SPEC_V1.md");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()))
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    // Normalise CRLF -> LF. The repo's tracked blob is LF; most of this file's own parsing goes
+    // through `.lines()`, which already strips a trailing `\r` per line and never saw this. But
+    // several tests do raw substring matching with hardcoded LF-terminated string literals
+    // (e.g. `section_16_40s_two_item_25_back_pointers_are_independently_load_bearing`), and
+    // Windows' `core.autocrlf=true` checks this file out as CRLF locally -- a purely local
+    // checkout artifact, not a content difference (`git diff` shows none once normalised).
+    // Found 2026-08-10 when a merge exposed the same file checked out with CRLF here and LF in
+    // a sibling worktree, and the CRLF checkout failed a literal-match test the LF one passed.
+    // Normalising once here, rather than hand-fixing the checkout, makes every consumer of
+    // `spec()` immune to the local line-ending policy instead of just this one caller.
+    raw.replace("\r\n", "\n")
 }
 
 // ── Layer A ──────────────────────────────────────────────────────────────────
