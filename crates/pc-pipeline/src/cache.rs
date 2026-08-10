@@ -17,6 +17,12 @@ use uuid::Uuid;
 /// frozen and §2.8's list is closed.
 pub const SPLITS_SUFFIX: &str = "#splits.json";
 
+/// §16.38 item 11(d): upstream's intermediate inpainting cache suffix.
+pub const INPAINTING_SUFFIX: &str = "_inpainting.png";
+
+/// §16.38 item 11(d): upstream's cleaned inpainting cache suffix.
+pub const CLEAN_INPAINT_SUFFIX: &str = "_clean_inpaint.png";
+
 /// §16.12 item 10: `{uuid}_{stem}_seg{index:03}.png`.
 pub const SEGMENT_INFIX: &str = "_seg";
 
@@ -27,6 +33,8 @@ pub fn known_suffixes() -> Vec<&'static str> {
         .map(|output| output.cache_suffix())
         .collect();
     suffixes.push(SPLITS_SUFFIX);
+    suffixes.push(INPAINTING_SUFFIX);
+    suffixes.push(CLEAN_INPAINT_SUFFIX);
     suffixes.sort_by_key(|suffix| std::cmp::Reverse(suffix.len()));
     suffixes
 }

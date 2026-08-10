@@ -358,11 +358,102 @@ fn enum_spellings_are_snake_case() {
 // accept it.
 fn annotation_refine_mode_loads_successfully() {
     let doc = ProfileDocument::parse("[text_detector]\nmask_refine_mode = \"annotation\"\n")
-        .expect("config accepts annotation; pc-detect is what rejects it");
+        .expect("config accepts annotation as an opt-in refinement mode");
     assert_eq!(
         doc.profile().text_detector.mask_refine_mode,
         MaskRefineMode::Annotation
     );
+}
+
+// ---------------------------------------------------------------- [inpainter]
+
+#[test]
+// spec §6 as superseded by §16.38 item 13(a) -- the eight v1.5 inpainting keys. Every value
+// is `config.py:817-824`'s DATACLASS default, which §16.38 item 7(b) established is
+// upstream's runtime authority: `media/default.conf` disagrees on `min_inpainting_radius`
+// (5 vs 7) and is read by zero upstream Python files, so it is documentation only. Taking
+// the wrong file's values would move the eligibility filter's threshold.
+fn inpainter_defaults() {
+    let i = Profile::default().inpainter;
+    // §16.38 item 15(e): the default-off flag is what makes LaMa imply no fixture re-record.
+    assert!(!i.inpainting_enabled);
+    assert_eq!(i.inpainting_min_std_dev, 15.0);
+    assert_eq!(i.inpainting_max_mask_radius, 6);
+    assert_eq!(i.min_inpainting_radius, 7);
+    assert_eq!(i.max_inpainting_radius, 20);
+    assert_eq!(i.inpainting_radius_multiplier, 0.2);
+    assert_eq!(i.inpainting_isolation_radius, 5);
+    assert_eq!(i.inpainting_fade_radius, 4);
+}
+
+#[test]
+// spec §16.38 item 13(a): the eight keys must be REGISTERED and present in the SHIPPED
+// default profile, otherwise every `profile new` WARNs at the user about its own output.
+// The key names are literals here on purpose, for the reason
+// `the_general_device_key_is_registered_and_ships_as_cpu` gives: the registry-vs-document
+// comparison stays green if BOTH surfaces omit a key. The values are read out of the
+// `toml_edit` document -- an oracle independent of the serde layer `inpainter_defaults`
+// goes through.
+fn the_inpainter_keys_are_registered_and_ship_the_documented_values() {
+    let (_, keys) = Profile::TABLES
+        .iter()
+        .find(|(table, _)| *table == "inpainter")
+        .expect("[inpainter] must be in the key registry");
+    for key in [
+        "inpainting_enabled",
+        "inpainting_min_std_dev",
+        "inpainting_max_mask_radius",
+        "min_inpainting_radius",
+        "max_inpainting_radius",
+        "inpainting_radius_multiplier",
+        "inpainting_isolation_radius",
+        "inpainting_fade_radius",
+    ] {
+        assert!(
+            keys.contains(&key),
+            "`{key}` must be a known [inpainter] key: {keys:?}"
+        );
+    }
+    // Anti-vacuity: a hard-coded count so the loop above cannot pass over a registry that
+    // gained an extra ninth key nobody ratified.
+    assert_eq!(
+        keys.len(),
+        8,
+        "§16.38 item 13 declares eight keys: {keys:?}"
+    );
+
+    let doc = ProfileDocument::parse(DEFAULT_PROFILE_TOML).unwrap();
+    let table = &doc.document()["inpainter"];
+    assert_eq!(
+        table["inpainting_enabled"].as_bool(),
+        Some(false),
+        "the shipped flag must be a TOML boolean set to false"
+    );
+    assert_eq!(table["inpainting_min_std_dev"].as_float(), Some(15.0));
+    assert_eq!(table["inpainting_max_mask_radius"].as_integer(), Some(6));
+    assert_eq!(table["min_inpainting_radius"].as_integer(), Some(7));
+    assert_eq!(table["max_inpainting_radius"].as_integer(), Some(20));
+    assert_eq!(table["inpainting_radius_multiplier"].as_float(), Some(0.2));
+    assert_eq!(table["inpainting_isolation_radius"].as_integer(), Some(5));
+    assert_eq!(table["inpainting_fade_radius"].as_integer(), Some(4));
+    assert_eq!(doc.warnings(), &[]);
+}
+
+#[test]
+// spec §16.38 item 13(c), the same config-accepts/stage-refuses split §16.36 item 6 ruled
+// for `device = "cuda"`: `inpainting_enabled = true` must LOAD and VALIDATE in a build with
+// no ONNX at all -- this test binary is one. Otherwise `--detector replay`/`mock` runs,
+// which never construct an inpainting session, would break for a model nothing in them
+// reads. `ProfileDocument::parse` runs deserialization and validation; the explicit
+// `validate()` pins the second half rather than trusting the first.
+fn inpainting_enabled_true_loads_and_validates() {
+    let doc = ProfileDocument::parse("[inpainter]\ninpainting_enabled = true\n")
+        .expect("config accepts inpainting_enabled; the stage is what refuses it");
+    assert!(doc.profile().inpainter.inpainting_enabled);
+    assert_eq!(doc.warnings(), &[]);
+    doc.profile()
+        .validate()
+        .expect("inpainting_enabled = true is a valid profile in every build");
 }
 
 #[test]

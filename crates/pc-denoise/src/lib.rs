@@ -8,33 +8,63 @@
 //!
 //! Module map (§11.1, §11.5, §16.10 items 1-3):
 //!   * `nlm`        — joint-channel non-local-means (N1, heavy)
-//!   * `gaussian`   — separable Gaussian blur, `sigma = radius` (N2)
-//!   * `morph`      — growth kernel + binary dilation (§16.10 item 2)
-//!   * `composite`  — RGBA source-over + nearest resize (§16.10 item 3)
+//!   * `gaussian`   — separable Gaussian blur, `sigma = radius` (N2); a **re-export**, see below
+//!   * `morph`      — growth kernel + binary dilation; a **re-export**, see below
+//!   * `composite`  — RGBA source-over + nearest resize; a **re-export**, see below (since §16.42, which overturned §16.10 item 3's per-crate pin)
 //!   * `noise_mask` — region selection, crop, grow, fade, alpha attach, compose (N3)
 //!   * this file    — `run()` wiring, the 1-bit shortcut, analytics (N4)
 //!
-//! §16.10 item 1: `nlm` and `gaussian` live here rather than in `pc-imageops` (which
-//! §11.1 named) because `pc-imageops` was frozen at the end of Stage 3 and no other v1
-//! stage uses either module. Both are `pub` and config-free, so a v1.5 hoist is a move
-//! plus a re-export.
+//! Since §16.38 item 16(a) (v1.5, task L1), `morph` is a re-export of
+//! [`pc_imageops::morph`] rather than a module of this crate. §16.10 item 2 had
+//! deliberately duplicated `pc_mask::grow`'s copy here, because §1 rule 2 forbids the
+//! stage-to-stage dependency that would let them share, and scheduled the hoist as a
+//! "v1.5 consolidation ticket"; L1 cashed it in. The public path
+//! `pc_denoise::morph::{kernel, dilate, Kernel}` is unchanged, so the frozen
+//! `tests/n3_noise_mask.rs` is untouched.
+//!
+//! §16.10 item 1: `nlm` and `gaussian` lived here rather than in `pc-imageops` (which
+//! §11.1 named) because — paraphrasing that item, not quoting it — `pc-imageops` had been
+//! frozen and committed at the end of Stage 3 and no other v1 stage used either module.
+//! That item anticipated the move; verbatim, it reads:
+//!
+//! > Both stay `pub` (`pc_denoise::nlm`, `pc_denoise::gaussian`) and free of any
+//! > `pc-config` dependency, so §11.1's "independently benchmarkable" property is
+//! > preserved and a v1.5 hoist into `pc-imageops` is a mechanical move plus a re-export.
+//!
+//! **Task L4 took exactly that move for `gaussian`, ratified by §16.38 item 20**, because
+//! v1.5's `pc-inpaint` needs the same blur for `inpainting_fade_radius` (§16.38 item 3(h))
+//! and §1 rule 2 forbids the stage-to-stage edge. The public path
+//! `pc_denoise::gaussian::{taps, blur}` is unchanged, so the frozen `tests/n2_gaussian.rs`
+//! is untouched.
+//!
+//! **`nlm` is NOT hoisted, and §16.38 item 20 is scoped so it cannot be read as authority
+//! to hoist it.** `nlm` still has exactly one consumer, and §16.10 item 1 remains the live
+//! placement decision for it. §16.38 item 16(a)'s hoist names `kernel`/`dilate` only and is
+//! not authority for `gaussian` either.
 //!
 //! `run()`'s wiring, the 1-bit shortcut and the analytics are implemented here (N4); its
 //! signature is frozen with the tests.
 
 pub mod composite;
-pub mod gaussian;
-pub mod morph;
 pub mod nlm;
 pub mod noise_mask;
 
+/// §16.38 item 16(a): `pc_denoise::morph` is `pc_imageops::morph`. Keeping the module path
+/// as a re-export is what lets the frozen `tests/n3_noise_mask.rs` stay unedited.
+pub use pc_imageops::morph;
+
+/// §16.38 item 20 (task L4): `pc_denoise::gaussian` is `pc_imageops::gaussian`, the move
+/// §16.10 item 1 anticipated. Keeping the module path as a re-export is what lets the frozen
+/// `tests/n2_gaussian.rs` stay unedited.
+pub use pc_imageops::gaussian;
+
 pub use composite::{alpha_composite_over, blend_channel, composite_rgb, resize_nearest_rgba};
-pub use morph::{dilate, kernel, Kernel};
 pub use nlm::{denoise_call_count, reset_denoise_call_count, NlmParams};
 pub use noise_mask::{
     alpha_binary, attach_alpha, blank_noise_mask, build_noise_mask, fade_mask, nlm_params,
     select_regions,
 };
+pub use pc_imageops::morph::{dilate, kernel, Kernel};
 
 use image::DynamicImage;
 use pc_config::DenoiserConfig;

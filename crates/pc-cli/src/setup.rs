@@ -10,6 +10,12 @@ use pc_config::{Config, ConfigDocument, Profile, ProfileDocument};
 use pc_pipeline::{resolve_threads, select_checkpointing, PipelineOptions};
 use std::path::Path;
 
+/// Resolve the CLI's disable override against `[inpainter].inpainting_enabled`.
+/// §16.38 item 16(e): `--skip-inpaint` has precedence over the profile setting.
+pub fn effective_inpainting_enabled(args: &CleanArgs, profile: &Profile) -> bool {
+    profile.inpainter.inpainting_enabled && !args.skip_inpaint
+}
+
 /// Load the app-level config, or the empty default when the file is absent.
 pub fn load_app_config() -> Result<Config> {
     let path = paths::default_config_path();

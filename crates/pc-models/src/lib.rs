@@ -13,6 +13,25 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+/// Whether a registry entry is needed by a default run.
+///
+/// Ratified by spec §16.38 item 19 (decision D1). Optionality is a **mandatory field** on
+/// [`ModelSpec`] rather than a derived `OPTIONAL` slice or an `is_optional()` predicate:
+/// both of those were explicitly rejected, because a field with no `Default` impl forces
+/// every construction site to state the answer, so a new model cannot silently inherit
+/// "required" and grow every user's `models download`.
+///
+/// Deliberately **no** `#[derive(Default)]` and no `impl Default`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Requirement {
+    /// Fetched by `models download` with no flags. Absence is a `models verify` failure.
+    Required,
+    /// Fetched only with `models download --include-optional`. Absence is reported as a
+    /// distinct, non-failing status; **corruption is still a failure** — optionality
+    /// licenses absence, never corruption.
+    Optional,
+}
+
 /// A model known to the application.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelSpec {
@@ -20,6 +39,8 @@ pub struct ModelSpec {
     pub file_name: &'static str,
     pub url: &'static str,
     pub sha256: &'static str,
+    /// §16.38 item 19. Mandatory, and stated at every construction site.
+    pub requirement: Requirement,
 }
 
 /// The detector weights pinned by spec §8.3 step 3.
@@ -28,6 +49,7 @@ pub const COMIC_TEXT_DETECTOR: ModelSpec = ModelSpec {
     file_name: "comictextdetector.pt.onnx",
     url: "https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3/comictextdetector.pt.onnx",
     sha256: "1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f",
+    requirement: Requirement::Required,
 };
 
 /// The manga-ocr encoder weights (spec §16.30 item 1, ratified artifact pin).
@@ -36,6 +58,7 @@ pub const MANGA_OCR_ENCODER: ModelSpec = ModelSpec {
     file_name: "encoder_model.onnx",
     url: "https://huggingface.co/mayocream/manga-ocr-onnx/resolve/24b12778d85800835e2ca409236de281b8ab7b9f/encoder_model.onnx",
     sha256: "15fa8155fe9bc1a7d25d9bb353debaa4def033d0174e907dbd2dd6d995def85f",
+    requirement: Requirement::Required,
 };
 
 /// The manga-ocr decoder weights (spec §16.30 item 1, ratified artifact pin).
@@ -44,10 +67,69 @@ pub const MANGA_OCR_DECODER: ModelSpec = ModelSpec {
     file_name: "decoder_model.onnx",
     url: "https://huggingface.co/mayocream/manga-ocr-onnx/resolve/24b12778d85800835e2ca409236de281b8ab7b9f/decoder_model.onnx",
     sha256: "ef7765261e9d1cdc34d89356986c2bbc2a082897f753a89605ae80fdfa61f5e8",
+    requirement: Requirement::Required,
+};
+
+/// The LaMa inpainting weights (spec §16.38 item 1(a), the artifact pinned by the L0
+/// spike; substitution for upstream's TorchScript checkpoint registered as
+/// `DEVIATION(25)` at §14).
+///
+/// DEVIATION(25): upstream downloads `anime-manga-big-lama.pt`
+/// (`pcleaner/model_downloader.py:21-22`) and loads it through `simple_lama_inpainting`;
+/// this port has no TorchScript loader, so it loads the ONNX export from
+/// `mayocream/koharu` at revision `15439cba09df388c51de6e47c6020bc31edab41f`. The
+/// provenance chain is a *string match* on the republisher's declared
+/// `source_checkpoint`, not numerical equivalence at any tolerance (§16.38 item 6(a)).
+///
+/// `Requirement::Optional` because `inpainting_enabled` defaults to `false` (§6,
+/// `config.py:817`) and the artifact is 207,482,644 bytes: §16.38 item 19 forbids growing
+/// every user's `models download` by that much for a feature that defaults off.
+pub const LAMA_MANGA_INPAINTER: ModelSpec = ModelSpec {
+    name: "lama-manga-inpainter",
+    file_name: "lama-manga.onnx",
+    url: "https://huggingface.co/mayocream/koharu/resolve/15439cba09df388c51de6e47c6020bc31edab41f/lama-manga.onnx",
+    sha256: "50a1abae0d73bd46d08eae36c8590cd59ad09029494c9698702b050ef00b0100",
+    requirement: Requirement::Optional,
 };
 
 /// The registry exposed to model-management callers.
-pub const ALL: &[&ModelSpec] = &[&COMIC_TEXT_DETECTOR, &MANGA_OCR_ENCODER, &MANGA_OCR_DECODER];
+///
+/// §16.38 item 19(a): this stays the **complete** registry — it is not shrunk to a
+/// required-only list. Callers scope their own iteration through [`selected`] and
+/// [`skipped`]; `models path` deliberately iterates the whole thing.
+pub const ALL: &[&ModelSpec] = &[
+    &COMIC_TEXT_DETECTOR,
+    &MANGA_OCR_ENCODER,
+    &MANGA_OCR_DECODER,
+    &LAMA_MANGA_INPAINTER,
+];
+
+/// Is `spec` in scope for `models download` / `models verify` at this flag setting?
+///
+/// The single predicate behind both [`selected`] and [`skipped`], so the two are a
+/// partition of [`ALL`] by construction rather than by two hand-written filters that
+/// could drift apart.
+fn is_selected(spec: &ModelSpec, include_optional: bool) -> bool {
+    include_optional || spec.requirement == Requirement::Required
+}
+
+/// The registry entries `models download` fetches and `models verify` reports
+/// (§16.38 item 19(b)). Without `--include-optional`, exactly the `Required` ones.
+pub fn selected(include_optional: bool) -> Vec<&'static ModelSpec> {
+    ALL.iter()
+        .copied()
+        .filter(|spec| is_selected(spec, include_optional))
+        .collect()
+}
+
+/// The registry entries left out at this flag setting. `models download` must **name**
+/// these rather than skip them silently (§16.38 item 19(c)).
+pub fn skipped(include_optional: bool) -> Vec<&'static ModelSpec> {
+    ALL.iter()
+        .copied()
+        .filter(|spec| !is_selected(spec, include_optional))
+        .collect()
+}
 
 /// The result of querying an override or the managed cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -418,6 +500,129 @@ pub fn ensure_available(
             },
         },
     }
+}
+
+/// One model's `models verify` outcome (spec §13.1, ratified by §16.38 item 19(d)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyStatus {
+    /// Present, right size, right digest.
+    Ok,
+    /// A [`Requirement::Required`] model is absent from the managed cache.
+    Missing,
+    /// A [`Requirement::Optional`] model is absent from the managed cache. **Not** a
+    /// failure, and its label deliberately does not contain the substring `MISSING`, so a
+    /// script grepping the old word cannot confuse the two states.
+    NotInstalled,
+    SizeMismatch {
+        actual: u64,
+        expected: u64,
+    },
+    HashMismatch {
+        actual: String,
+        expected: String,
+    },
+    /// Verification could not be carried out at all (an I/O error on the cached file).
+    Error(String),
+}
+
+impl VerifyStatus {
+    /// The status for a model absent from the managed cache — the only place a
+    /// [`Requirement`] changes a verification outcome.
+    pub fn absent(requirement: Requirement) -> Self {
+        match requirement {
+            Requirement::Required => Self::Missing,
+            Requirement::Optional => Self::NotInstalled,
+        }
+    }
+
+    /// The status column `models verify` prints.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Ok => "OK",
+            Self::Missing => "MISSING",
+            Self::NotInstalled => "NOT INSTALLED (optional)",
+            Self::SizeMismatch { .. } => "SIZE MISMATCH",
+            Self::HashMismatch { .. } => "HASH MISMATCH",
+            Self::Error(_) => "ERROR",
+        }
+    }
+
+    /// Whether this outcome clears `all_ok` and makes `models verify` exit `EXIT_FATAL`.
+    ///
+    /// `NotInstalled` is the only non-`Ok` status that is not a failure. Note what this
+    /// signature does *not* take: a [`Requirement`]. Every corruption status is a failure
+    /// with no optionality in scope, which is how §16.38 item 19(d)'s "optionality
+    /// licenses absence, never corruption" is enforced structurally rather than by a
+    /// branch someone could later write the other way.
+    pub fn is_failure(&self) -> bool {
+        !matches!(self, Self::Ok | Self::NotInstalled)
+    }
+}
+
+/// One model's verification, with the path it was looked for at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Verification {
+    pub path: PathBuf,
+    pub status: VerifyStatus,
+}
+
+/// Verify one model against the managed cache.
+///
+/// Filesystem-only and **network-free** by construction — it takes no [`ModelFetcher`] —
+/// which is what makes `models verify`'s whole policy unit-testable under §16.18 item 3's
+/// prohibition on test-reachable network I/O. It creates no directory and modifies
+/// nothing.
+///
+/// `expected_size` is the published byte length when one is pinned, `None` otherwise; it
+/// arrives as a parameter because the size table is `pc-cli`'s presentation-layer data
+/// (see `pc_cli::models::expected_size`), not registry policy.
+pub fn verify(spec: &ModelSpec, models_dir: &Path, expected_size: Option<u64>) -> Verification {
+    let path = match resolve(spec, models_dir, None) {
+        Ok(Resolution::Cached(path)) => path,
+        Ok(Resolution::Missing(path)) => {
+            return Verification {
+                path,
+                status: VerifyStatus::absent(spec.requirement),
+            }
+        }
+        Ok(Resolution::Override(_)) => {
+            unreachable!("managed model verification never supplies an override")
+        }
+        Err(error) => {
+            return Verification {
+                path: models_dir.join(spec.file_name),
+                status: VerifyStatus::Error(error.to_string()),
+            }
+        }
+    };
+
+    if let Some(expected) = expected_size {
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.len() != expected => {
+                return Verification {
+                    status: VerifyStatus::SizeMismatch {
+                        actual: metadata.len(),
+                        expected,
+                    },
+                    path,
+                }
+            }
+            Ok(_) => {}
+            Err(source) => {
+                let status = VerifyStatus::Error(io_error(&path, source).to_string());
+                return Verification { path, status };
+            }
+        }
+    }
+
+    let status = match verify_sha256(&path, spec.sha256) {
+        Ok(()) => VerifyStatus::Ok,
+        Err(ModelError::HashMismatch {
+            actual, expected, ..
+        }) => VerifyStatus::HashMismatch { actual, expected },
+        Err(error) => VerifyStatus::Error(error.to_string()),
+    };
+    Verification { path, status }
 }
 
 fn unavailable(spec: &ModelSpec, dest: &Path, error: ModelError) -> ModelError {

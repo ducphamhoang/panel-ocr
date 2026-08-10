@@ -23,7 +23,17 @@ const MARKER: &str = "**SUPERSEDES:";
 /// §16.24 item 1(f)'s literal-constant pattern: a hard-coded expected number of parsed claims,
 /// never derived from the file, so the gate cannot pass by finding zero claims and raising the
 /// number is an edit that cannot be skipped.
-const EXPECTED_PARSED_CLAIMS: usize = 27;
+// §16.45 raises this from 51 to 54: three new SUPERSEDES markers (§16.10 item 3,
+// §16.11 item 9, §16.42 item 2 — all pinning the same superseded `alpha_out =
+// max(base_a, layer_a)` compositing formula).
+const EXPECTED_PARSED_CLAIMS: usize = 54;
+
+/// Claims whose declared sub-item identity must scope the target-side back-pointer independently.
+/// Most historical lettered claims retain §16.26 item 3(a)'s parent-item span. These two are pinned
+/// because §16.40 resolves two siblings in the same item and either sibling's pointer would otherwise
+/// satisfy both claims, making each dedicated annotation decorative.
+const SUB_ITEM_SCOPED_BACKPOINTERS: &[(&str, &str)] =
+    &[("16.40", "16.38 item 25(a)"), ("16.40", "16.38 item 25(d)")];
 
 /// Every ratified supersession claim, keyed by `(host, MARKER IDENTITY)` — the identity being the
 /// target label plus whatever sub-item letter the marker's own anchor text declares (see
@@ -109,6 +119,204 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.35", "10.3 step 10"),
     // §16.36's single marker: pins the device config key's section, previously unstated.
     ("16.36", "8.3 step 3"),
+    // §16.37's two markers, both narrow corrections of statements that were false when written,
+    // and both about the SHIPPED `Simple` mode rather than about the Annotation port §16.37
+    // plans — which is why they land at R0 (spec-only) instead of waiting for A4.
+    //
+    // `("16.37", "14 item 17")` withdraws one measurement sentence ("the filter has never
+    // fired"); item 17's scope and operand rulings are untouched, and the back-pointer says so.
+    // `("16.37", "8.3 step 5")` withdraws one parenthetical parity claim about
+    // `expand_textwindow`; `Simple`'s padding behaviour is deliberately unchanged. `step 5`
+    // resolves to the whole §8.3 span per the `step N` fallback documented above, so the
+    // step-level precision of that back-pointer is a convention this constant cannot enforce —
+    // the same consequence already recorded for §16.35's `10.3 step 10` row.
+    ("16.37", "14 item 17"),
+    ("16.37", "8.3 step 5"),
+    // §16.39's six markers, all landing with A4's wiring of `MaskRefineMode::Annotation`.
+    //
+    // Two of them re-target clauses §16.37 already claimed against, from a DIFFERENT host, and
+    // that is deliberate rather than a duplicate: `("16.39", "8.3 step 5")` claims the
+    // `Annotation -> StageError::InvalidInput` parenthetical of the out-of-scope bullet, while
+    // `("16.37", "8.3 step 5")` above claims the `expand_textwindow` parenthetical five lines
+    // earlier — two different sentences of one step. `("16.39", "14 item 17")` claims item 17's
+    // OPERAND sentence, while `("16.37", "14 item 17")` claims its "never fired" measurement.
+    // Both pairs collapse to the same span (the `step N` fallback for §8.3, item 17's whole span
+    // for §14), so one back-pointer would satisfy each pair; the rows are distinct because the
+    // hosts differ, and the multiset comparison keeps them so.
+    //
+    // `("16.39", "15 item 2")` is the anchor spelling §16.37 item 7 settled in advance: `15 item
+    // 2`, never `15.2 item 2` — there is no `## 15.2` header, and an unresolvable anchor PANICS
+    // `every_supersession_marker_has_a_back_pointer_at_its_target` rather than being skipped.
+    ("16.39", "14 item 12"),
+    ("16.39", "14 item 17"),
+    ("16.39", "15 item 2"),
+    ("16.39", "16.5 item 3"),
+    ("16.39", "8.3 step 5"),
+    ("16.39", "8.3 step 6"),
+    // §16.38's NINE markers (LaMa inpainting) — eight landed with the ratification, the ninth
+    // (`13.1`) with task L3; every "eight" in the paragraphs below is a measurement on the
+    // original eight and is deliberately not restated as a claim about nine. No §16.37 row
+    // exists on this branch: that number is
+    // occupied by the sibling `mask-parity` branch, which forked from the same base commit, so this
+    // entry is numbered 16.38 to avoid two `## 16.37` headings after a merge. Whoever merges the two
+    // branches owns reconciling BOTH branches' rows here and BOTH branches' raises of
+    // EXPECTED_PARSED_CLAIMS, since each was measured against the shared base (§16.38 item 17(d)).
+    //
+    // **A parallel-branch collision this file does NOT gate, recorded here because this is where a
+    // reader will look for it.** The §-section number above is one of THREE collisions between these
+    // branches; the other two are the §14 DEVIATION register number — both branches independently
+    // reached for 23, since the shared base ended at `…19, 21, 22` with 20 unused, and
+    // `mask-parity`'s `1b4e12f` had already committed `DEVIATION(23)`, so §16.38 takes 24-27 — and
+    // this constant together with EXPECTED_PARSED_CLAIMS. **Nothing in this repo gates the
+    // register-number half:** no test reads §14's item numbering or cross-checks it against the
+    // `// DEVIATION(n)` comments in code, so two branches can still merge into two different
+    // deviations sharing one n. That gap is disclosed, not closed; §16.38 item 17(d)(ii) and §14's
+    // own "item 23 is not absent by accident" note are the record.
+    //
+    // Four of the eight are BARE-SECTION targets — `2.8`, `6`, `12.2`, `12.3` — and deliberately so:
+    // none of those four sections carries a `^N. ` item marker (§2.8 and §12.2 are prose plus a code
+    // fence; §6 is prose plus TOML; §12.3 numbers its steps as `**N — Title.**`, the same shape §8.3
+    // uses and the reason the `step N` fallback exists). That is ratified §16.26 item 3(c) leniency,
+    // the same class as §16.30's `9.5`/`13` rows and §16.33's `16` row, with the same consequence: a
+    // back-pointer anywhere in the section satisfies the gate, so the clause-level precision of
+    // those four annotations is a convention this constant cannot enforce.
+    //
+    // The four item-scoped rows carry their back-pointers at the END of the target item rather than
+    // its start, against §16.26's usual preference, and for a measured reason: all four of those
+    // items OPEN on a physical line that already cites an older section (§10.1, §11.3, §12.3,
+    // §16.21/§16.22), so placing a supersession verb on that line would manufacture a phantom Layer
+    // B prose claim out of a line break. Cookbook rule 14b, applied before it bit rather than after.
+    //
+    // **Seven of these eight back-pointers are individually load-bearing; `("16.38", "6")` is NOT,
+    // and the difference is sharper than the leniency noted above.** A step-1a fresh reader deleted
+    // each of the eight in turn and watched the gate: seven turn it red, and §6's does not. Cause,
+    // re-measured here: §6's span carries **five** separate `§16.38` mentions, because §16.38 also
+    // added the `[inpainter]` TOML block and a validation clause to that section, and each of those
+    // cites §16.38 in its own comments — while §2.8, §12.2 and §12.3 carry exactly one each.
+    // `contains_back_pointer` asks only whether the span mentions the host, so any one of the five
+    // satisfies the claim and the header note could be deleted with the suite green. The leniency
+    // paragraph above says PLACEMENT within a section is unenforced; this is one step further — for
+    // §6 alone, the marker's EXISTENCE is unenforced too. Do not read a green suite as proof that
+    // all eight notes are present. Closing this would need a per-target expected mention count,
+    // which is a hard-coded number derived from prose and would go stale on every edit to §6; the
+    // trade was made deliberately in favour of disclosure.
+    //
+    // **The ninth row, `("16.38", "13.1")`, landed later than the other eight** — with task
+    // L3, when decision D1 was resolved and transcribed as §16.38 item 19. It is
+    // item-scoped in neither direction: `13.1` is a `### ` heading, so `outline()` resolves
+    // it as a two-component SECTION and the back-pointer may sit anywhere inside §13.1's
+    // span (which runs from that heading to `## 14.`). Unlike the `("16.38", "6")` row
+    // below, this one IS load-bearing today: §13.1's span carries exactly one `§16.38`
+    // mention — the back-pointer note itself — so deleting it turns the gate red. That is a
+    // fact about §13.1's current text, not a property of the row; a future edit adding a
+    // second `§16.38` citation anywhere in §13.1 would quietly make it non-load-bearing in
+    // the same way §6's is, and nothing here would notice.
+    ("16.38", "13.1"),
+    ("16.38", "2.8"),
+    ("16.38", "6"),
+    ("16.38", "12.2"),
+    ("16.38", "12.3"),
+    ("16.38", "16.9 item 2"),
+    ("16.38", "16.10 item 2"),
+    ("16.38", "16.11 item 3"),
+    ("16.38", "16.23 item 5"),
+    // §16.38 item 20's TWO markers (the L4 Gaussian hoist), taking this section from nine
+    // markers to eleven and EXPECTED_PARSED_CLAIMS from 36 to 38.
+    //
+    // `("16.38", "16.10 item 1")` is item-scoped, and its back-pointer sits at the END of
+    // §16.10 item 1 for the same reason the four item-scoped rows above do: that item OPENS on a
+    // line already citing §11.1 and §11.5, so a supersession verb there would manufacture a
+    // phantom Layer B prose claim out of a line break (cookbook rule 14b). It is load-bearing
+    // today, but LESS SO than "exactly one mention" would suggest, and the count is stated
+    // precisely because the earlier wording here rounded it wrong: §16.10 item 1's span carries
+    // exactly **one LINE** mentioning §16.38 — the back-pointer sentence — and that single line
+    // carries **TWO** `§16.38` tokens (the `SUPERSEDED in part by §16.38 item 20` back-pointer, and
+    // the later `§16.38 item 20 is explicitly not authority for hoisting it` scope clause).
+    // Consequence, since this gate matches on the token and not on the verb: deleting the
+    // back-pointer clause alone would leave the second token in the span and the gate would stay
+    // GREEN. Only removing the whole line turns it red. All of that is a fact about today's text,
+    // not a property of the row.
+    //
+    // **The marker's own text is SCOPED to `gaussian`, and this constant cannot enforce that.**
+    // §16.10 item 1 places `nlm` AND `gaussian`; item 20 hoists `gaussian` only, and `nlm`
+    // stays. The gate checks that a back-pointer exists in the target span, never what it says,
+    // so if someone later widens the claim to `nlm` on this entry's authority nothing here goes
+    // red. Same class of unenforced-content gap as the placement leniency documented above.
+    //
+    // `("16.38", "13")` is a BARE-SECTION target for §13's row 14, which attributes "Gaussian
+    // blur" to `pc-denoise`. Deliberately bare: §13's rows live in a markdown table and carry no
+    // `^N. ` item marker, so no item-scoped anchor exists — ratified §16.26 item 3(c) leniency,
+    // the same class as §16.30's `13` row above, with the same consequence that a back-pointer
+    // anywhere in §13 satisfies the gate. It IS load-bearing today: §13's span (from `## 13.` to
+    // `### 13.1`) carries exactly one `§16.38` mention, the row-14 annotation, since §16.38's
+    // other §13 marker targets §13.1 and lands in a later span.
+    //
+    // **§11.5's N2 row is a third target that gets NO row here, and its absence is deliberate,
+    // not an omission.** The hoist RESTORES what that row always said (`pc-imageops`), and a
+    // restoration is not a supersession, so §16.38 item 20(c) puts a plain note there and no
+    // marker. Consequence, disclosed rather than left to be discovered: nothing in this file
+    // gates that note's existence and deleting it leaves the suite green — the same shape as the
+    // `("16.38", "6")` row's non-load-bearing back-pointer, accepted for the same reason.
+    ("16.38", "16.10 item 1"),
+    ("16.38", "13"),
+    // §16.38 item 22's single marker (the L6 mask-precedence correction), taking this section
+    // from eleven markers to twelve and EXPECTED_PARSED_CLAIMS from 38 to 39.
+    //
+    // **This is the file's first SELF-referential row: host and target are the same section.**
+    // §16.38 item 22 corrects §16.38 item 12(a) — an entry amending its own earlier item rather
+    // than an older section's. Layer A handles it without special-casing (`marker_claims` never
+    // compares host to target), and `target_span` resolves `16.38 item 12` through the ordinary
+    // `^N. ` item outline, so the back-pointer must sit inside item 12's own span and a pointer
+    // parked in item 11 or item 13 would not satisfy it.
+    //
+    // Two consequences of the self-reference worth stating, because neither is obvious:
+    //
+    //   1. **Layer B cannot see this claim at all**, in either direction. `prose_claims` drops
+    //      any candidate whose `target_version >= host_version`, and here they are EQUAL — so a
+    //      future editor who rewrites this correction in prose instead of the marker form would
+    //      NOT trip `prose_form_claims_match_the_recorded_pre_convention_set`. For same-section
+    //      claims the prose tripwire is inert, and Layer A is the only thing enforcing the
+    //      convention. That is a gap in the tripwire's coverage, disclosed rather than closed:
+    //      relaxing the direction filter to admit equal versions would re-open the false-positive
+    //      class the filter exists to suppress (every back-pointer inside §16.38 that names
+    //      §16.38 would become a "claim").
+    //
+    //   2. **It IS load-bearing today**, and the count is stated precisely rather than rounded:
+    //      §16.38 item 12's span carries exactly one line mentioning §16.38 — the
+    //      `SUPERSEDED IN PART by §16.38 item 22` back-pointer added with item 22 — and that line
+    //      carries exactly one `§16.38` token. Deleting the line turns
+    //      `every_supersession_marker_has_a_back_pointer_at_its_target` red. Unlike the
+    //      `("16.38", "16.10 item 1")` row above, there is no second token on the line to keep the
+    //      gate green after a partial deletion. That is a fact about item 12's current text, not a
+    //      property of this row: any later edit adding another `§16.38` citation anywhere inside
+    //      item 12's span would quietly make this row non-load-bearing, exactly as the
+    //      `("16.38", "6")` row already is, and nothing here would notice.
+    //
+    // The marker declares the sub-item letter (`item 12(a)`), so `Claim::identity` keys this row
+    // as `16.24`-style lettered identities are keyed: the row below reads `12(a)`, while the
+    // resolved SPAN is item 12 whole (ratified §16.26 item 3(a)). If a later erratum against a
+    // different sub-item of item 12 is added, it gets its own row and losing either names which.
+    ("16.38", "16.38 item 12(a)"),
+    // §16.40 resolves two independently identified sub-items inside §16.38 item 25. Ordinary
+    // `parse_anchor` / `target_span` first identifies parent item 25 under §16.26 item 3(a), but
+    // `claim_target_span` deliberately narrows these two `SUB_ITEM_SCOPED_BACKPOINTERS` identities
+    // to their respective (a)/(d) spans so each target annotation is independently load-bearing.
+    // The two rows raise EXPECTED_PARSED_CLAIMS from 39 to 41.
+    ("16.40", "16.38 item 25(a)"),
+    ("16.40", "16.38 item 25(d)"),
+    // §16.42's two markers: the composite-helper hoist overturns both §16.10 item 3's
+    // pin (pc-mask/pc-denoise copies) and §16.11 item 10's separate, later pin
+    // (pc-export's copy) — two distinct targets, not one restated. Raises
+    // EXPECTED_PARSED_CLAIMS from 49 to 51.
+    ("16.42", "16.10 item 3"),
+    ("16.42", "16.11 item 10"),
+    // §16.45's three markers: real (Porter-Duff) source-over replaces the
+    // `alpha_out = max(base_a, layer_a)` formula, which was pinned identically at all
+    // three of these sites (a genuine compositing defect, not a stable convention worth
+    // three independent pins). Raises EXPECTED_PARSED_CLAIMS from 51 to 54.
+    ("16.45", "16.10 item 3"),
+    ("16.45", "16.11 item 9"),
+    ("16.45", "16.42 item 2"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
@@ -192,9 +400,11 @@ struct Claim {
     /// (`16.24 item 18(b)`). Constructed by `marker_claims` alone — `Claim` has no other
     /// constructor — so nothing in Layer B or in `target_span` can see it.
     ///
-    /// This is an IDENTITY, not a span: `target` and therefore `target_span` are untouched by the
-    /// letter, so `item 18(b)` still resolves to item 18's whole span per §16.26 item 3(a). Only
-    /// counting/matching in `the_ratified_supersessions_are_each_covered` gains the granularity.
+    /// Historical lettered identities remain identities only and resolve to their parent item under
+    /// §16.26 item 3(a). The two identities in `SUB_ITEM_SCOPED_BACKPOINTERS` are the explicit narrow
+    /// exception: `claim_target_span` resolves those letters to separate sub-item spans so sibling
+    /// target annotations are independently falsifiable. Layer B and bare `target_span` remain
+    /// unchanged.
     identity: String,
 }
 
@@ -458,6 +668,89 @@ fn target_span(lines: &[&str], outline: &Outline, target: &Anchor) -> Option<(us
         .map(|(_, start, end)| (*start, *end))
 }
 
+fn sub_item_marker(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let rest = trimmed.strip_prefix('(')?;
+    let letters_len = rest
+        .chars()
+        .take_while(char::is_ascii_alphabetic)
+        .map(char::len_utf8)
+        .sum();
+    if letters_len == 0 || !rest[letters_len..].starts_with(')') {
+        return None;
+    }
+    Some(&rest[..letters_len])
+}
+
+/// Resolve a claim's target span. Historical lettered claims keep §16.26 item 3(a)'s parent-item
+/// leniency unless their identity is explicitly pinned in `SUB_ITEM_SCOPED_BACKPOINTERS`.
+fn claim_target_span(lines: &[&str], outline: &Outline, claim: &Claim) -> Option<(usize, usize)> {
+    let parent = target_span(lines, outline, &claim.target)?;
+    if !SUB_ITEM_SCOPED_BACKPOINTERS.contains(&(claim.host.as_str(), claim.identity.as_str())) {
+        return Some(parent);
+    }
+
+    let letter = claim.identity.strip_suffix(')')?.rsplit_once('(')?.1;
+    let start =
+        (parent.0..parent.1).find(|index| sub_item_marker(lines[*index]) == Some(letter))?;
+    let end = ((start + 1)..parent.1)
+        .find(|index| sub_item_marker(lines[*index]).is_some())
+        .unwrap_or(parent.1);
+    Some((start, end))
+}
+
+fn has_pinned_supersession_annotation(line: &str, host: &str) -> bool {
+    let line = line.trim_start();
+    for prefix in ["**SUPERSEDED by §", "**SUPERSEDED IN PART by §"] {
+        let Some(after_prefix) = line.strip_prefix(prefix) else {
+            continue;
+        };
+        let Some(after_host) = after_prefix.strip_prefix(host) else {
+            continue;
+        };
+        // After the host, accept only end-of-line or the exact live separator ` —` (ASCII space
+        // followed by em dash). Tabs, bare spaces, and every other continuation are malformed.
+        let allowed_host_boundary = after_host.is_empty() || after_host.starts_with(" —");
+        if allowed_host_boundary {
+            return true;
+        }
+    }
+    false
+}
+
+fn contains_claim_back_pointer(lines: &[&str], span: (usize, usize), claim: &Claim) -> bool {
+    if SUB_ITEM_SCOPED_BACKPOINTERS.contains(&(claim.host.as_str(), claim.identity.as_str())) {
+        // For independently pinned sibling claims, a mere citation of the host is insufficient.
+        // After indentation, the dedicated line must begin with exactly one of these Markdown forms:
+        // `**SUPERSEDED by §<host>` or `**SUPERSEDED IN PART by §<host>`. After the host, accept only
+        // end-of-line or the exact live separator ` —`; arbitrary words between the verb and `by`,
+        // and every other post-host continuation, are rejected.
+        return lines[span.0..span.1]
+            .iter()
+            .any(|line| has_pinned_supersession_annotation(line, &claim.host));
+    }
+    contains_back_pointer(lines, span, &claim.host)
+}
+
+fn missing_back_pointers(text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let outline = outline(&lines);
+    let claims = marker_claims(&lines, &outline);
+    let mut missing = Vec::new();
+    for claim in &claims {
+        let span = claim_target_span(&lines, &outline, claim).unwrap_or_else(|| {
+            panic!(
+                "§{} (line {}) claims to supersede {}, which does not resolve to any section, item, or pinned sub-item",
+                claim.host, claim.line, claim.identity
+            )
+        });
+        if !contains_claim_back_pointer(&lines, span, claim) {
+            missing.push(claim.identity.clone());
+        }
+    }
+    missing
+}
+
 /// Does `span` reference `§<host>`? Requires the sigil and a non-digit boundary, so `§16.2` does not
 /// satisfy a claim by `§16.25`.
 fn contains_back_pointer(lines: &[&str], span: (usize, usize), host: &str) -> bool {
@@ -562,9 +855,14 @@ fn spec() -> String {
 // artifact, enumerate every reader, record the enumeration" — where the artifact is a spec clause and
 // the reader is anyone who cites it without noticing it was superseded.
 //
-// What must break for this to fail: delete a back-pointer from a superseded site, or add a
-// `SUPERSEDES:` marker without adding one. Nothing else. The check is scoped to the target's own
-// span, so a pointer elsewhere in the file does not satisfy it — proven separately by
+// What must break for this to fail differs by claim class. Historical claims fail when their target
+// span lacks a citation of the host section. The two `SUB_ITEM_SCOPED_BACKPOINTERS` identities are
+// stricter: after indentation, each individual sub-item span must have a line beginning with exactly
+// `**SUPERSEDED by §<host>` or `**SUPERSEDED IN PART by §<host>`. After the host, only end-of-line
+// or the exact live separator ` —` is accepted. Thus removing the annotation,
+// replacing/negating/extending its verb, inserting arbitrary words between the verb and `by`, or
+// using any other post-host continuation fails even when another host citation remains. Adding a `SUPERSEDES:` marker without the required target-side form also fails. In both
+// classes, a pointer outside the target span does not satisfy the gate, as separately proven by
 // `a_back_pointer_outside_the_target_span_does_not_satisfy_the_gate`.
 fn every_supersession_marker_has_a_back_pointer_at_its_target() {
     let text = spec();
@@ -574,7 +872,7 @@ fn every_supersession_marker_has_a_back_pointer_at_its_target() {
 
     let mut missing = Vec::new();
     for claim in &claims {
-        let span = target_span(&lines, &outline, &claim.target).unwrap_or_else(|| {
+        let span = claim_target_span(&lines, &outline, claim).unwrap_or_else(|| {
             panic!(
                 "§{} (line {}) claims to supersede {}, which does not resolve to any section or \
                  item. An unresolvable anchor is a FAILURE, not a skip: a typo'd anchor would \
@@ -582,26 +880,47 @@ fn every_supersession_marker_has_a_back_pointer_at_its_target() {
                 claim.host, claim.line, claim.target.label
             )
         });
-        if !contains_back_pointer(&lines, span, &claim.host) {
-            missing.push(format!(
-                "\n  {} (spec line {}) is superseded by §{}, but {}'s own text (lines {}-{}) \
-                 never mentions §{}.\n    Fix: add a marker at the START of {} — e.g.\n      \
-                 **SUPERSEDED by §{} — read it before citing this clause.**\n    Why: anyone \
-                 reading {} in isolation must learn it has been superseded from {} itself. A \
-                 pointer that exists only in §{} is invisible to them.",
-                claim.target.label,
-                claim.line,
-                claim.host,
-                claim.target.label,
-                span.0 + 1,
-                span.1,
-                claim.host,
-                claim.target.label,
-                claim.host,
-                claim.target.label,
-                claim.target.label,
-                claim.host,
-            ));
+        if !contains_claim_back_pointer(&lines, span, claim) {
+            if SUB_ITEM_SCOPED_BACKPOINTERS
+                .contains(&(claim.host.as_str(), claim.identity.as_str()))
+            {
+                missing.push(format!(
+                    "\n  {} (spec line {}) is superseded by §{}, but its individual sub-item span \
+                     (lines {}-{}) lacks a dedicated annotation beginning with exactly \
+                     `**SUPERSEDED by §{}` or `**SUPERSEDED IN PART by §{}`.\n    \
+                     Fix: restore one of those two forms, followed only by end-of-line or the exact \
+                     separator ` —`.\n    Why: another §{} citation or any other verb/post-host \
+                     syntax does not identify this target annotation.",
+                    claim.identity,
+                    claim.line,
+                    claim.host,
+                    span.0 + 1,
+                    span.1,
+                    claim.host,
+                    claim.host,
+                    claim.host,
+                ));
+            } else {
+                missing.push(format!(
+                    "\n  {} (spec line {}) is superseded by §{}, but {}'s own text (lines {}-{}) \
+                     never mentions §{}.\n    Fix: add a marker at the START of {} — e.g.\n      \
+                     **SUPERSEDED by §{} — read it before citing this clause.**\n    Why: anyone \
+                     reading {} in isolation must learn it has been superseded from {} itself. A \
+                     pointer that exists only in §{} is invisible to them.",
+                    claim.target.label,
+                    claim.line,
+                    claim.host,
+                    claim.target.label,
+                    span.0 + 1,
+                    span.1,
+                    claim.host,
+                    claim.target.label,
+                    claim.host,
+                    claim.target.label,
+                    claim.target.label,
+                    claim.host,
+                ));
+            }
         }
     }
     assert!(
@@ -744,6 +1063,167 @@ fn every_pinned_pre_convention_target_still_resolves() {
 }
 
 // ── the parser's own controls, on synthetic text ──────────────────────────────
+
+#[test]
+fn section_16_40s_two_item_25_back_pointers_are_independently_load_bearing() {
+    let text = spec();
+    let annotations = [
+        (
+            "16.38 item 25(a)",
+            "    **SUPERSEDED IN PART by §16.40 — this back-pointer qualifies the former OPEN, DEFERRED status and the former omission of strip tests; the measurement above remains unchanged.**\n",
+        ),
+        (
+            "16.38 item 25(d)",
+            "    **SUPERSEDED IN PART by §16.40 — this back-pointer resolves the OPEN provider-location choice; the measurements and dependency-edge analysis above remain unchanged.**\n",
+        ),
+    ];
+
+    assert!(
+        missing_back_pointers(&text).is_empty(),
+        "the unmodified live spec must satisfy every target-side back-pointer"
+    );
+    for (identity, annotation) in annotations {
+        assert_eq!(
+            text.matches(annotation).count(),
+            1,
+            "the mutation must identify exactly one dedicated annotation for {identity}"
+        );
+        let deleted = text.replacen(annotation, "", 1);
+        assert_ne!(
+            deleted, text,
+            "the {identity} deletion must change the spec"
+        );
+        assert_eq!(
+            missing_back_pointers(&deleted),
+            vec![identity.to_owned()],
+            "deleting only {identity}'s annotation must fail that identity even while the sibling and other §16.40 mentions remain"
+        );
+
+        for (label, replacement_prefix) in [
+            ("replaced verb", "**QUALIFIED"),
+            ("negated verb", "NOT SUPERSEDED"),
+            ("token-extended verb", "**SUPERSEDEDNESS"),
+            ("post-verb negation", "**SUPERSEDED NOT"),
+            ("altered IN PART phrase", "**SUPERSEDED IN NO PART"),
+        ] {
+            let rejected_annotation =
+                annotation.replacen("**SUPERSEDED IN PART", replacement_prefix, 1);
+            assert_ne!(
+                rejected_annotation, annotation,
+                "the {identity} {label} mutation must alter the annotation"
+            );
+            let mutated = text.replacen(annotation, &rejected_annotation, 1);
+            assert_ne!(mutated, text, "the {identity} {label} mutation must land");
+            assert!(
+                mutated.contains(&rejected_annotation),
+                "the {identity} {label} mutation must leave its rejected form in the document"
+            );
+            assert_eq!(
+                missing_back_pointers(&mutated),
+                vec![identity.to_owned()],
+                "the {identity} {label} form must fail only that identity while its host citation, sibling annotation, and other §16.40 citations remain"
+            );
+        }
+        for (label, replacement_host) in [
+            ("alphabetic host extension", "§16.40x"),
+            ("hyphen host extension", "§16.40-extra"),
+        ] {
+            let rejected_annotation = annotation.replacen("§16.40", replacement_host, 1);
+            assert_ne!(
+                rejected_annotation, annotation,
+                "the {identity} {label} mutation must alter the annotation"
+            );
+            let mutated = text.replacen(annotation, &rejected_annotation, 1);
+            assert_ne!(mutated, text, "the {identity} {label} mutation must land");
+            assert!(
+                mutated.contains(&rejected_annotation),
+                "the {identity} {label} mutation must leave its rejected form in the document"
+            );
+            assert_eq!(
+                missing_back_pointers(&mutated),
+                vec![identity.to_owned()],
+                "the {identity} {label} form must fail only that identity while its sibling annotation and other §16.40 citations remain"
+            );
+        }
+
+        let misleading_suffix = annotation.replacen("§16.40 —", "§16.40 NOT superseded. —", 1);
+        assert_ne!(
+            misleading_suffix, annotation,
+            "the {identity} post-host prose mutation must alter the annotation"
+        );
+        let mutated = text.replacen(annotation, &misleading_suffix, 1);
+        assert_ne!(
+            mutated, text,
+            "the {identity} post-host prose mutation must land"
+        );
+        assert!(
+            mutated.contains(&misleading_suffix),
+            "the {identity} post-host prose mutation must remain in the document"
+        );
+        assert_eq!(
+            missing_back_pointers(&mutated),
+            vec![identity.to_owned()],
+            "post-host ` NOT superseded.` must fail only {identity} while its sibling annotation and other §16.40 citations remain"
+        );
+    }
+}
+
+#[test]
+fn pinned_annotation_accepts_only_the_two_declared_markdown_forms() {
+    for accepted in [
+        "    **SUPERSEDED by §16.40",
+        "    **SUPERSEDED IN PART by §16.40",
+        "    **SUPERSEDED by §16.40 — annotation.**",
+        "    **SUPERSEDED IN PART by §16.40 — annotation.**",
+    ] {
+        assert!(has_pinned_supersession_annotation(accepted, "16.40"));
+    }
+    for rejected in [
+        "    NOT SUPERSEDED by §16.40 — annotation.",
+        "    **SUPERSEDEDNESS by §16.40 — annotation.**",
+        "    **QUALIFIED by §16.40 — annotation.**",
+        "    **SUPERSEDED NOT by §16.40 — annotation.**",
+        "    **SUPERSEDED IN NO PART by §16.40 — annotation.**",
+        "    **SUPERSEDED by §16.400 — annotation.**",
+        "    **SUPERSEDED IN PART by §16.40.1 — annotation.**",
+        "    **SUPERSEDED by §16.40x — annotation.**",
+        "    **SUPERSEDED IN PART by §16.40-extra — annotation.**",
+        "    **SUPERSEDED by §16.40 NOT superseded.",
+        "    **SUPERSEDED by §16.40 plain space",
+        "    **SUPERSEDED IN PART by §16.40\tannotation.",
+    ] {
+        assert!(
+            !has_pinned_supersession_annotation(rejected, "16.40"),
+            "rejected pinned annotation form passed: {rejected}"
+        );
+    }
+}
+
+#[test]
+fn pinned_sibling_sub_items_use_distinct_spans_and_require_annotations() {
+    let text = "\
+## 16.38 Older
+
+25. Parent cites §16.40, which must satisfy neither sibling by itself.
+
+    (a) A cites §16.40 in prose.
+
+    **SUPERSEDED IN PART by §16.40 — dedicated A annotation.**
+
+    (b) Untouched.
+
+    (d) D has no dedicated annotation, though it cites §16.40.
+
+## 16.40 Newer
+
+1. **SUPERSEDES: §16.38 item 25(a); §16.38 item 25(d)** — two claims.
+";
+    assert_eq!(
+        missing_back_pointers(text),
+        vec!["16.38 item 25(d)".to_owned()],
+        "a parent citation, sibling annotation, and same-sub-item prose citation must not satisfy 25(d)"
+    );
+}
 
 #[test]
 // spec §16.24 item 19(b)'s prohibition, made mechanical: a back-pointer ELSEWHERE in the file must

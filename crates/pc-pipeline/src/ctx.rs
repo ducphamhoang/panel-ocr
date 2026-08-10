@@ -3,6 +3,7 @@
 
 use pc_core::StageError;
 use pc_detect::TextDetector;
+use pc_inpaint::Inpainter;
 use pc_ocr::OcrEngineFactory;
 use std::path::Path;
 use std::sync::Arc;
@@ -41,12 +42,19 @@ impl DetectorProvider for SharedDetector {
     }
 }
 
-/// The resources a run injects into the stages. `ocr` remains optional because callers may
-/// choose not to construct an engine; `pc_preprocess::run` handles `None` as "no OCR pass".
+/// Pipeline-owned provider boundary for lazy inpainting acquisition (§16.40 item 2(d)).
+pub trait InpainterProvider: Send + Sync {
+    fn inpainter(&self) -> Result<Arc<dyn Inpainter>, StageError>;
+    fn failures_are_run_fatal(&self) -> bool;
+}
+
+/// The resources a run injects into the stages. `ocr` and `inpainter` remain optional so
+/// callers may choose not to construct either engine.
 #[derive(Clone, Copy)]
 pub struct PipelineCtx<'a> {
     pub detectors: &'a dyn DetectorProvider,
     pub ocr: Option<&'a dyn OcrEngineFactory>,
+    pub inpainter: Option<&'a dyn InpainterProvider>,
 }
 
 impl<'a> PipelineCtx<'a> {
@@ -54,11 +62,17 @@ impl<'a> PipelineCtx<'a> {
         Self {
             detectors,
             ocr: None,
+            inpainter: None,
         }
     }
 
     pub fn with_ocr(mut self, ocr: &'a dyn OcrEngineFactory) -> Self {
         self.ocr = Some(ocr);
+        self
+    }
+
+    pub fn with_inpainter(mut self, inpainter: &'a dyn InpainterProvider) -> Self {
+        self.inpainter = Some(inpainter);
         self
     }
 }

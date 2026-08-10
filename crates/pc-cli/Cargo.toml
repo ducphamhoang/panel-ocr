@@ -20,7 +20,7 @@ path = "src/lib.rs"
 default = []
 # Keep the whole pipeline runnable with mocks and replay fixtures without model files or
 # ONNX Runtime; the real backend is opt-in because the spec requires this no-onnx default.
-onnx = ["pc-detect/onnx", "pc-ocr/onnx"]
+onnx = ["pc-detect/onnx", "pc-ocr/onnx", "pc-inpaint/onnx"]
 
 [dependencies]
 pc-core     = { path = "../pc-core" }
@@ -32,6 +32,11 @@ pc-ocr      = { path = "../pc-ocr" }
 # replay fixtures with no model files and no ONNX Runtime, as required by spec §7.2.
 pc-detect   = { path = "../pc-detect", features = ["testkit"] }
 pc-models   = { path = "../pc-models" }
+# Task L5: the inpainting provider of spec §16.38 item 8 lives here, because that entry's
+# `DEVIATION(27)` names "the inpainter provider in `crates/pc-cli/`" as its site. This is a
+# front-end -> stage edge, which is what `pc-cli` already has to `pc-detect`, `pc-ocr` and
+# `pc-export`; it is NOT a stage-to-stage edge (§1 rule 2).
+pc-inpaint  = { path = "../pc-inpaint" }
 
 anyhow             = { workspace = true }
 clap               = { workspace = true }
@@ -42,5 +47,8 @@ tracing-subscriber = { workspace = true }
 [dev-dependencies]
 pc-testkit = { path = "../pc-testkit" }
 pc-ocr    = { path = "../pc-ocr", features = ["testkit"] }
+# Feature-enabled re-declaration so the provider's latch tests can stand a `StubInpainter`
+# in for a real 6.3 s session (the same self/peer dev-dependency trick `pc-detect` uses).
+pc-inpaint = { path = "../pc-inpaint", features = ["testkit"] }
 image      = { workspace = true }
 tempfile   = { workspace = true }

@@ -261,7 +261,7 @@ pub struct DetectAnalytic { pub path: PathBuf, pub blocks_detected: usize, pub b
 ```
 
 ### 2.8 Step / Output enums
-
+**SUPERSEDED in part by §16.38 item 11 — read it before citing this section's `Step` list.** That entry inserts `Step::Inpaint` between `Denoise` and `Export` at v1.5, so `Step::Export as i32` becomes `6` and `Step::Export.prev()` becomes `Some(Step::Inpaint)`. The `Output` variant list, the `cache_suffix` list and the non-surjectivity note below are unchanged.
 Mirror upstream `output_structures.py` minus inpainting:
 
 ```rust
@@ -466,7 +466,7 @@ Format `{uuid}_{stem}{suffix}` mirrors upstream `OutputPathGenerator` (`output_s
 ---
 
 ## 6. Config (`pc-config`)
-
+**SUPERSEDED in part by §16.38 item 13 — read it before citing the "minus `[inpainter]`" clause below.** That entry adds the eight-key `[inpainter]` block at v1.5, with the same values `config.py` declares. Nothing else in this section is changed by it.
 TOML via `toml_edit`, one `Profile` per file, plus an app-level `Config`. v1 sections and defaults — **exactly** upstream's values (`config.py`), minus `[inpainter]` (v1.5) and minus GUI/post-action keys (v2):
 
 ```toml
@@ -496,7 +496,7 @@ model_path                   = ""        # empty = use managed cache
 concurrent_models            = 1
 intra_threads                = 0         # 0 = let ONNX Runtime choose (§16.21)
 inter_threads                = 0         # 0 = let ONNX Runtime choose (§16.21)
-mask_refine_mode             = "simple"  # simple | annotation ("annotation" rejected in v1: see §8.3 step 5 / §15.2). Deliberate v1 addition, not present upstream.
+mask_refine_mode             = "simple"  # simple | annotation (Annotation is opt-in; Simple remains the default). Deliberate v1 addition, not present upstream.
 
 [preprocessor]
 box_min_size                 = 400       # 20*20
@@ -689,16 +689,20 @@ Write the scaled RGB image to `base_image_dest` as PNG (compression default) whe
 - Raw U-Net output → `squeeze` → multiply by 255 → clamp → u8 (`postprocess_mask` with `thresh=None`).
 - Crop off the letterbox padding: `mask[0..H-dh, 0..W-dw]`, then resize to base-image size with **bilinear** (upstream uses `cv2.INTER_LINEAR` here).
 - **Refinement (v1 = "simple" mode, ported from koharu's `refine_segmentation_mask`)**:
-  1. For each detected block, `expanded = rect.pad(16, image_size)` (upstream `expand_textwindow(expand_r=16)`).
+  1. For each detected block, `expanded = rect.pad(16, image_size)` (upstream `expand_textwindow(expand_r=16)`). **The parenthetical here is SUPERSEDED by §16.37 item 5 — read it before citing this line as upstream parity.** Upstream's `expand_r` is a divisor, yielding 3–5 px on the committed page, not a flat 16, and it clamps to `im_w - 1`/`im_h - 1`. `Simple`'s behaviour is deliberately unchanged (it is a port of koharu, not of PanelCleaner); only the parity claim is withdrawn.
   2. Rasterize the union of expanded rects into an in-bounds mask.
   3. `base[p] = 255` iff `in_bounds[p] != 0 && raw_mask[p] > 60`.
   4. Dilate `base` with an L1 (diamond) structuring element of radius 3.
   5. Clip the dilated result back to `in_bounds` (zero outside).
   If `blocks` is empty, the refined mask is all-zero.
 - The refined mask is what `PageDataRaw.raw_mask` points at (upstream also stores the refined one: `ctd_interface.py:182`).
-- **Out of scope for v1:** upstream's `refine_mask` (top-k colour masklists + per-channel Otsu candidates + connected-component XOR merge + hole filling, `comic_text_detector/utils/textmask.py:18-210`) and `refine_undetected_mask`. Rationale: the masker's own growth-and-score loop is what determines final quality; a coarser precise mask degrades fit granularity but cannot break the pipeline, and the XOR-merge algorithm is the single riskiest numerical port in the whole project. Keep the door open with `enum MaskRefineMode { Simple, Annotation }` in `TextDetectorConfig` where only `Simple` is implemented in v1 (`Annotation` → `StageError::InvalidInput`). See §15.2.
+- **Out of scope for v1:** upstream's `refine_mask` (top-k colour masklists + per-channel Otsu candidates + connected-component XOR merge + hole filling, `comic_text_detector/utils/textmask.py:18-210`) and `refine_undetected_mask`. Rationale: the masker's own growth-and-score loop is what determines final quality; a coarser precise mask degrades fit granularity but cannot break the pipeline, and the XOR-merge algorithm is the single riskiest numerical port in the whole project. Keep the door open with `enum MaskRefineMode { Simple, Annotation }` in `TextDetectorConfig` where `Annotation` is the opt-in upstream refinement path and `Simple` remains the default. See §15.2.
+
+  **The parenthetical `Annotation` → `StageError::InvalidInput` clause on the line above, and the "out of scope for v1" framing it sits in, are SUPERSEDED by §16.39 — read it before citing this bullet as current behaviour.** A4 ports both functions and wires them; `Annotation` is opt-in and non-default, and the stage no longer refuses it. Everything this bullet says about `Simple` is unchanged. (Own physical line, per cookbook rule 14b.)
 
 **6 — False-positive filter.** For each block, `mask_coverage = mean(refined_mask over rect) / 255.0`; drop blocks with `mask_coverage < 0.1`. Provenance: upstream applies this `mask_score_thresh = 0.1` test in `group_output` to blocks that received no DBNet text lines (`textblock.py:485-490`); since v1 emits no line polygons (below), *every* block is line-less and the filter applies to all of them — which is exactly the code path upstream takes when the line map yields nothing.
+
+**The operand named above — `refined_mask` — is SUPERSEDED by §16.39 for `MaskRefineMode::Annotation` only; read it before citing this step as mode-independent.** Under `Annotation` the filter scores the **unrefined**, letterbox-cropped, resized detector mask, which is upstream's own operand. Under `Simple`, the shipped default, this step is exactly as written above. The 0.1 threshold and the every-block scope are the same in both modes. (Own physical line, per cookbook rule 14b.)
 
 **7 — Emit** `PageDataRaw` (surviving blocks in NMS order) + `DetectAnalytic`.
 
@@ -1191,7 +1195,7 @@ Batching: `{N2, N3, N4}` one sequential call; `N1` isolated.
 `crates/pc-export`. Modules: `lib.rs` (stage + `run`), `formats.rs` (suffix→format, save options, metadata), `discover.rs` (which outputs exist / precedence), `ocr_report.rs` (CSV/TXT writers).
 
 ### 12.2 Contract
-
+**SUPERSEDED in part by §16.38 item 12 — read it before citing `ExportSources`' field list.** That entry adds `inpainted` and `inpainted_mask` at v1.5.
 ```rust
 pub struct ExportInput {
     pub schema_version: u32,
@@ -1217,7 +1221,7 @@ pub struct ExportOutput { pub files_written: Vec<PathBuf> }
 ```
 
 ### 12.3 Algorithm (port of `image_export.copy_to_output` + `discover_viable_outputs`)
-
+**SUPERSEDED in part by §16.38 item 12 — read it before citing step 2's precedence.** That entry puts the inpainted sources above the denoised ones in both the cleaned and the mask precedence at v1.5, and extends the stale-artifact rule to them.
 **1 — Resolve destinations.**
 - If `output_dir.is_absolute()`: `base = output_dir`, else `base = export_path.parent() / output_dir`.
 - `mkdir -p base`.
@@ -1325,7 +1329,7 @@ Order is the recommended implementation order; "Dep" lists blocking task IDs. Ki
 | 11 | **M5/M6** | pc-mask | Composition, cleaned image, text layer, `run()` wiring, `MaskData`/analytics, debug writes | simple | M4, C2 |
 | 12 | **P1–P5** | pc-preprocess | Types; filters; overlap resolution; reading order; padding tiers; `run()` | simple | C2 |
 | 13 | **P6** | pc-ocr | `trait OcrEngine`/`Factory`, `MockOcrEngine`, blacklist filter + analytics | simple | P1 |
-| 14 | **N2/N3/N4** | pc-denoise | Gaussian blur; noise-mask build; `run()` + 1-bit shortcut + analytics | simple | M6 |
+| 14 | **N2/N3/N4** | pc-denoise | Gaussian blur; noise-mask build; `run()` + 1-bit shortcut + analytics — **the "Gaussian blur" attribution to `pc-denoise` is SUPERSEDED in part by §16.38 item 20: at v1.5 the module lives in `pc-imageops` and `pc_denoise::gaussian` is a re-export. Original wording kept per §16.19's convention. Only that clause is affected — the noise-mask build, `run()`, the 1-bit shortcut and the analytics are still `pc-denoise`, and `nlm` (row 15) is untouched.** | simple | M6 |
 | 15 | **N1** | pc-imageops | NLM denoise (joint-channel, reflect-101, incremental, rayon) | **heavy** | C1 |
 | 16 | **E1–E3** | pc-export | Formats/options/metadata; discovery + precedence; destinations + mask composite; `run()` | simple | C2 |
 | 17 | **E4** | pc-export | OCR report CSV/TXT writers | simple | C2 |
@@ -1362,7 +1366,7 @@ panel-ocr profile  new|show|list|validate|edit
 panel-ocr cache    show|clear [--models] [--images]
 panel-ocr models   download|verify|path
 ```
-
+**SUPERSEDED in part by §16.38 item 19 — read it before citing the `models` line above.** That entry adds the visible `--include-optional` flag to `models download` and `models verify` at v1.5, and states what each of the three subcommands does with an `Optional` registry entry. `models path` itself is unchanged. Nothing else in this section is changed by it.
 Fresh, idiomatic design per decision #6 — no docopt compatibility. Verbosity maps to `tracing` levels; `--hide-analytics` suppresses the per-stage summary tables.
 
 ---
@@ -1381,20 +1385,31 @@ Fresh, idiomatic design per decision #6 — no docopt compatibility. Verbosity m
 10. **Per-image error isolation** — upstream lets exceptions from a worker abort the pool; we isolate (§5).
 11. **Per-image parallelism** instead of per-stage process pools.
 12. **Detector mask refinement** — v1 ships the "Simple" refinement, not upstream's `refine_mask`/`refine_undetected_mask` (§15.2).
+
+    **This entry is narrowed by §16.39 — read it before citing it as a statement about the whole tree.** It is not retired: A4 ports both upstream functions and ships them as `MaskRefineMode::Annotation`, but the shipped **default** stays `Simple`, so a default run still diverges from upstream's unconditional refinement. What survives is exactly that default-value divergence; the "we did not port the algorithm" half does not. The primary site comment moves from `refine_simple` to the `#[default] Simple` variant, because the artifact carrying the divergence is now the default value and not the algorithm. (Kept on its own physical line for the reason item 17's note below states.)
+
 13. **Class-agnostic NMS** — upstream runs per-class NMS (`agnostic=False`, `inference.py:115` + `yolov5_utils.py:261`), which can emit duplicate boxes for one balloon across language classes; we run class-agnostic NMS instead (see §8.3 step 4, §15.1). `yolo.rs` must carry a `// DEVIATION(13): ...` comment at the NMS call site.
 14. **Letterbox minimum dimension clamp** — upstream can pass a zero-sized resize dimension to `cv2.resize` for sufficiently small inputs; v1 clamps each rounded dimension to at least `1`, keeping the resize valid and preventing `dw` or `dh` from reaching `1024` and making `mask::crop_letterbox` reject the geometry. The implementation comment is at `crates/pc-detect/src/onnx.rs::letterbox` as `DEVIATION(14)`.
 15. **One shared ONNX session** — upstream would honour `text_detector.concurrent_models` at provider construction; v1 shares one session for the whole run — owned exclusively by a dedicated `pc-detect-onnx` worker thread (§16.32; formerly a `Mutex<Session>`), so requests are serialised by the worker's request channel rather than by a lock — and a configured value greater than 1 is warned-and-ignored. The implementation comment is at `crates/pc-detect/src/onnx.rs`, on the OnnxDetector doc comment, as `DEVIATION(15)`.
 16. **Lazy construct-and-latch** — upstream constructs the detector before its per-image loop; v1 defers construction until the first image that needs detection and latches that attempt's success or rendered refusal for the run, so §4.4 resume can bypass a model it will never read. The implementation site will carry `DEVIATION(16)`; the concurrent implementation pass has not added that comment yet.
 17. **Coverage-filter scope and operand** — ratified by §16.20 item 9, which corrects §8.3 step 6's former claim of unconditional parity. Upstream applies its `mask_score < mask_score_thresh` false-positive filter **only to line-less blocks** (`textblock.py:485-490`, inside `if len(blk.lines) == 0:`) and computes it over the **unrefined** mask (`inference.py:203` passes `mask` to `group_output`; `refine_mask` runs at `:204`). v1 applies the filter to **every** block over the **refined** mask. Both differences are deliberate: v1 synthesizes no DBNet line polygons (§14.12 and §8.3's out-of-scope list), so every block is line-less by construction and the scope difference is vacuous *for v1* — it would become live the moment line synthesis lands, which is why it is registered rather than left as prose. The operand difference makes our coverage values roughly 2× upstream's on the same boxes; measured across two real manga pages the filter has never fired (minimum coverage 0.3025 against a 0.1 threshold). The implementation site carries `DEVIATION(17)`.
 
+    **This item's "never fired" measurement is SUPERSEDED by §16.37 item 4 — read it before citing that sentence.** The filter *has* fired, on the committed fixture, under the shipped `Simple` mode, since before either section was written. This item's scope and operand rulings are unaffected; only the parenthetical measurement is withdrawn. (Kept on its own physical line: the line-based scanner in `crates/pc-testkit/tests/spec_supersession.rs` attributes every anchor sharing a line with a verb, so folding this into the paragraph above manufactures phantom claims against the older anchors there — cookbook rule 14b.)
+
+    **This item's OPERAND sentence is narrowed by §16.39 — read it before citing "the refined mask" as unconditional.** *"v1 applies the filter to **every** block over the **refined** mask"* describes `MaskRefineMode::Simple`, which is still exactly what it says and is still the shipped default. Under `MaskRefineMode::Annotation` the filter scores the **unrefined**, letterbox-cropped, resized detector mask instead — which is upstream's own operand, so under that mode the operand divergence this item registers does not exist. The **scope** half (every block, not only line-less ones) and the 0.1 threshold are untouched by that entry, and so is `DEVIATION(17)`'s implementation site. (Own physical line, same reason as the note above.)
+
 18. **Rescaled-box clamp to image bounds — ratified by §16.27 item 9, which re-grounds it.** After truncating rescaled detector coordinates to `i32`, v1 clamps `x1,y1` to `>= 0` and `x2,y2` to `<= image_size`. Upstream does **not** do this: `grep -rn clip_coords` over the pinned checkout `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3` exits 1 (no hit in any file), and the only clamping in the vendored yolov5 helper is IoU arithmetic — `yolov5_utils.py:166` comments `.clamp(0)` and `:169` calls it, both inside `box_iou`'s intersection computation, and they are that file's only two occurrences of `clamp` or `clip`. So nothing upstream bounds these coordinates to the frame at any point — verified by grep, not inferred. v1 clamps because `run()` must produce a `PageDataRaw` that passes its own `validate()`, an invariant that is ours and has no upstream counterpart — which is what makes this a deliberate divergence and not the port it was previously described as. The clamp is unchanged in behaviour by that re-grounding: no relaxation, no `validate()` change, no deletion. The implementation site must carry `DEVIATION(18)` at the clamp in `crates/pc-detect/src/yolo.rs`, that file's doc comment must stop citing `clip_coords`, and so must the comment at `crates/pc-detect/tests/d5_yolo.rs:297`, which repeats the withdrawn citation at a second site. All three are **authorised by this entry** and are follow-up work at the time it lands; §16.27 item 9 enumerates them, with the reason the enumeration is explicit rather than summarised, rather than leaving them implicit.
 
-19. **Windows cache root is `%LOCALAPPDATA%`, not upstream's `%APPDATA%` — ratified by §16.33 item 3 (maintainer, 2026-08-04).** Upstream PanelCleaner, run as the tiebreak oracle, places **both** its cache and its config under `%APPDATA%` on Windows. v1.1 splits them: cache under `%LOCALAPPDATA%\panel-ocr`, config under `%APPDATA%\panel-ocr`. Reason: `%APPDATA%` roams with the user profile on a domain-joined machine, and a regenerable model/image cache — model weights are ~95 MB for the detector alone — must not be copied across the network on every logon. This is a deliberate divergence from measured upstream behaviour, not a port, which is why it is registered rather than left as prose. The implementation site is the Windows branch of the resolver in `crates/pc-cli/src/paths.rs` and must carry `DEVIATION(19)`; that comment **exists** as of 2026-08-04, at `crates/pc-cli/src/paths.rs:90` in `cache_dir`'s Windows arm — the register entry landed with the ratification and the site comment landed with the implementation, the same sequencing `DEVIATION(16)` went through — item 16 above still describes that comment as not yet added, which is stale: it exists at `crates/pc-cli/src/detector.rs:36` as of 2026-08-04. Correcting item 16's sentence is a separate, pre-existing matter and is not done by this item. Linux and macOS roots are unchanged by this item.
+19. **Windows cache root is `%LOCALAPPDATA%`, not upstream's `%APPDATA%` — ratified by §16.33 item 3 (maintainer, 2026-08-04).** Upstream PanelCleaner, run as the tiebreak oracle, places **both** its cache and its config under `%APPDATA%` on Windows. v1.1 splits them: cache under `%LOCALAPPDATA%\panel-ocr`, config under `%APPDATA%\panel-ocr`. Reason: `%APPDATA%` roams with the user profile on a domain-joined machine, and a regenerable model/image cache — model weights are ~95 MB for the detector alone — must not be copied across the network on every logon. This is a deliberate divergence from measured upstream behaviour, not a port, which is why it is registered rather than left as prose. The implementation site is the Windows branch of the resolver in `crates/pc-cli/src/paths.rs` and must carry `DEVIATION(19)`; that comment **exists** as of 2026-08-04, at `crates/pc-cli/src/paths.rs:90` in `cache_dir`'s Windows arm — the register entry landed with the ratification and the site comment landed with the implementation, the same sequencing `DEVIATION(16)` went through — item 16 above still describes that comment as not yet added, which is stale: it exists at `crates/pc-cli/src/detector.rs:39` as of 2026-08-04. **Line-number correction, 2026-08-06, unrelated to §16.37:** this citation read `:36`, which was **correct when written** on 2026-08-04 in commit `83f7f89` — the comment genuinely sat at line 36 then — and went stale in commit `1f2bd73` (§16.36 G1-C), which inserted lines above it and moved it to `:39`. Verified by `git log -S "detector.rs:36" -- docs/PIPELINE_SPEC_V1.md`, and by reading `crates/pc-cli/src/detector.rs` at `1f2bd73^` (line 36) and at `1f2bd73` (line 39); `grep -rn "DEVIATION(16)" crates/` today returns exactly one hit, at `:39`. **This is staleness, not an original error** — the same distinction item 20's note in the next paragraph draws about its own sentence, and the distinction the first draft of this correction got backwards. Found incidentally during §16.37's review; nothing else in this item changes, and the identical `:36` in §16.33 item 3 is corrected the same way. Correcting item 16's sentence is a separate, pre-existing matter and is not done by this item. Linux and macOS roots are unchanged by this item.
 
-**Item 20 is intentionally left unused here.** `UpstreamBoxOutsideFrame` is untranscribed — the note below states landing it "needs its own ruling" — but the closest existing numeric statement about it counts `Divergence` *enum variants*, not §14 register items: §16.27 item 11 describes it as "not among the 19" known-divergence samples, and landing it later "makes it a 20th variant by its own ratification" (that variant-count language, not a §14 reservation, is what this item avoids colliding with). The two items below are therefore numbered 21 and 22.
+**Item 20 is intentionally left unused here.** `UpstreamBoxOutsideFrame` is untranscribed — the note below states landing it "needs its own ruling" — but the closest existing numeric statement about it counts `Divergence` *enum variants*, not §14 register items: §16.27 item 11 describes it as "not among the 19" known-divergence samples, and landing it later "makes it a 20th variant by its own ratification" (that variant-count language, not a §14 reservation, is what this item avoids colliding with). The items below therefore start at 21, and are numbered 21, 22, 23 and 29. (This sentence read "the two items below are therefore numbered 21 and 22" until §16.37 added item 23, and "21, 22 and 23" until §16.37 item 10 added the entry now numbered 29; each reading was true when written and false the moment a further item landed, which is why the count is stated as a start-point plus a list rather than a total. The list is maintained by hand and nothing gates it — a fifth item lands with its own edit here.) **Items 24-28 are also unused here, and for a different reason: they belong to the sibling `lama-inpaint` branch.** That branch reserved 24-27 in its committed `ee7cb60` (2026-08-06 16:47:04 +0700) after checking this branch's state at the time, and has since claimed 28; this branch minted its own 24 in `70a617c` (2026-08-07 00:23:14 +0700) without re-checking, so the fourth entry below is **renumbered from 24 to 29** to resolve that cross-branch collision. 29 was verified free across every branch: the union of numbers claimed anywhere is 1-19 and 21-28. Only the **identifier** moves — the proposition, grounds, implementation site and severity framing of that entry are unchanged, and the migration is total on this branch — which is why no supersession row is recorded for it. A merge with `lama-inpaint` must still reconcile 24-28 in the other direction; this note only settles this branch's side.
 
 21. **Mask fallback to the lowest-deviation scored candidate — ratified by §16.35 (joint architect + Rust Engineer plan, Fable tie-break on tie-direction and default, 2026-08-05).** When `pc-mask::fit::fit_region`'s greedy candidate selection (§10.3 step 9) lands on a candidate whose border `std_deviation` exceeds `mask_max_standard_deviation` (§10.3 step 10), v1.1 retries with the lowest-`std_deviation` candidate already scored in step 9, and paints it only if that candidate itself passes the same threshold; if none does, behaviour is unchanged (`mask: None`). Upstream has no such retry (verified at pinned commit `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`: `pcleaner/image_ops.py`'s `pick_best_mask` returns `best_mask=None` unconditionally on this branch), so with the shipped default (`mask_fallback_to_lowest_deviation = true`) v1.1 paints some boxes upstream leaves unmasked — a genuine default-output divergence, not just an opt-in knob. `mask_fallback_to_lowest_deviation = false` restores upstream's exact selection behaviour. The implementation site is the rescue-selection branch in `crates/pc-mask/src/fit.rs` and must carry `DEVIATION(21)`.
 22. **Device selection is opt-in only, never auto-detected — ratified by §16.36 (joint architect + Rust Engineer plan, Fable tie-break, 2026-08-05); binding condition already registered at §16.22 item 5(a).** Upstream auto-detects: `pcleaner/ctd_interface.py:64` (`device = "cuda" if torch.cuda.is_available() else "cpu"`) and `pcleaner/main.py:440`/`:815` (same for `mps`), verified at the pinned commit. v1 and v1.5 never auto-detect on any platform; `[general] device` defaults to `"cpu"` and `"cuda"` must be set explicitly. The implementation site is `pc_core::device::resolve` (§16.36 item 2) and must carry `DEVIATION(22)`.
+
+23. **`get_topk_color`'s histogram tie order is declared by us, because upstream's is unspecified — ratified by §16.37 (joint architect + Senior Rust Engineer plan, 2026-08-06).** Upstream orders candidate colours with `np.argsort(bins * -1)` (`comic_text_detector/utils/textmask.py:19`, pinned commit `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`), whose default introsort has no contractual ordering among equal keys — and the input carries tie groups of up to 255 equal counts. Measured: switching only to a stable sort moves upstream's own refined mask by **277 differing pixels on E01P02** (251 on, 26 off, net +225) and **27 on E01P03** (all 27 off), while leaving **E01P01 byte-identical**; and CPU dispatch alone (AVX2 vs SSE) changes how many candidate colours the function returns (2 vs 3) **on synthetic input**, while **likewise leaving E01P01 byte-identical**. Both qualifiers are load-bearing and are carried here rather than left in §16.37 item 1: neither hazard has been shown to change a real page's output, and dropping "synthetic input" or the countervailing E01P01 result would widen the claim past its evidence. v1.5 uses a **stable** sort on `(Reverse(count), ascending bin index)`. Same class as item 2 above, whose grounds transfer directly. The implementation site is the histogram/tie-rule function landed by §16.37's task A1 — `top_k_colors` in `crates/pc-detect/src/annotate.rs` — and must carry `DEVIATION(23)`; that comment **exists** as of 2026-08-06, at `crates/pc-detect/src/annotate.rs:266` (the doc comment declaring the rule) and `:283` (the sort site inside `top_k_colors`) — the register entry landed with the ratification and the site comment landed with the implementation, the same sequencing `DEVIATION(16)` went through. **Correction, 2026-08-06:** this sentence read *"that comment does not exist yet"*, which was **correct when written** at R0 — that task was spec-only, no code — and went stale the moment A1 landed; verified by `grep -rn "DEVIATION(23)" crates/pc-detect/src/`, which returns the two **declaration** sites — the doc comment and the sort site, whose live line numbers are given by the second correction at the end of this item — and, since A2, two further **prose** mentions at `crates/pc-detect/src/annotate.rs:558` and `:600`, doc-comment sentences in A2's own functions relating their output ordering to this item's tie rule. Those two declare nothing and are not implementation sites. **No hit total is quoted here, deliberately:** that clause read *"which today returns exactly those two hits"*, which was true when A1 landed and false as soon as A2's diff mentioned this item in prose — a count over a grep for a token that prose is free to discuss goes stale on any edit that discusses it. The obligation this item imposes is discharged by the two declaration sites cited below, not by a hit count. **This is staleness, not an original error**, the same distinction item 19 draws about its own `:36` citation. Item 16's own version of that sentence is a separate, pre-existing matter and is **not** corrected here: as item 19 records, the `DEVIATION(16)` comment does exist, at `crates/pc-cli/src/detector.rs:39` (verified by `grep -rn "DEVIATION(16)" crates/`, which returns exactly that one hit). Item 16 is therefore cited here for the register-before-comment *sequencing pattern*, not as a live description of `DEVIATION(16)`. **Second line-number correction, 2026-08-06, made with item 29 below:** `:266`/`:283` were **correct when written** at A1 (verified: `git show HEAD:crates/pc-detect/src/annotate.rs | grep -n "DEVIATION(23)"` at commit `e3a9d70` returns exactly those two lines) and moved to **`:278`/`:295`** when A2 extended that file's module doc comment by twelve lines above them. The live citation is therefore `crates/pc-detect/src/annotate.rs:278` (doc comment) and `:295` (sort site). Staleness from an insertion above, exactly as item 19 records for its own `:36`; the rule and the comment text are unchanged.
+
+29. **OpenCV's documented *reference* Otsu tie rule is what we port; IPP's undocumented fast-path near-tie behaviour is not — ratified by §16.37 item 10 (independent architect + Senior Rust Engineer takes, Fable tie-break on the provenance sub-point, 2026-08-06).** `cv2.threshold(..., THRESH_OTSU)` is not single-valued: `getThreshVal_Otsu_8u` (`modules/imgproc/src/thresh.cpp`, branch `5.x`) is guarded by `CV_IPP_RUN_FAST(ipp_getThreshVal_Otsu_8u(...))`, so on a wheel built with Intel IPP it short-circuits to `ippiComputeThreshold_Otsu_8u_C1R` and never reaches the published algorithm. **The registered proposition is narrow: v1.5 implements `getThreshVal_Otsu_8u`'s published tie rule — strict `sigma > max_sigma`, so of two candidates with equal between-class variance the lower bin index wins — and does not reproduce IPP's fast-path behaviour near a tie.** This is deliberately **not** registered as "we declare our own Otsu tie rule": the rule is OpenCV's own, read out of OpenCV's own source, and calling a port an invention is the paraphrase-widening defect §16.37 items 4 and 5 correct elsewhere in this register. **Grounds, transferred from item 23's:** that item's ground is §16.37 item 2's *"an introsort port would still be a function of a CPU feature set nothing pins, so there is no upstream ordering to be faithful to"*; here the same sentence holds with the noun swapped — an IPP-faithful port would be a function of a **linked proprietary library (IPP) and its dispatch level**, which nothing pins, so there is no single upstream threshold to be faithful to. **What transfers is the ground, not the mechanism:** item 23 declares a rule NumPy does **not** have, while item 29 ports a rule OpenCV's reference code **does** have, choosing between two implementations of one nominally-specified function. **Severity is not inherited from item 23 either:** item 23 moved a real page (277 px on E01P02), while the committed CC-BY test page is **not exposed** by this one — all 12 per-channel Otsu thresholds across E01P01's four boxes are identical on the reference and IPP paths (§16.37 item 10). The implementation site is `otsu_threshold` in `crates/pc-detect/src/annotate.rs` and must carry `DEVIATION(29)`; that comment **exists** as of 2026-08-06, at `crates/pc-detect/src/annotate.rs:410` (the doc comment declaring the choice) and `:449` (the strict comparison itself) — register entry with the ratification, site comment with the implementation, the same sequencing items 19 and 23 went through. **This entry was registered as item 24 when it landed on 2026-08-06, with its site comments carrying the matching 24-numbered marker, and was renumbered to 29 on 2026-08-07** because the sibling `lama-inpaint` branch had already reserved 24-27 in `ee7cb60`; see the gap note above §14's item 21 for the collision record. The identifier is the only thing that changed.
 
 Each of these must appear as a `// DEVIATION(n): ...` comment at the implementation site referencing this section, so a future parity investigation finds them immediately.
 
@@ -1422,7 +1437,10 @@ These are places where I made a call that a Senior Rust Engineer should confirm 
 All 10 items below were reviewed and decided by Fable (Senior Rust Engineer advisor), against direct verification of the upstream Python source. Decisions are binding; see each item for the evidence.
 
 1. **Class-agnostic NMS** (§8.3 step 4) — **DECIDED: class-agnostic.** Verified upstream runs per-class NMS (`inference.py:115`, `yolov5_utils.py:261`, `agnostic=False`). Class-agnostic is the correct v1 choice specifically because it removes the duplicate-box problem at the source rather than relying on upstream's buggy box/language-desync merge (§14.3) to clean it up after the fact. Box-count divergence from upstream is accepted; see deviation §14.13.
-2. **`MaskRefineMode::Simple` for v1** (§8.3 step 5) — **DECIDED: ship Simple, do not port upstream's full `refine_mask`/`refine_undetected_mask`.** Verified the full algorithm (`textmask.py:18-214`): top-k grey/Otsu masks + XOR-minimizing merge + hole filling — real work, correctly flagged as the riskiest port in the project. Deciding evidence: the `demo_bubbles` fixtures live in `media/` (README demo assets) and are **never used by upstream's own test suite** — their exact producing version/profile is unverifiable. Porting the riskiest algorithm in the project to chase parity with fixtures of unknown provenance is a bad trade. **Consequence (not a contingency — the plan of record):** §10.7(B) item 15's upstream-image comparison is downgraded from a frozen gate to a **non-gating calibration report** (see §10.7(B) rewrite below); the frozen masking test is a regression lock against our own recorded-fixture pipeline output, calibrated by F2. `Annotation` mode remains the v1.5 door for a full refinement port.
+2. **`MaskRefineMode::Simple` for v1** (§8.3 step 5) — **DECIDED: ship Simple, do not port upstream's full `refine_mask`/`refine_undetected_mask`.** Verified the full algorithm (`textmask.py:18-214`): top-k grey/Otsu masks + XOR-minimizing merge + hole filling — real work, correctly flagged as the riskiest port in the project. Deciding evidence: the `demo_bubbles` fixtures live in `media/` (README demo assets) and are **never used by upstream's own test suite** — their exact producing version/profile is unverifiable. Porting the riskiest algorithm in the project to chase parity with fixtures of unknown provenance is a bad trade. **Consequence (not a contingency — the plan of record):** §10.7(B) item 15's upstream-image comparison is downgraded from a frozen gate to a **non-gating calibration report** (see §10.7(B) rewrite below); the frozen masking test is a regression lock against our own recorded-fixture pipeline output, calibrated by F2. `Annotation` mode is now available as an opt-in for a full refinement port.
+
+   **The "v1.5 door" sentence at the end of this item is SUPERSEDED by §16.39 — read it before citing this item as a description of the tree.** The door is open: A4 ships `Annotation`, opt-in and non-default. This item's decision — that `Simple` is what v1 ships by default, and that the upstream-image comparison stays a non-gating calibration report — is unchanged, and §16.39 depends on it. (Own physical line, per cookbook rule 14b.)
+
 3. **Cleaned-image colour mode when a colour median meets a grayscale page** (§10.3 step 4) — **DECIDED: confirmed as specified**, with an upstream-accuracy correction. Upstream's base image is always 3-channel (`cv2.IMREAD_COLOR`, `ctd_interface.py:198`); its own `_clean.png` is RGB at `scale == 1` and is only restored to the original mode at export via `convert(original.mode)`. Our stage-level rule ("L if all medians achromatic, else RGB") is *export-equivalent*, not upstream-identical: since border-color computation is per-channel-symmetric, a grayscale page's medians are always exactly achromatic (r==g==b), and RGB→L is lossless in that case. Verified empirically against the `black_bubble` golden: its fill is exactly `(0,0,0)`, fully achromatic — confirming the premise that a colored fill would break this rule is false for all 7 demo_bubbles fixtures (all mode `L`). Implementation: composite in RGB internally, convert to `L` at write time when the rule says `L` — single code path, no branch duplication.
 4. **Tesseract deferred to v1.5** — **DECIDED: confirmed.** Verified `config.py:375` (`ocr_use_tesseract: bool = False` default) and `ocr/ocr.py:65-66` (when disabled, the factory returns `MangaOcr()` for every language). v1's manga-ocr-only OCR exactly matches upstream's own default-profile behavior; no correctness gap.
 5. **Fixture mapping correction** — **DECIDED: confirmed.** **NARROWED by §16.34 item 3 — read it
@@ -1454,9 +1472,12 @@ verify-then-decide process as §15:
 2. **The app-level `Config`** (§6 named it, specified nothing) is provisional: `default_profile:
    Option<String>`, `saved_profiles: BTreeMap<String, PathBuf>` (sorted for determinism, §5.7),
    `cache_dir: Option<PathBuf>`. Confirm or revise before treating its tests as frozen.
-3. **`mask_refine_mode = "annotation"` is accepted by config, rejected by `pc-detect`**
-   (`StageError::InvalidInput`) — config validation and stage validation are deliberately
+3. **`mask_refine_mode = "annotation"` is accepted by config and selects the upstream refinement path**
+   — config validation and stage validation are deliberately
    separate layers here; matches §8.3 step 5 / §15.2.
+
+   **The "rejected by `pc-detect`" half of this item is SUPERSEDED by §16.39 — read it before citing it as current behaviour.** A4 wires `Annotation`, so the stage accepts it. The layer split this item ratified is untouched and still correct: config accepts the value, and whether the stage runs it is the stage's business. (Own physical line, per cookbook rule 14b.)
+
 4. **Config defaults are frozen by value**, not by re-serialized text: §6's default TOML mixes
    integer (`filter_strength = 10`) and float (`mask_max_standard_deviation = 15.0`) literals
    for `f64` fields, so a round-tripped default won't be byte-identical to the spec block.
@@ -1503,7 +1524,7 @@ verify-then-decide process as §15:
 
 Resolved during test-drafting for `pc-detect`/`pc-imageops` (D2, D3, D5, D6, D7, D8):
 
-1. **`DetectInput` gains `pub config: TextDetectorConfig`** (§8.2's field list omitted it). Required so `pc-detect` can reject `MaskRefineMode::Annotation` per §16.5 item 3, and consistent with §3's "config by value in every stage `Input`" rule. Every stage crate therefore depends on `pc-config` (already noted in §16.5 item 1).
+1. **`DetectInput` gains `pub config: TextDetectorConfig`** (§8.2's field list omitted it). Required because the stage selects the `MaskRefineMode::Annotation` refinement path per §16.5 item 3, and consistent with §3's "config by value in every stage `Input`" rule. Every stage crate therefore depends on `pc-config` (already noted in §16.5 item 1).
 2. **Naming**: §8.2's `base_image_dest` is the authoritative spelling; §4.3's diagram (`base_png_dest`) is a typo — read `base_image_dest` there.
 3. **`PageDataRaw.scale` stores exactly what `calculate_new_size_and_scale` returns**, even in the integer-inverse branch where that can differ slightly from `new_height / original_height` (e.g. `h=5001` gives `scale=0.5` but `new_h=2501`, so `new_h/h ≈ 0.50010`). This is intentional, not a bug: §11.3 already recomputes the denoiser's up-scale factor from actual image sizes rather than trusting `scale` for that purpose, so nothing downstream depends on `scale` being the exact ratio. §2.4's doc comment is amended to say "approximately `new_height / original_height`; exactly `1.0` when no resize happened" rather than claiming exactness.
 4. **Rescaled detector boxes ARE clipped to image bounds.** §8.3 step 4 is amended: after truncating to i32, clamp `x1,y1` to `>= 0` and `x2,y2` to `<= image_size`. This isn't new scope — upstream's yolov5 pipeline clips coordinates (`clip_coords`) as a normal part of the postprocess the spec already claims to port; the original §8.3 step 4 text simply omitted mentioning it. Required so `run()` can produce a `PageDataRaw` that passes its own `validate()` on real (frame-overhanging) detector output. **(See §16.27 item 9 before citing this item's justification: the `clip_coords` citation in the sentence above is false — no such symbol exists in the pinned upstream checkout, `grep` exits 1 — and it is corrected there. The clamp rule itself is KEPT unchanged and re-grounded as entry 18 of the deliberate-deviations register; only the reason given for it was wrong.)**
@@ -1688,7 +1709,7 @@ verify-then-decide process as §15/§16.6/§16.8. Each item is binding on Codex.
    the kernels and the composition rules are *masking policy* (they depend on
    `MaskerConfig` semantics), while `BinaryMask` is a general container. `pc-imageops`
    keeps its "no `pc-config` dependency" property (see its `Cargo.toml` note).
-
+   **SUPERSEDED in part by §16.38 item 16(a) — read it before citing this item's module placement.** That entry hoists the growth kernels out of the stage crates into `pc_imageops::morph` at v1.5; the "no `pc-config` dependency" property stated above is not changed by it, and `mask.rs` stops being the only new module.
 3. **`BinaryMask`'s API is pinned** (§10.2 lists names, not signatures):
    `new/from_fn/dimensions/width/height/get/set/count_set/is_blank/bbox/and/or/
    crop_into/to_gray/from_gray_threshold/as_bits`. `and`/`or` **panic** on a dimension
@@ -1840,7 +1861,7 @@ verify-then-decide process as §15/§16.6/§16.8/§16.9. Each item is binding on
    hoist into `pc-imageops` is a mechanical move plus a re-export. Considered and
    rejected: adding them to `pc-imageops` now — it reopens frozen, reviewed code for a
    purely notional sharing benefit.
-
+   **SUPERSEDED in part by §16.38 item 20 — read it before citing this item's module placement for `gaussian`.** Scoped to `gaussian` and to nothing else: `nlm` stays in `pc-denoise`, this item remains the live placement decision for it, and §16.38 item 20 is explicitly not authority for hoisting it. What that entry cashes in is this item's own closing clause — both modules being `pub` and `pc-config`-free, so the hoist is "a mechanical move plus a re-export" — for one of the two modules it names.
 2. **`pc-denoise` gets its own `morph.rs` (`kernel` + `dilate`).** §11.3 step 4 says to use
    "the **same** `kernel()` from `pc-imageops`", but per §16.9 item 2 `kernel`/`dilate`
    actually live in `pc_mask::grow`, and §1 rule 2 forbids a stage crate depending on
@@ -1852,7 +1873,7 @@ verify-then-decide process as §15/§16.6/§16.8/§16.9. Each item is binding on
    cell matrix for `noise_outline_size = 5` so the two copies cannot drift silently.
    v1.5 consolidation ticket: hoist the shared morphology into `pc_imageops::morph` and
    have both stage crates re-export it.
-
+   **SUPERSEDED in part by §16.38 item 16(a) — read it before citing the two-copies claim.** After the v1.5 hoist there is one implementation and no second copy that could drift, so the frozen cell-matrix test this item requires stops being a drift check and becomes a value lock.
 3. **`pc-denoise` likewise gets its own `composite.rs`.** Same rule-2 reason. `blend_channel`,
    `alpha_composite_over`, `composite_rgb` and `resize_nearest_rgba` are pinned
    **identically** to §16.9 items 13 and 15 (`out = round(base·(1−a) + colour·a)`,
@@ -1860,6 +1881,26 @@ verify-then-decide process as §15/§16.6/§16.8/§16.9. Each item is binding on
    `src = floor(dst · src_len / dst_len)`), so Stage 3's composite and Stage 4's agree
    pixel-for-pixel — which §11.3 step 2 depends on, since it *reproduces* Stage 3's clean
    output rather than reading `_clean.png`.
+   **SUPERSEDED by §16.42 — read it before citing this item's pin as current, and read
+   its own scope carefully: this item pins `pc-mask` and `pc-denoise` only.** §16.42
+   overturns the "restate rather than hoist" pin *for the functions this item names*
+   (`blend_channel`, `resize_nearest_rgba`, `alpha_composite_over`, `composite_rgb`),
+   which now hoist into `pc_imageops::composite` — matching the precedent this same
+   §16.10 already scheduled for `nlm`/`gaussian` (item 1) and that §16.38 items 16(a)
+   and 20 already executed for the morphology and the Gaussian blur. `pc-export`'s
+   later, separate copy of three of these four functions is pinned by §16.11 item 10,
+   not by this item (see the back-pointer there); `pc-inpaint`'s copy is required by
+   §16.38 item 3(h) and its own module doc cites this item's pin **by analogy**, not as
+   this item's direct authority, since `pc-inpaint` postdates this item. §16.42 covers
+   all of them, but this item's own scope was always `pc-mask`/`pc-denoise` only — do
+   not read it as having pinned the other two crates' copies itself. The rule-2
+   reasoning this item gives for WHY `pc-denoise` could not just import from `pc-mask`
+   is unaffected — that reasoning still forbids a stage crate depending on a sibling
+   stage crate, and is exactly what motivates hoisting into the shared, non-stage
+   `pc_imageops` crate instead of leaving the copies in place.
+   **SUPERSEDED as to the `alpha_out = max(base_a, layer_a)` clause by §16.45 — read it
+   before citing that formula as current.** The destination-ignoring rule was a real
+   compositing defect, not a stable pin; §16.45 replaces it with real source-over.
 
 4. **`DenoiseDests`' second field is `denoised`,** per §11.2. §4.3's diagram spells it
    `clean_denoised`; that is a typo, read `denoised` there (same treatment as §16.6 item 2).
@@ -2077,7 +2118,7 @@ capability claim about the `image` crate below was verified against the pinned
    * A category that is not requested (item 2) is forced to `None` **after** the above,
      so precedence and narrowing cannot interact.
    Exactly one cleaned file and at most one mask file are ever written (§12.7(A)5).
-
+   **SUPERSEDED in part by §16.38 item 12 — read it before citing this precedence as pinned.** That entry adds the inpainted sources at the top of both the cleaned and the mask precedence at v1.5.
 4. **Destination resolution** (`destinations`, §12.3 step 1, §12.7(A)4):
    * `base = if output_dir.is_absolute() { output_dir } else { export_path.parent()
      .unwrap_or(Path::new("")) .join(output_dir) }`.
@@ -2180,6 +2221,10 @@ capability claim about the `image` crate below was verified against the pinned
    "every exported pixel's colour occurs in the source mask" assertion exact.
    "Original image's size" is `ExportInput.original_path`'s dimensions, read with
    `image::image_dimensions` (header only) — the same reason as item 5.
+   **SUPERSEDED as to the `alpha_out = max(base_a, layer_a)` clause by §16.45 — read it
+   before citing that formula as current.** This item's own destination (the resized
+   combined mask, transparent outside its footprint) is one of the two sites §16.45
+   measured the defect on directly; real source-over replaces the quoted formula here.
 
 10. **`pc-export` restates nearest resampling and source-over in its own
     `composite.rs`.** Same reasoning as §16.10 item 3: §1 rule 2 forbids depending on
@@ -2187,6 +2232,14 @@ capability claim about the `image` crate below was verified against the pinned
     neither operation. `resize_nearest_rgba` and `alpha_composite_over` are pinned
     byte-identically to `pc_denoise::composite`'s, so a mask exported at scale matches
     the one the denoiser saw. Same v1.5 consolidation ticket.
+
+    **SUPERSEDED by §16.42 — read it before citing "same v1.5 consolidation ticket" as
+    still pending.** The ticket this item named is cashed in: `resize_nearest_rgba` and
+    `alpha_composite_over` (this item covers only these two of the three functions
+    `pc-export` actually has — `blend_channel` is pinned by this same reasoning but not
+    named in this item's text) hoist into `pc_imageops::composite`, along with the
+    `pc-mask`/`pc-denoise` copies §16.10 item 3 pinned. `pc-export`'s
+    previously-absent `pc-imageops` dependency is added as part of this hoist.
 
 11. **The OCR report reads `OcrAnalytic.removed`, and returns a `String`**
     (`ocr_report`, §12.3 step 7, §12.6, §15.5). `pc_core::OcrAnalytic` carries per-box
@@ -2755,7 +2808,7 @@ is binding.
    form (`DEVIATION(<plain §14 item number>)`, as `pc-detect`'s `DEVIATION(1)`/`DEVIATION(13)`
    already use — `§16.x`-qualified numbers stay reserved for §16 deviations):
    `DEVIATION(10)` at `pc-pipeline`'s `catch_unwind` site, `DEVIATION(11)` at its
-   `rayon::ThreadPoolBuilder` site, `DEVIATION(12)` at `pc-detect`'s `refine_simple`.
+   `rayon::ThreadPoolBuilder` site, `DEVIATION(12)` on the default `Simple` variant of `MaskRefineMode`.
    Comment-only change.
 
 ---
@@ -3756,9 +3809,7 @@ because it is a **scope change**, not a gap-fill.
    noted there as "load-bearing, not bookkeeping." With a second provider and a variable
    thread count in the tree, the same symmetry becomes load-bearing on ours.
 
-7. **§16.20 item 3(d) is reaffirmed unchanged.** `raw_mask` stays NO-ORACLE. The upgrade path
-   is documented as blocked on `MaskRefineMode::Annotation` landing with its own
-   ratification — see §16.23 item 2.
+7. **§16.20 item 3(d) is reaffirmed unchanged.** `raw_mask` stays NO-ORACLE. The upgrade path was documented as blocked on `MaskRefineMode::Annotation`; §16.39 later ratified and landed that opt-in path.
 
 ## 16.23 v1.5 scope and sequence (Fable tie-break, 2026-07-29)
 
@@ -3770,11 +3821,11 @@ because it is a **scope change**, not a gap-fill.
    dropping the font-rendering debug visualisations as free when they are a flat v1.5 item.
    **Silent dropping cuts both ways: a deferral needs ratifying by the same standard.**
 
-   **v1.5 ships:** §16.21's threading erratum; F1 and its due prerequisites; CUDA per §16.22;
+   **The 2026-07-29 plan recorded these as v1.5 scope:** §16.21's threading erratum; F1 and its due prerequisites; CUDA per §16.22;
    LaMa inpainting; PSD/layered export; legacy INI import; Lab-space coloured NLM +
    `color_filter_strength` (landing it also retires §14 item 7's one-time WARN); DBNet line
    synthesis plus line-based splitting/merging and orientation/font-size estimation;
-   `MaskRefineMode::Annotation`; and §16.21 item 6's bounded CPU-EP investigation.
+   `MaskRefineMode::Annotation` (subsequently landed under §16.39); and §16.21 item 6's bounded CPU-EP investigation.
 
    **Ratified deferrals, recorded rather than omitted:** font-rendering debug visualisations
    (`_raw_boxes.png`, `_boxes.png`, `_boxes_final.png`, `_mask_fitments.png`,
@@ -3788,7 +3839,7 @@ because it is a **scope change**, not a gap-fill.
    (`crates/pc-mask/src/border.rs`) — measured at ≤1% of pipeline runtime. Revisit only if
    profiling after §16.21 contradicts that.
 
-2. **`MaskRefineMode::Annotation` must NOT land before F1 records.** Requested as a way to
+2. **Historical sequencing (2026-07-29): `MaskRefineMode::Annotation` was held until F1 recorded.** Requested as a way to
    make §16.20 item 3(d)'s `raw_mask` row gateable; refused on four independent grounds, any
    one sufficient:
 
@@ -3807,7 +3858,7 @@ because it is a **scope change**, not a gap-fill.
    Annotation landing later invalidates no fixture. Order: F1 records with `raw_mask`
    NO-ORACLE exactly as ratified → Annotation lands with its own upstream comparison on the
    committed page → a new §16.x may then upgrade the row. **Annotation is opt-in and `Simple`
-   remains the v1.5 default**, so default-path fixture churn for that task is zero.
+   remains the default**, so default-path fixture churn for that task is zero. §16.39 subsequently landed the path.
 
 3. **§16.20 item 3(b)'s reconstruction identity does NOT collapse to plain equality once we
    synthesize our own DBNet lines.** The gate structure is bound now so the DBNet task cannot
@@ -3852,8 +3903,8 @@ because it is a **scope change**, not a gap-fill.
    investigation, which may run any time after PERF-1; then legacy INI import and Lab NLM
    batched; then LaMa; then PSD; then **DBNet lines**, which change default detector output
    and therefore end with an F1 re-record and full re-sign, budgeted once, up front; then
-   **Annotation** last.
-
+   **Annotation** (historical final step; §16.39 subsequently landed it).
+   **SUPERSEDED in part by §16.38 item 15 — read it before citing this sequence.** LaMa moves ahead of GPU-2 and ahead of the batched INI import + Lab NLM; PSD, DBNet lines and Annotation keep their places, and Annotation is still last.
    The committed page fixture and §7.2's 400 KB cap remain the one open prerequisite, per
    §16.20 item 10. It gates only the final fixture *commit* — not building F1's machinery —
    and is a maintainer decision rather than an engineering task.
@@ -6741,7 +6792,13 @@ redefined at the start.
    `crates/pc-cli/src/paths.rs:90` in `cache_dir`'s Windows arm — the register entry landed with
    this ratification and the site comment landed with the implementation, which is the sequencing
    `DEVIATION(16)` also went through: §14 item 16 records it, and the comment has since been added
-   at `crates/pc-cli/src/detector.rs:36`. **Pre-existing defect, noted rather than fixed here:**
+   at `crates/pc-cli/src/detector.rs:39` (**line-number correction, 2026-08-06, unrelated to
+   §16.37**: this read `:36`, which was **correct when written** on 2026-08-04 in commit `83f7f89`
+   — the comment genuinely sat at line 36 then. It went stale in commit `1f2bd73` (§16.36 G1-C,
+   "session-creation refusal at detector + OCR seams"), which inserted lines above it and moved it
+   to `:39`; verified with `git log -S`, and by reading the file at `1f2bd73^` (36) and `1f2bd73`
+   (39). §14 item 19 carried the identical citation and is corrected the same way).
+   **Pre-existing defect, noted rather than fixed here:**
    §14 item 16's own sentence still says "the concurrent implementation pass has not added that
    comment yet", and §16.13's note near line 3154 says the same; both are stale as of 2026-08-04,
    verified by grepping for `DEVIATION(16)`. Those are two other entries' text and are not amended
@@ -7364,6 +7421,1674 @@ Scope, quoted from §16.23 item 5 so it travels with this entry: **"device confi
 7. **Hand-offs to GPU-2, pre-authorised here so they are not discovered mid-task as frozen-test conflicts.** `DeviceSupport::compiled()` becomes conditional on GPU-2's `cuda` feature — GPU-1 deliberately does not freeze `compiled() == CPU_ONLY` as an assertion, only the capability-explicit `CPU_ONLY`/`WITH_CUDA` constructors, which never need editing. The end-to-end refusal test in G1-C (`a_cuda_device_refusal_is_attempted_once_and_declared_run_fatal`-shaped) will need a `#[cfg(not(feature = "cuda"))]` gate once GPU-2's feature exists, following the same pre-authorised-frozen-test-edit precedent §16.23 item 5 already set for PERF-1. GPU-2 also owns: the downgrade-guard test for `ort-sys`'s silent fallback to its CPU-only `none` distribution (§16.22 item 5(d) — the guard file cannot be written in GPU-1, since `cfg(feature = "cuda")` on an undeclared feature is an `unexpected_cfgs` clippy failure), and the `#[non_exhaustive]`-equivalent question of whether `ort`'s CUDA session options actually honour `ConvAlgorithmSearch::Heuristic` (item 2's type only makes `Exhaustive` unrepresentable in *our* policy — it does not itself prove `ort`'s behaviour, which needs an assertion at the `ort` boundary GPU-2 introduces).
 
 8. **Conflict avoidance against the parallel v1.1 mask-polish branch.** See §16.35 item 9 for the shared statement: `[general]` (this branch) vs `[masker]` (mask-polish) are different structs in `profile.rs` and different blocks in `default_profile.toml`, low textual risk, but land the two config-surface edits sequentially rather than via parallel Codex calls, because of `table_registry_matches_default_document`'s whole-registry-vs-whole-document comparison. This is **§16.36**; mask-polish is **§16.35**. This branch's opt-in-only divergence is `DEVIATION(22)`; neither branch takes `20`, left unused per §14's note above.
+
+## 16.37 Annotation-mode refinement (Task A), R0: the tie-order deviation, two corrections of statements that are false today, and the R0→A6 sequence (joint architect + Senior Rust Engineer plan, 2026-08-06)
+
+**Historical record (2026-08-06, R0).** This section was written before A4: it recorded the Annotation port as unimplemented, `pc-detect` rejected the mode, `MaskRefineMode::Simple` was the shipped default, and no frozen golden value moved. A4 later landed the markers and wiring described by §16.39; the dated record is retained for provenance, not as a current-state claim. At R0, the markers and rejection-clause amendments were reserved for **A4**, not written here; §16.39 later records their landing, which is the sequencing §14 item 16 already states in the opposite direction (*"The implementation site will carry `DEVIATION(16)`; the concurrent implementation pass has not added that comment yet."*) — the register entry lands with the ratification, the site marker with the implementation.
+
+**Two** of the items below — items 4 and 5, the only two labelled `CORRECTION` — correct statements that are **false as this section is written**. Both are false about `Simple`, which ships today, and neither is a consequence of this port: reading them as caused by Annotation would misattribute a pre-existing defect to a change that has not landed.
+
+1. **Upstream's Annotation output is not reproducible across environments, and the mechanism is measured rather than argued.** `get_topk_color` (`pcleaner/comic_text_detector/utils/textmask.py:19`, pinned commit `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`) orders its candidate colours with `idx = np.argsort(bins * -1)`. NumPy's default `kind='quicksort'` is introsort, whose ordering **among equal keys is not part of NumPy's API contract**, and the input is saturated with equal keys. Measured per `argsort` call, as the size of the **largest** group of equal bin counts in that call: 47 calls on `ja_Pepper-and-Carrot_by-David-Revoy_E01P02` ranging **35 to 255** of 255 bins, and 22 calls on `…E01P03` ranging **69 to 255** — so every call carries a large tie group, but the sizes are per-call and per-page, not a fixed set. Changing only the tie rule — default introsort to `kind='stable'`, nothing else — changes upstream's own refined mask on E01P02 by **277 differing pixels (251 turned on, 26 turned off, net +225: 6230 → 6455 non-zero)**, and on E01P03 by **27 differing pixels (0 on, 27 off, net −27: 1831 → 1804)**, while leaving **`…E01P01` byte-identical**. The two figures per page are different metrics and are stated separately on purpose: the symmetric difference is the parity-relevant one, the net non-zero delta is not, and quoting one as though it were the other is what the first draft of this item did. Independently, CPU dispatch alone (AVX2 vs SSE, via `NPY_DISABLE_CPU_FEATURES`) changes the same tie order enough to change how many candidate colours `get_topk_color` returns (2 vs 3) on synthetic input, and likewise leaves E01P01 byte-identical. Neither hazard is pinned by anything we record: `tests/fixtures/recorded/detector/PROVENANCE.json` pins `numpy`, `opencv`, `python` and `torch`, and pins **no CPU feature set**. Both readings on the record are claims about the pages they were measured on and neither generalises — E01P01's stability is a property of E01P01's data exactly as E01P02/E01P03's instability is a property of theirs.
+
+2. **DECIDED: v1.5 declares its own tie rule rather than chasing an unspecified one.** `get_topk_color`'s histogram ordering is a **stable** sort on `(Reverse(count), ascending bin index)`. Registered as `DEVIATION(23)` in §14; the implementation site is the histogram/tie-rule function landed by A1 — `top_k_colors` in `crates/pc-detect/src/annotate.rs` — and must carry that comment, which **exists** as of 2026-08-06, at `crates/pc-detect/src/annotate.rs:278` (the doc comment declaring the rule) and `:295` (the sort site inside `top_k_colors`). **Line-number correction, 2026-08-06, landing with item 10:** those two numbers read `:266` and `:283`, correct at A1 and moved by A2's twelve-line growth of this file's module doc comment above them — see §14 item 23's second correction for the verification. **Correction, 2026-08-06:** this clause read *"which does not exist yet"*, **correct when written** at R0 — spec-only, no code — and stale the moment A1 landed, which is the register-entry-then-site-comment sequencing §14 item 19 describes; staleness, not an original error, and corrected the same way item 19 corrects its own citation. This is the same shape as §14 item 2, whose grounds transfer verbatim — *"upstream iterates a Python `set`, making the merge order (and therefore the merged boxes) nondeterministic between runs. We use index order (FIFO)."* Item 1's measurement is what makes porting introsort **not merely expensive but ill-posed**: an introsort port would still be a function of a CPU feature set nothing pins, so there is no upstream ordering to be faithful *to*.
+
+3. **The frozen gate is ours-vs-ours and proves DETERMINISM, not parity — stated here because a future reader will otherwise read "gate" as "parity gate".** The A5 gate asserts our refinement is byte-identical across runs and thread counts on the recorded page. Ask what change turns it red: only nondeterminism. **A port that is wrong in the same way on every run passes it forever.** Correctness evidence therefore comes from A1–A3's per-function hand-derived assertions, not from A5. Any comparison against upstream is a **non-gating calibration report**, the same downgrade §15.2 item 2 already applied to this stage's parity claim — *"§10.7(B) item 15's upstream-image comparison is downgraded from a frozen gate to a **non-gating calibration report**"* — and that report must additionally pin the CPU feature set it was produced under, or item 1's second hazard makes the report itself irreproducible. **Widened by item 10 below (2026-08-06), which adds a second thing the same report must pin:** OpenCV's **IPP build and enable status** — the `cv2.getBuildInformation()` IPP line *and* whether IPP was enabled for the run — because item 10 measures a second environment-dependent path (Otsu's) that the CPU-feature-set pin does not cover. The requirement is widened, not replaced: both pins are required, and A5 records both or the report is not reproducible for either reason. **Widened a second time by item 11(d) below (2026-08-07) — on SCOPE, not on pins:** the gate and the report must run against the **complete** algorithm, *"both `refine_mask` and `refine_undetected_mask`"*, not a partial one, because *"A calibration report produced against `refine_mask` alone would compare our half-algorithm with upstream's whole one and attribute the difference to a port defect"*. Pointer added here so the precondition is visible at the item a reader lands on for the A5 gate, mirroring the item 10 pointer above; the ruling itself is item 11(d)'s and this note adds nothing to it.
+
+4. **CORRECTION, true of `Simple` today and unrelated to this port: §14 item 17's coverage-filter measurement is false on the committed fixture.** Item 17 states, verbatim: *"measured across two real manga pages the filter has never fired (minimum coverage 0.3025 against a 0.1 threshold)"*. Measured under the shipped `Simple` mode against `tests/fixtures/recorded/detector/…E01P01_raw_mask.png` — **that file, and not `…_detector_mask.png`**, because despite its name `_raw_mask.png` holds the *refined* mask (`crates/pc-detect/src/lib.rs:105-106` writes `refined_mask` to `raw_mask_dest`) while `_detector_mask.png` holds the unrefined U-Net output; reading the wrong one yields 0.0330 for this block, the same conclusion by a different number — block `[438, 1407, 498, 1446]` has `mask_coverage` **0.0867521** and **is dropped** by the `>= DEFAULT_MIN_MASK_COVERAGE` filter — which is why `…_detector_blocks.json` holds four blocks and `…#raw.json` holds three. The filter has fired, on the one page every consumer of that fixture reads, since before this section was written. Method: `mask_coverage` (`crates/pc-detect/src/lib.rs:41`) reimplemented independently and validated against the three committed `#raw.json` rows to within 3.2e-8 before being trusted. Upstream drops the same block (its own pre-filter `mask_score` for that box is 0.03446 with `len_lines: 0`), so **behaviour agrees and only the sentence is wrong**; item 17's scope and operand rulings are untouched by this correction.
+
+   **SUPERSEDES: §14 item 17**
+
+5. **CORRECTION, true of `Simple` today: §8.3 step 5's `expand_textwindow` parenthetical claims a parity that does not hold.** Step 5 states, verbatim: *"For each detected block, `expanded = rect.pad(16, image_size)` (upstream `expand_textwindow(expand_r=16)`)"*, and the same claim is repeated at `crates/pc-detect/src/mask.rs:12`. Upstream's `expand_r` is a **divisor**, not a pad: `paddings = int(round((max(h, w) * 0.25 + min(h, w) * 0.75) / expand_r))` (`comic_text_detector/utils/imgproc_utils.py:168`). Run on the four committed E01P01 boxes it yields **3, 4, 5 and 3 px**, against our flat 16. A second divergence in the same function, not previously recorded anywhere: upstream clamps the far edges to **`im_w - 1` / `im_h - 1`**, while `pc_core::Rect::pad` (`crates/pc-core/src/geometry.rs:91-92`) clamps to `canvas.0` / `canvas.1` — off by one at every image edge. **What this corrects is a provenance CLAIM, not `Simple`'s behaviour.** §8.3 step 5 describes `Simple` as *"ported from koharu's `refine_segmentation_mask`"*, not from PanelCleaner, and whether koharu uses a flat 16 is **unverified** — koharu is not vendored in this tree and was not consulted. `Simple`'s padding is therefore left exactly as it is; A0 and A1 bind the corrected formula and the `- 1` clamp to `Annotation` only. Deciding whether `Simple` is also wrong needs koharu as its own oracle and is not decided here.
+
+   **SUPERSEDES: §8.3 step 5**
+
+6. **Measured, NOT decided here: Annotation collapses `mask_coverage` and would silently drop blocks.** Same method as item 4, comparing the shipped `Simple` mask against upstream's Annotation output with our boxes held fixed: E01P01 `0.7812269 → 0.3920916`, `0.7731718 → 0.1736820`, `0.5636277 → 0.1226258` (kept, but only **22.6% above** the 0.1 threshold, i.e. `(0.1226258 − 0.1) / 0.1`); E01P02 `[349,824,492,878]` **`0.4071484 → 0.0238280`** and `[531,836,686,882]` **`0.1088359 → 0.0000000`**; E01P03 `[794,1310,905,1344]` **`0.3497615 → 0.0312666`**. Three blocks that `Simple` keeps would be dropped — no mask, no OCR, no diagnostic. A0 must measure this end to end rather than inherit it: the counterfactual recorded during planning (painted regions 3/9 → 6/9 across the three pages) held the box set fixed and so is an **upper bound on the improvement that does not include this feedback**. What to do about it — accept, re-tune `min_mask_coverage` for this mode, or change the filter's operand — is an A4 decision and is deliberately left open.
+
+   **Which of the two Annotation outputs the figures above came from, settled by measurement (Fable's empirical ruling on the comparand, 2026-08-07, added with item 11 below).** *"upstream's Annotation output"* is ambiguous between two things upstream can produce: `refine_mask` alone, and `refine_mask` followed by `refine_undetected_mask` — the latter being what PanelCleaner's own pipeline runs (`keep_undetected_mask=True` at `pcleaner/ctd_interface.py:162`, reaching `refine_undetected_mask` at `pcleaner/comic_text_detector/inference.py:205-208`). Both variants were run at the pinned commit under opencv 5.0.0 with IPP disabled, with A1's corrected proportional window, on all three pages. **At PAGE level the two differ substantially:** E01P02 by **3772** differing pixels (6230 non-zero with the undetected pass against 2458 without) and E01P03 by **1038** (1831 against 793). E01P01 differs by **0** px — on that page the undetected pass invents no block at all, so its "agreement" there is degenerate and carries no information about the other two. **On every block rect this item records, on all three pages, the two variants' `mask_coverage` values are bit-identical** — not merely equal to seven decimal places — so no figure above depends on which variant produced it, and the coverage decision A4 owes is unaffected by the choice. The reason is that on these pages the invented components' pixels fall entirely outside these rects.
+
+   **Scope, and this half is the load-bearing one:** the bit-identity is a property of **these specific block rects, on these specific pages, in this environment** — it is **not** a property of the algorithm, and it must not be restated as *"`refine_undetected_mask` never affects `mask_coverage`"*. An invented component can in principle overlap a detected rect and still be invented (the invention test is an intersection-area ratio below 0.5, not disjointness — see item 11(b)), and then it would move that rect's coverage. Method: both variants computed over each page's `_base.png` + `_detector_mask.png` + `_detector_blocks.json`, with the harness validated first by reproducing `Simple` byte-identically against the committed `…E01P01_raw_mask.png` before any Annotation number was read off it; `mask_coverage` per `crates/pc-detect/src/lib.rs:41`.
+
+   **Left OPEN by that ruling, and recorded as open rather than guessed: whether A0's attribution baseline included the undetected pass.** The *"painted regions 3/9 → 6/9"* counterfactual quoted above was recorded during planning, and **which of the two variants its Annotation arm used is unaudited**. This section does not resolve it and nothing sequenced before A4 depends on it, but it is not a nothing either: the page-level figures above move a page by thousands of pixels, which could move a painted-region count. It is a **follow-up check A0 owes**, not a blocker.
+
+7. **Authorised, landing with A4, not with this section: the SPEC clauses that reject Annotation, plus the one frozen test. This item's enumeration is NOT a complete list of every site in the repo that says so.** `crates/pc-detect/tests/d7_run.rs:196-215`'s `run_rejects_annotation_refine_mode` asserts `StageError::InvalidInput` and `detector.calls() == 0`. Under cookbook rule 8's test — *"Does the corrected assertion claim **less about the system** than the original did?"* — the corrected assertion does (from always-rejected to rejected-unless-configured), so this is **exit 2 and routes to both architects**, which this section is. **Predicted, not verified:** that test is expected to go red when A4 lands, but whether it actually does depends on A4's opt-in design, which does not exist yet — if A4 gates on a config flag whose default keeps the refusal, the test could stay green, and A4 must check rather than assume.
+
+   **The clauses this item authorises amending, and the exact nature of each:** §16.5 item 3 (*"**`mask_refine_mode = "annotation"` is accepted by config, rejected by `pc-detect`** (`StageError::InvalidInput`)"*) and §8.3 step 5's *"where only `Simple` is implemented in v1 (`Annotation` → `StageError::InvalidInput`)"* both become **false** and need markers. §15 item 2's *"`Annotation` mode remains the v1.5 door for a full refinement port"* **rejects nothing and does not become false — it becomes stale**, describing a door as unopened once it is opened; A4 decides whether staleness warrants a marker at all, and this item does not pre-judge that.
+
+   **Anchor spelling, settled here to prevent a later panic:** the third clause must be cited as **`§15 item 2`**, never `§15.2 item 2`. There is no `## 15.2` header — §15's items live under `## 15.` — so `§15.2` resolves to a nonexistent section, and `every_supersession_marker_has_a_back_pointer_at_its_target` **panics** on an unresolvable anchor rather than skipping it. The registry already uses the correct form at `("16.34", "15 item 5")`. Prose writes `§15.2 item 2` in exactly two places, both inside this section — item 3 above and this sentence — and nowhere else in the file (`grep -n "§15\.2 item"`); that form is harmless in prose and fatal in a marker.
+
+   **Code sites are A4's own enumeration, deliberately not asserted complete here** (cookbook rule 14; §14 item 18 in this register sets the precedent of enumerating comment sites explicitly rather than gesturing at them). Known starting points, each **re-verified by reading the cited line** while writing this item, and **not** claimed exhaustive: `docs/PIPELINE_SPEC_V1.md:499` and `crates/pc-config/src/default_profile.toml:20` (both the `mask_refine_mode` default line and its trailing "annotation is rejected" comment; the TOML is locked by `crates/pc-config/tests/defaults.rs`'s literal-§6-block comparison, so editing it without the test is a red suite), `crates/pc-config/src/profile.rs:208-210`, `crates/pc-detect/src/lib.rs:71`, and two sites in the **stale-not-false** category described above for §15 item 2 rather than the rejection category — `crates/pc-detect/src/mask.rs:152` (a "v1.5 door" sentence in `refine_simple`'s `DEVIATION(12)` comment, which rejects nothing) and `README.md:102` (a roadmap checkbox, `- [ ] \`Mask RefineMode::Annotation\``). Both merely stop describing reality once A4 lands. **`crates/pc-cli/src/detector.rs` is NOT such a site** and was removed from an earlier draft of this list: `grep -rn -i annotation crates/pc-cli/src/` returns nothing at all. A4 re-derives this list with a fresh grep and records the result; it does not inherit this one.
+
+8. **Task sequencing.** **R0** (this section, spec-only, no code). **A0** (**simple**, non-gating): re-run the Simple-vs-Annotation counterfactual with item 5's corrected window *and* item 6's block-set feedback both live, and attribute how much of the measured improvement is each — two variables, so report them separately or the result is uninterpretable. **A1** (**heavy**): the greyscale/histogram/top-k-colour path including item 2's tie rule — pure functions over committed arrays, hand-derivable, no model. **A2** (**heavy**): Otsu thresholding and the XOR-minimising channel selection. **A3** (**heavy**): connected components plus the merge and hole-filling loops. Connected-component **label order** is a measured non-issue on all three pages — reversing the entire non-background label numbering changes upstream's output by 0 px on E01P01, E01P02 and E01P03 — but that is a property of those pages, so A3 states it as a recorded observation, never as a licence to ignore ordering. **A3b** (**heavy**, added 2026-08-07, sequenced HERE — after A3 and **before A4**): `refine_mask`'s page-level driver plus `refine_undetected_mask`; item 11 below is its ruling and carries its full scope, and the grounds for placing it before A4 rather than after. The letters A0–A6 keep exactly the meanings they have in this list — the task is inserted as `A3b` rather than by renumbering, so no existing citation of `A4`, `A5` or `A6` anywhere in this file or the tree moves. **A4** (**heavy**): wiring, the config gate, item 6's coverage decision, item 7's clause amendment **and its own fresh enumeration of the code sites**, and the `DEVIATION(12)` retirement marker. **A5** (**simple**): item 3's determinism gate plus the calibration document. **A6**: a committed upstream fixture group, a separate task, later, and **only if a future §16.x wants a gated comparison** — item 1 is why it is not wanted now.
+
+9. **Scope quarantine, so no gate moves under this work.** `Annotation` ships **non-default**; `Simple` stays the default and every value frozen against it stays put. Adding a second recorded page or a new fixture group is **not** in A0–A5: `xtask/src/record.rs`'s `detector_plan` is single-page by §16.29 item 2, and `crates/pc-testkit/tests/recorded_provenance.rs` carries a hard-coded group count and hard-coded artifact paths. That is A6's problem, under its own ruling.
+
+10. **A2's measurements: OpenCV's Otsu is environment-dependent, which is why `DEVIATION(29)` exists — and the measurements, not the argument, are what carries it (independent architect + Senior Rust Engineer takes, Fable tie-break on the `PROVENANCE.json` sub-point, 2026-08-06).** A register entry without its supporting measurement is the bare assertion the cookbook warns against, so the runs are recorded here rather than summarised into item 29.
+
+    (a) **IPP-on and IPP-off disagree on real measured samples.** Method: OpenCV's published `getThreshVal_Otsu_8u` transcribed independently into Python, validated against `cv2.threshold(..., THRESH_OTSU)` with `cv2.ipp.setUseIPP(False)` **before** being trusted, then compared against the same call with IPP enabled. **There is no reproducible rate, and none is stated here.** Every measurement on record, with its provenance, each over 20 000 arrays:
+
+    | disagreements / 20 000 | ≈ rate | corpus | measured by |
+    | --- | --- | --- | --- |
+    | 0 | none at all | smooth bimodal (two Gaussian modes, well separated) | this correction, 2026-08-07 |
+    | 1 | 1 in 20 000 | uniform-random small arrays | this correction, 2026-08-07 |
+    | 5 | 1 in 4 000 | not characterised in the report that reached this transcription | fresh reader, 2026-08-07 (as reported; not re-run here) |
+    | 10 | 1 in 2 000 | random | Senior Rust Engineer, 2026-08-06 |
+    | 20 | 1 in 1 000 | random, second corpus | Senior Rust Engineer, 2026-08-06 |
+    | 21 | 1 in 952 | random | architect, 2026-08-06 |
+    | 54 | 1 in 370 | small arrays over narrow value ranges, tie-dense by construction | this section's original transcription, 2026-08-06 |
+    | 148 | 1 in 135 | not characterised in the report that reached this transcription | fresh reader, 2026-08-07 (as reported; not re-run here) |
+    | 154 | 1 in 130 | narrow value ranges (2–6 distinct values, 2×2 to 12×12) | this correction, 2026-08-07 |
+    | 460 | 1 in 43 | tiny arrays, ≤4 distinct values, values repeated in equal runs | this correction, 2026-08-07 |
+
+    **The spread is from zero to 1 in 43 — over two orders of magnitude across the non-zero runs, and one corpus in which the two paths never disagreed at all.** It tracks the corpus's **tie density** (how often two candidate between-class variances land equal or within a few ULPs) and, per (c) below, the **CPU dispatch level**; it is not a property of "the measuring environment" and cannot be pinned to a band. This sentence previously read *"on the order of 1 in 1000–2000 array samples in the measuring environment"*, which covered only the 10- and 20-disagreement runs and was already contradicted by the 54 run in its own paragraph, then by five further runs; it is replaced rather than re-tightened, because a tighter band would fail the same way. Quote a rate only with the corpus that produced it.
+
+    **`DEVIATION(29)` does not rest on the magnitude, so nothing above weakens it.** Item 29 is grounded on `cv2.threshold(..., THRESH_OTSU)` not being **single-valued** — that some inputs disagree at all, plus (c)'s dispatch-level dependence and (e)'s x86-only availability. A single non-zero run establishes that; a corpus measuring 0 does not unestablish it, and a corpus measuring 460 does not strengthen it. The rate matters only for judging exposure, which (d) settles for the committed page.
+
+    Every run **that reported it** agreed on one thing: with IPP **disabled**, agreement with the hand-transcribed reference was **total** — 0 disagreements out of 20 000. Confirmed first-hand for the four corpora measured for this correction, which include the two highest IPP-on rates in the table (460 and 154); reported, not re-run here, for the earlier runs, and the two fresh-reader rows carry no IPP-off figure at all. So the IPP-off half is *strongly* evidenced and not uniformly re-verified, and the table's rate column is IPP-on only.
+
+    (b) **Both mechanisms occur — exact ties AND ULP-level near-ties. This corrects an earlier statement in the A2 test file.** `crates/pc-detect/tests/a2_annotate_otsu.rs`'s module doc comment read *"None of the 10 is an exact tie in double arithmetic: in every one the two candidate between-class variances differ in the last few ULPs, so the mechanism is IPP's arithmetic, not a tie rule"*. That is an **overclaim** — a property of one corpus restated as a property of the mechanism — found independently by both reviewers: the architect found an exact, bit-identical-sigma tie arising from **random, non-constructed** data on which IPP and the reference disagree, which contradicts the sentence directly. Re-measured during this transcription on corpus (a)'s fourth run: of 54 disagreements, **15 had bit-identical `f64` between-class variances** (verified by comparing the two `f64` values for equality and printing both as hex, e.g. input `[152]*7 + [153]*7 + [154]*7`, both sigmas `0x1.0000000000000p-1`, reference 152, IPP 153) and **39 differed in the last few ULPs**. So **both** mechanisms are present and neither explains the divergence alone. The doc comment is corrected to match; that is a **doc-comment-only** change — no frozen assertion in that file moves, and the test that pins the tie direction (`otsu_threshold_breaks_exact_between_class_variance_ties_toward_the_lowest_index`) already asserted the reference rule and still does.
+
+    (c) **IPP's own answer varies by CPU dispatch level with IPP held enabled, which is what makes "match IPP" not even well-defined as a target.** `OPENCV_IPP=sse42` against `avx2` and `avx512` returns different thresholds on one fixed array corpus (re-verified here over 4 000 arrays: the `sse42` result set differs from `avx2`'s and `avx512`'s, which are identical to each other and to the unset default). So "be faithful to IPP" would have to name a dispatch level as well as a library, and neither is pinned by anything anyone ships.
+
+    (d) **The committed CC-BY test page is NOT exposed — a real mitigating measurement, and the reason item 29's severity is not item 23's.** All **12** per-channel Otsu thresholds across `ja_Pepper-and-Carrot_by-David-Revoy_E01P01`'s four boxes are **identical** under the reference and IPP paths. Verified independently by both reviewers and re-verified by the adjudicator, and re-verified a fourth time during this transcription against the committed `…_base.png` on the four A1-derived windows: block 0 `[76, 117, 131]`, block 1 `[122, 153, 134]`, block 2 `[126, 156, 134]`, block 3 `[78, 116, 125]` in upstream's B, G, R order, byte-identical with `cv2.ipp.setUseIPP(True)` and `(False)`. **`DEVIATION(29)`'s real-world severity is therefore qualitatively different from `DEVIATION(23)`'s**, which did move a real page (277 px on E01P02) — item 29 does not inherit item 23's severity framing, only its grounds. As with item 1's E01P01 result, this is a property of **this page's data** and generalises to nothing.
+
+    (e) **An IPP-faithful rule would not even be implementable uniformly across the targets we ship.** `.github/workflows/release.yml` builds `aarch64-apple-darwin` (verified: that target appears at two rows of the matrix), and Intel IPP is **x86-only**. So "match IPP" has no meaning at all on one of this project's own release targets — an additional and independent reason to prefer the reference path, beyond it being the principled choice.
+
+    (f) **DECIDED, against the alternative reading: `tests/fixtures/recorded/detector/PROVENANCE.json` is NOT extended.** This was the one genuine disagreement between the two takes; the adjudicator ruled for the architect's position. Two reasons, both checked rather than argued: **no artifact that file pins is IPP-sensitive** — the detector oracle recorder discards the refined mask (`xtask/scripts/record_detector_oracle.py:646` binds it as `_mask_refined` and never reads it), so no Otsu-derived value can propagate into a pinned artifact; and the file is **generator-produced from a fixed key list** (`xtask/src/record.rs:894-903`, `["python", "opencv_version", "numpy_version", "torch_version"]`), so a hand-added IPP field would be dropped silently at the next re-record. Extending it would place a pin on files that do not carry the risk while leaving the pin unenforceable — cookbook rule 12's "gate the artifact carrying the risk", inverted.
+
+    (g) **Instead, two obligations at the artifacts that do carry the risk.** The first is item 3's, already widened above: A5's calibration report pins OpenCV's IPP build and enable status as well as the CPU feature set. The second is **binding on A6**: if A6 ever commits upstream's Annotation-mode mask as a fixture, that fixture's provenance **must** pin IPP status at that point. **Guidance for whoever does A6, added by the adjudicator and deliberately not a requirement here:** a bare on/off boolean is **insufficient** given (c)'s dispatch-level sensitivity — pin a **measured canary** alongside the build string, i.e. the Otsu threshold actually returned in the recording environment on a known tie-exercising array (item (b)'s 21-element input is one such array, with `152` on the reference path and `153` on this machine's IPP path), so a future re-record can detect a dispatch-level change and not merely a library swap. A6 decides the format.
+
+11. **DECIDED: `refine_mask`'s page-level driver and `refine_undetected_mask` are one task of their own — `A3b`, heavy, sequenced after A3 and BEFORE A4 (independent architect + Senior Rust Engineer reviews of A3, Fable tie-break on the sequencing, 2026-08-07).** The two reviews independently found the same gap in item 8's task list, and the finding is three separate facts rather than one:
+
+    (a) **`refine_undetected_mask` (`pcleaner/comic_text_detector/utils/textmask.py:161-192`, pinned commit `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`) is named by NO task in item 8's original A0–A6 enumeration** — not by A3, whose scope is *"connected components plus the merge and hole-filling loops"*, and not by A4, whose scope is wiring and policy. **It is not dead code, which is the reading that would have made the gap harmless:** PanelCleaner's real pipeline reaches it on every page, via `keep_undetected_mask=True` at `pcleaner/ctd_interface.py:162` and the `if keep_undetected_mask:` branch at `pcleaner/comic_text_detector/inference.py:205-208`. Item 6's note measures what it does on real pages — 3772 differing pixels on E01P02, 1038 on E01P03 — so it is live and it is not small. **And `DEVIATION(12)` names both halves:** §14 item 12 reads *"v1 ships the "Simple" refinement, not upstream's `refine_mask`/`refine_undetected_mask`"*. If A4 retires that entry while `refine_undetected_mask` stays unported, the retirement asserts a parity the tree does not have — the exact class of false claim items 4 and 5 of this section exist to correct. **So this is a scope gap, not a scope choice**, and closing it before the retirement is what makes the retirement honest.
+
+    (b) **A3b's scope, in two parts.** **Part 1, `refine_mask`'s PAGE-LEVEL DRIVER (`textmask.py:195-212`)** — a thin per-block composition loop: expand the window with A1's `expand_text_window`, crop image and pred mask, build the candidate list through A1's top-k path and A2's Otsu path (upstream's `get_topk_masklist` + `get_otsuthresh_masklist(per_channel=False)`, which our `candidate_mask_list` already composes), call A3's `merge_mask_list`, and OR the result into a page-sized mask at the window's coordinates. **This is pulled OUT of A4's scope and into A3b** (Fable's ruling): it is *"numerical work with an upstream oracle, not integration work"*, and both `refine_mask` proper and `refine_undetected_mask`'s recursive call into it need it as one standalone callable unit — writing it inside A4's wiring would make the recursive caller depend on A4. **Part 2, `refine_undetected_mask` itself**, whose five load-bearing details are, in upstream's order: **(i)** `mask_pred[np.where(mask_refined > 30)] = 0` — a zero-where-already-refined step at threshold **30**, and note it mutates the CALLER's array in place, which upstream then returns as its "unrefined" mask from `inference.py:210` (verified by probe, 2026-08-07: a 40×40 pred of uniform 200 with a 5×5 refined patch comes back with **25** pixels zeroed in the caller's own array). A3b decides deliberately whether our port mutates or copies, and records which; **(ii)** `cv2.threshold(mask_pred, 30, 255, THRESH_BINARY)` then a connected-components labelling, reusing A3's `connected_components`; **(iii)** `valid_labels = np.where(stats[:, -1] > 50)[0]` then `for lab_index in valid_labels[1:]` — and **this is NOT "skip the background label"**. It drops the **first surviving entry** of the area-filtered list, which coincides with label 0 only when the background's own area also exceeds 50. Measured 2026-08-07 on an 8×8 all-foreground image with a single background pixel: `stats` areas are `[1, 63]`, `valid_labels == [1]`, and `valid_labels[1:] == []` — so the **only real component is silently dropped**. A port that writes "skip label 0" is a different function; **(iv)** the invention test, `union_area(blk.xyxy, bbox) / w / h < 0.5`, maximised over every detected block. `union_area` (`pcleaner/comic_text_detector/utils/imgproc_utils.py:15-22`) is **misnamed**: it computes the **intersection** area of the two boxes, and returns the sentinel **`-1`** when they are disjoint (so a component overlapping nothing scores `-1/w/h`, which is `< 0.5`, and is invented). Port the behaviour under its own name, not under its upstream name; **(v)** the recursive `refine_mask(img, mask_pred, seg_blk_list, ...)` over the invented blocks, taking the **already-zeroed** `mask_pred` from (i), OR-ed into the refined mask — which is why part 1 must be a callable unit.
+
+    (c) **Connectivity: port the EFFECTIVE 8, not the literal 4 the source text passes, and no `DEVIATION` is needed for it.** Upstream writes `cv2.connectedComponentsWithStats(pred_mask_t, 4, cv2.CV_16U)` (`textmask.py:170`), whose positional arguments bind to the `labels` and `stats` **output** slots, so `connectivity` keeps its default **8** and `ltype` keeps `CV_32S`. Re-measured on opencv 5.0.0, 2026-08-07: on `[[0,0,0,0,255],[0,255,255,0,0],[255,0,255,255,0]]` the positional calls `(m, 4, CV_16U)` and `(m, 8, CV_16U)` both return `num_labels = 3`, matching `connectivity=8`, while `connectivity=4` returns `4`; and the returned `labels` dtype is `int32`, not `uint16`. So upstream **intends** 4 here and **runs** 8 — a latent upstream defect, recorded rather than reproduced-as-intended. Matching what upstream *does* rather than what it *says* needs no register entry: that is the precedent `DEVIATION(29)` set in the same section, where the choice between two implementations of one nominally-specified OpenCV function was resolved by what the code actually runs. (The same reading for `merge_mask_list`'s call site — where intent and effect agree, so the finding is free — is recorded in `crates/pc-detect/src/annotate_merge.rs`'s module header note (a), **not** in item 8, whose A3 note is only about connected-component label order and carries no connectivity statement.)
+
+    (d) **The sequencing was the one genuine disagreement, and Fable ruled for BEFORE A4.** The Senior Rust Engineer proposed sequencing it after A4, on the grounds that A4's wiring gives it a place to plug in. Fable ruled the other way: A3b is numerical work with an upstream oracle to check against, and A4 is integration and policy; running the numerical work first keeps A4's `DEVIATION(12)` retirement honest at the moment it lands rather than provisionally true pending a later task. **Consequences, stated so nothing is inferred:** A4's scope is exactly the list in item 8 — wiring, the config gate, item 6's coverage decision, item 7's clause amendments and its own fresh enumeration of the code sites, and the `DEVIATION(12)` retirement — with the page-level driver removed from it, since that driver was never named in item 8's A4 text but **was** described as A4's by `crates/pc-detect/src/annotate_merge.rs`'s module header, which this item corrects. **A5 gains an explicit stated precondition:** its determinism gate and calibration report must run against the **complete** algorithm — both `refine_mask` and `refine_undetected_mask` — not a partial one. A calibration report produced against `refine_mask` alone would compare our half-algorithm with upstream's whole one and attribute the difference to a port defect.
+
+12. **DECIDED, and deliberately NOT a `DEVIATION`: A3's connected-component label numbering differs from OpenCV's, and no §14 entry is registered for it (independent architect + Senior Rust Engineer reviews of A3, no disagreement, 2026-08-07).** `pc_detect::annotate_merge::connected_components` numbers labels in ascending order of each component's **first raster pixel**; `cv2`'s default 8-way algorithm is block-based (Grana/BBDT) and numbers by 2×2-block scan order. The two orders differ — measured on `[[0,255,0,0,0,255,255,255,255],[0,0,0,255,0,255,255,255,0]]`, where `cv2` gives the single pixel at `(1, 3)` label 2 and the right-hand blob label 3, while first-raster-pixel order gives the blob 2 and the pixel 3. **The reason no entry is registered is that the difference is provably output-identical, not that it was judged unimportant:** §14 registers behavioural divergences, and there is no divergence to register here.
+
+    **The proof's scope, quoted verbatim from the module header it lives in rather than paraphrased, because the whole risk in this decision is a scope that travels wider than its evidence:** *"the merged mask does not depend on the order at all"*, established for **`merge_mask_list`'s two loops only**. The proof is that a visit to label `L` writes `merged[bbox] |= indicator(L)`, which turns on only `L`'s own pixels; for every pixel outside `L` the candidate equals the origin, so those terms are bit-identical in the two XOR sums and cancel out of the strict comparison, leaving `L`'s own pixels as the only load-bearing term — and distinct labels are pixel-disjoint, so no other visit can have touched them. Both `L`'s decision and `L`'s effect are therefore functions of the loop-entry state alone.
+
+    **What this decision does NOT license, spelled out because the blanket phrasing was the review finding.** `ConnectedComponents` is `pub`, with `pub labels` and `pub stats`, so a **different** future caller can be order-sensitive where these two loops are not — item 11(b)(iii)'s `valid_labels[1:]`, which drops whichever filtered entry sorts first, is exactly such a caller. The no-`DEVIATION` conclusion is scoped to `merge_mask_list`'s two loops and does not travel to A3b or to any other consumer; each new consumer of the label numbering re-establishes order-independence for itself or registers the divergence it has. `connected_components`'s doc comment carries that scoping so the blanket sentence cannot be inherited into a context where it is false.
+
+    §16.37 item 8's independent measurement agrees and is recorded as it is worded there — *"reversing the entire non-background label numbering changes upstream's output by 0 px on E01P01, E01P02 and E01P03 — but that is a property of those pages"* — and it is evidence beside the proof, not the ground for it: a three-page measurement could not carry this conclusion, and a proof scoped to two loops does not need it to.
+
+    **A3b discharged this item's obligation by re-establishing PARITY with upstream's label order, not by registering a divergence — the ruling is item 13 below.** This item named `valid_labels[1:]` as the anticipated order-sensitive consumer; that consumer has now landed and takes its label sequence in `cv2`'s own order through a local accessor, so it has no divergence to register. This sentence records which of the two exits this item offered was taken and nothing more; item 13 carries the ruling, its measurements and its grounds.
+
+13. **DECIDED, and deliberately NOT a `DEVIATION`: `undetected_blocks` takes its label sequence in OpenCV's block-scan ORDER through a new local accessor, restoring parity; `connected_components`'s global numbering is unchanged (two independent joint architect + Senior Rust Engineer reviews of A3b, converging, 2026-08-07).** A3b's implementation surfaced a **real** divergence, not a theoretical one, exactly where item 12 predicted a consumer could be order-sensitive. `refine_undetected_mask`'s ported `valid_labels[1:]` (item 11(b)(iii)) selects a label by **position in the label sequence**, so unlike `merge_mask_list`'s two loops — where item 12's proof shows the per-label decisions commute — its output is a function of the numbering itself. Constructed 20×20 fixture, background **43** px with components of **300** and **57** px: `cv2` drops the 57-px component and invents `[5, 0, 20, 20]`, while first-raster-pixel numbering drops the 300-px one and invents `[0, 1, 3, 20]`. Two genuinely different outputs from the same input.
+
+    (a) **What was rejected, and why, because the rejected options are the reason the chosen one is narrow.** **Porting OpenCV's BBDT algorithm** was rejected: nothing in this port needs OpenCV's pixel-to-label *assignment*, only the order the components arrive in, and a BBDT port is a large surface added to satisfy a small requirement. **Renumbering `connected_components` globally** was rejected on a checked, not argued, ground: both reviewers independently enumerated its readers — `annotate_merge.rs`'s `merge_mask_list` and `hole_fill_area_threshold`, plus A3's frozen test `connected_components_label_numbering_is_first_raster_pixel_order_not_opencvs`, whose **name** asserts the current rule — so a global renumber would turn a frozen test red for a reason its name does not admit. **The chosen fix is a LOCAL accessor**, `ConnectedComponents::labels_in_opencv_block_scan_order`, returning the non-background labels of the *same* labeling permuted into `cv2`'s order, with `labels` and `stats` untouched. Its sole caller is `undetected_blocks`, and its doc comment states in its own words that it is *"the label ORDER OpenCV assigns, NOT a port of the BBDT algorithm"*.
+
+    (b) **The order rule, measured rather than read out of OpenCV's source.** A component's `cv2` label rank is the ascending order of `min over its pixels of (y / 2, x / 2)`, compared row-major — block row first, then block column. **cv2 5.0.0**, three independent runs, **0 mismatches in every one**: the architect measured **2614 + 299** fixtures, the Senior Rust Engineer **2091**, and the transcription run re-measured **2000** fixtures carrying **8318** non-background components. Both reviewers independently confirmed that all **block-based** variants agree (`CCL_DEFAULT`, `CCL_BBDT`, `CCL_GRANA`, `CCL_SPAGHETTI`) and only the **pixel-based** ones disagree (`CCL_SAUF`, `CCL_WU`) — re-measured here as 0 mismatches for the four block variants against **71 of 536** two-or-more-component fixtures for each pixel variant, with the pixel variants matching *our* first-raster-pixel order instead. That is both why the two orders differ at all and why the block rule is upstream's genuinely-intended answer: item 11(c) establishes that `cv2`'s effective connectivity at this call site is **8**, whose default family is block-based.
+
+    (c) **Why NO `DEVIATION` entry is registered — and the contrast with `DEVIATION(23)` and `DEVIATION(29)` is the whole argument.** Those two are registered because **no single upstream answer exists** to be faithful to: item 23's ground is *"an introsort port would still be a function of a CPU feature set nothing pins, so there is no upstream ordering to be faithful to"*, and item 29's is the same sentence with the noun swapped for IPP and its dispatch level. Here upstream's answer is **single-valued, deterministic and measured**: one order, agreed by every block-based CCL variant, reproducible across three independent measurement runs, depending on no CPU feature set and no optional library. So there is no choice for us to declare — the ground that made 23 and 29 registrable is absent, and after this change the algorithm (item 11(c)'s effective 8) and the order both match upstream. §14 registers behavioural divergences; there is none here. **Note the identifier: the Otsu entry referenced above is item 29**, renumbered from 24 on this branch on 2026-08-07 to resolve the `lama-inpaint` cross-branch collision recorded in the gap note above §14's item 21; nothing in this item cites 24.
+
+    (d) **The frozen A3b test was corrected under cookbook rule 8, with its NAME changed too.** `undetected_blocks_label_numbering_decides_which_component_is_dropped_when_the_background_is_small` asserted `[0, 1, 3, 20]` — this crate's pre-fix answer — and deliberately froze the divergence pending a ruling. It now asserts **`[5, 0, 20, 20]`**, hard-coded from the cv2 5.0.0 measurement, and is renamed `undetected_blocks_matches_upstreams_block_scan_label_order_when_the_background_is_small`. **The rename is part of the ruling, not cosmetic:** the old name claims the numbering *decides* the drop, which is a divergence claim, and the test now verifies parity — leaving the name would be this project's dominant defect class (a name claiming more, or other, than its assertion verifies). This is a joint-ruling correction that makes the test claim something **different** about the system, which is rule 8's legitimate exit, not a unilateral edit.
+
+    (e) **Two further test obligations, both discharged.** First, an **anti-regression** test — `connected_components_global_numbering_is_still_first_raster_pixel_after_the_block_scan_accessor` — pins on the *same* 20×20 fixture, where the two orders are opposed, that `label_at(5, 0) == 1`, `label_at(0, 1) == 2`, `stats[1].area == 300` and `stats[2].area == 57`, i.e. the exact inverse of `cv2`'s `[43, 57, 300]`. It fails if the block-scan order ever leaks into the struct's own fields. Second, **`undetected_blocks_drops_the_lowest_numbered_survivor_when_the_background_is_filtered_out` is in the order-sensitive regime too** — its background area is **8**, so `valid[0]` is a real component there as well — and gets the same answer under both orders only by coincidence, because each blob's minimum 2×2 block happens to sort as its first raster pixel does. Both reviewers found this independently; a comment now says so at the test, so it cannot be read later as evidence the fix was unnecessary.
+
+    (f) **The committed page is not exposed and cannot corroborate this.** Its residual background area is **1 987 219**, far above the 50-px filter, so `valid[0] == 0` under both orders and both drop the background. `refine_undetected_mask_on_the_recorded_page_invents_no_block` is therefore silent on this ruling, and its comment says so rather than being offered as support.
+
+## 16.38 LaMa inpainting (v1.5): the measured ONNX signature, per-tile inference, the weights substitution, and the L1–L6 sequence (joint architect + Senior Rust Engineer plan pass, 2026-08-06)
+
+Scope, quoted from §16.23 item 1 so it travels with this entry: **"v1.5 ships: … LaMa inpainting"**. This entry ratifies the *plan* for it — measurements, deviations, rulings, sequencing. It ships **no code**: every clause below describes work owed by tasks L1–L6 (item 16), and nothing here asserts that any of it exists yet.
+
+**One exception to the sentence above, disclosed rather than silently reinterpreted — the same treatment item 17's preamble gives D3's "Ruled by this entry".** Item 19 was added to this entry *after* the preamble was written, and item 19(g)'s optional-aware refusal hint **"is added now, unwired"** — that code exists, is real and is tested (`pc_cli::models::models_download_optional_command`); it simply has no caller until L5. So read the preamble as "ships no code that is *wired* into a pipeline path", not "ships no code at all". Item 19's own clauses are the authority on what exists; the preamble's blanket wording is left as written because item 19(g) is the only clause in this entry that declares code landing *with the entry* rather than owed by a task. (Code for items 13, 16(a) and 19(a)–(f) does now exist, but it arrived through tasks L1–L3 as the preamble describes, not with the entry.)
+
+**Numbering note, stated because it is a merge hazard rather than a style choice.** This entry is **§16.38**, not §16.37. §16.37 is already occupied on the sibling `mask-parity` branch, which forked from the same base commit `02b5613`; numbering this entry §16.37 would produce two `## 16.37` headings the moment the two branches merge, and `outline()` in `crates/pc-testkit/tests/spec_supersession.rs` would then resolve one number to two spans. §16.37 is therefore left unused **on this branch only** — it is not a reserved gap.
+
+1. **MEASURED (L0 spike, 2026-08-06) — the pinned ONNX artifact and its graph signature.** The artifact is `lama-manga.onnx` from the Hugging Face repository `mayocream/koharu` at revision `15439cba09df388c51de6e47c6020bc31edab41f`, URL `https://huggingface.co/mayocream/koharu/resolve/15439cba09df388c51de6e47c6020bc31edab41f/lama-manga.onnx`, **207,482,644 bytes**, sha256 **`50a1abae0d73bd46d08eae36c8590cd59ad09029494c9698702b050ef00b0100`**. Size and digest were re-verified for this entry independently of the spike, by reading Hugging Face's `X-Linked-Size` and `X-Linked-ETag` response headers on that exact revision URL (both matched the spike's values character-for-character).
+
+   (a) **`ir_version = 9`, `producer_name = "pytorch"`, `producer_version = "2.7.0"`, one opset import at version 20 with no domain (so the default `ai.onnx` domain).** Re-derived for this entry from the raw protobuf: a 256-byte range request on the head decodes as `08 09` (field 1, `ir_version = 9`), `12 07 "pytorch"`, `1a 05 "2.7.0"`; a 100,000-byte range request on the tail decodes `42 02 10 14` (field 8 `opset_import`, sub-field 2 `version = 20`).
+
+   (b) **The two inputs are separate tensors, and their H/W axes are FIXED at 512.** Re-derived for this entry from the same tail range request, decoding `GraphProto` fields 11 and 12 byte by byte:
+
+   * `image`: `elem_type = 1` (float32), dims `[dim_param "batch", 3, 512, 512]`
+   * `mask`: `elem_type = 1` (float32), dims `[dim_param "batch", 1, 512, 512]`
+
+   There is **no** concatenated 4-channel input. The `512` dims are literal `dim_value`s (`0a 03 08 80 04` — varint `0x80,0x04` = 512), not symbols.
+
+   (c) **CORRECTION to the spike's own report, found while re-deriving (b): the OUTPUT's declared shape is not `[batch,3,512,512]`.** The decoded `output` value-info is `elem_type = 1`, dims `[dim_param "batch", 3, dim_param "batch", dim_param "Sigmoidoutput_dim_3"]` — three of four axes symbolic, and the **height axis carries the same symbol name as the batch axis**, which is a shape-inference artifact of the export and is false at run time for any batch size other than 512. **Binding consequence for L5: the implementation must validate the *runtime* output shape and must never derive geometry from the declared one.** This is the same obligation `validate_output_shapes` already discharges for the detector (§16.19 item 2(c) names it as a `Model`-only emitter). **NOTE, MEASURED BY TASK L5's REAL-MODEL TEST RUN (2026-08-07) — this narrows the clause above rather than contradicting it, and the narrowing is about WHERE the ambiguity lives, not about whether it exists.** The symbolic dims quoted above are what the **raw ONNX protobuf** declares; they are not what an `ort` caller sees. Loaded through `ort` 2.0.0-rc.12, ONNX Runtime runs its own shape inference at load time and concretises both spatial symbols, so `session.outputs()` reports the output as `("output", f32, [-1, 3, 512, 512])` — batch free, the height axis no longer sharing the batch symbol. Running real inference on the pinned artifact (sha256 `50a1abae…b0100`, 207,482,644 bytes, CPU execution provider) then produced an actual output shape of `[1, 3, 512, 512]`: fully concrete, with no ambiguity in practice. Both figures are **measured by running the model** in `crates/pc-inpaint/tests/l5_real_model.rs`, not inferred from the graph and not assumed. **What this does NOT do is relax the binding consequence.** The obligation stands exactly as written — `crates/pc-inpaint/src/onnx.rs` validates against the hard-coded `EXPECTED_OUTPUT_SHAPE` and never reads `session.outputs()[0]`'s shape — for three reasons stated so a later reader does not read this note as permission: an inference pass is a property of the runtime version rather than of the pinned artifact, so a different or future `ort` may report the protobuf's symbols unchanged; the clause's obligation was on the *runtime* shape from the start, which this note supplies a value for rather than removing; and deriving geometry from a shape the loader inferred is still deriving it from the declared one. So the sole correction to the clause above is that *"three of four axes symbolic"* describes the protobuf's declared symbols, not what `ort` reports or produces at run time.
+
+   (d) **The fixed H/W axes were also confirmed empirically by the spike**, which built a real `ort::Session` from the artifact (this workspace's pinned `ort` 2.0.0-rc.12, features `ndarray, std, download-binaries, copy-dylibs, tls-rustls`) and fed 256×256, 640×512 and 1024×1024 inputs: all three failed identically with `Got invalid dimensions for input: image … Got: 256 Expected: 512` or its per-size equivalent. The `batch` axis is genuinely dynamic (`b = 2` and `b = 4` both ran) but **scales linearly** — 1.58 s / 3.03 s / 6.55 s for `b = 1 / 2 / 4` — so batching buys no throughput and is not a design lever.
+
+   (e) **No FFT operator-support risk.** The FFC blocks' Fourier transform was exported as an explicit DFT over a cos/sin twiddle basis, not as a native ONNX FFT operator, so `ort` loads and runs the graph with zero unsupported-operator errors (the spike also cross-checked the same signature and the same successful load under Python `onnxruntime` 1.23.2 on the CPU EP). Re-derived for this entry, and **scoped exactly to what was measured**: a byte-string scan of the **first 20 MiB** of the artifact finds **0** occurrences of `DFT`, `STFT`, `Rfft`, `RFFT` or `fft`, against 864 of `Einsum`, 864 of `MatMul`, 828 of `Range`, 865 of `Cos` and 865 of `Sin`. Those are occurrence counts of a byte string over a *prefix*, not node counts over the whole graph — they corroborate the mechanism, they do not enumerate the graph.
+
+   (f) **Measured CPU wall clock, one 512×512 tile, on the spike machine (20 logical cores): ~1.6 s with default all-core threading, ~4.7 s single-threaded. Session build, one-time at construction: ~6.3 s.** These are the only real numbers for this feature's ONNX path and they are machine-specific.
+
+   (g) **The model does not composite; the caller must.** With an all-zero mask (nothing to fill) only **1 of 786,432** output pixels matched the input exactly — the model regenerates the whole tile. Mask convention confirmed: value 1 = fill, value 0 = keep. So blending the unmasked region back from the original is a **hard requirement**, not an optimisation.
+
+2. **The retired numbers: what must NOT appear anywhere as a description of this feature.** An earlier Python/TorchScript benchmark (0.55–0.83 s per region) and upstream's own full-page timing describe a different artifact, a different call pattern and a different framework; a per-region number in particular cannot describe a per-tile call pattern at all. Neither may be quoted in spec, config comments, README or commit messages as if it characterised this feature. Item 1(f) is the whole citable set, and it is a measurement on one machine — a future reader wanting a number for their own machine must measure it, per cookbook rule 6's re-measure-never-quote discipline.
+
+   **What item 1 does NOT establish, enumerated rather than summarised.** It does not establish output *quality* on any real page (the spike ran no manga page end to end and produced no reviewed image); it does not establish that per-tile output is visually comparable to upstream's single full-page call (item 5's open question, decision point D2 in item 17); it does not establish `lama-manga.onnx`'s numerical agreement with upstream's `.pt` checkpoint at any tolerance (item 6); and it does not establish behaviour on any execution provider other than CPU.
+
+3. **Upstream's algorithm, transcribed with line cites, at the pinned commit `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`.** This is the port target; every clause below was read in the fetched source, not recalled. The whole of upstream's inpainting is `pcleaner/inpainting.py` (178 lines).
+
+   (a) **Inputs.** `inpaint_page` reads exactly two cached JSON documents — the page JSON and `#mask_data.json` (`:57`, `:59`) — plus three images: `page_data.mask_path` (`:58`), `mask_data.mask_path` (`:60`) and `mask_data.original_path` (`:62`). `page_data.mask_path` is set to `path_gen.raw_mask` at `pcleaner/ctd_interface.py:173`, i.e. **`_raw_mask.png`** — our `PageData.raw_mask` (`crates/pc-core/src/page.rs:61`). `mask_data.mask_path` is the combined fill mask — our `MaskData.combined_mask` (`crates/pc-core/src/mask_data.rs:13`).
+
+   (b) **`boxes_with_stats` matches `MaskRegionStats` field for field.** Upstream types it `Sequence[tuple[Box, float, bool, int | None]]` (`pcleaner/structures.py:643`) and destructures it as `box, deviation, failed, thickness` (`:78`, `:84`). Ours is `{ rect, std_deviation, failed, thickness: Option<u32> }` (`crates/pc-core/src/mask_data.rs:21-29`). **`pc-mask` is therefore not modified by this feature** — the new stage reads what is already persisted.
+
+   (c) **Two eligibility sets, unioned.** Failed boxes: every row with `failed` true (`:76-80`). Poorly-fitted boxes: `not failed and deviation >= inpainting_min_std_dev and thickness is not None and thickness <= min_inpainting_radius` (`:82-90`). The `thickness is not None` clause carries upstream's own comment: *"For box masks, this is none. We don't need to inpaint those, they are always good."*
+
+   (d) **Two fill-mask sources.** Failed boxes take their mask from the **raw** mask, cropped to the box and grown by `masker.min_mask_thickness` (`:93-97`). Poorly-fitted boxes take theirs from the **combined fill** mask, cropped to the box (`:99-101`).
+
+   (e) **Growth arithmetic, exactly.** `growth = min(min_inpainting_radius + int(deviation * inpainting_radius_multiplier), max_inpainting_radius)` (`:106-108`); `growth_with_isolation = growth + inpainting_isolation_radius` (`:111`); the box is padded by `growth_with_isolation` clamped to the canvas (`:113`, via `structures.py:98-110`'s `max(x1-a,0) / min(x2+a,w)`), the cropped mask is pasted into a canvas-sized blank at the box's offset (`:114-116`), and *that* is grown by `growth` (`:117`). Note `int(...)` truncates toward zero, and `config.py:932`'s `fix()` already enforces `max_inpainting_radius = max(min_inpainting_radius, max_inpainting_radius)`.
+
+   (f) **One page-global fill mask, one page-global isolation mask, and the paste OFFSET matters.** Each padded mask from (e) is canvas-sized but filled at coordinates relative to the padded box (`:114-116` pastes the crop at `box.x1 - box_padded.x1, box.y1 - box_padded.y1`), so `:124` pastes it back at `(box.x1, box.y1)` to restore absolute position. A port that reads (e) and (f) as operating in one absolute frame would place every fill region at the wrong coordinates — which item 5(a) makes load-bearing, since it tells the implementer to follow (e)–(f) exactly. **A direct absolute-frame port is not bit-equivalent, and that is a real subtlety rather than a note:** `grow_mask` pads with `mode="edge"` (`image_ops.py:812`), so growth near a canvas boundary replicates whatever sits at that boundary — and the boundary differs between upstream's padded-box-relative canvas and an absolute page canvas. Whichever frame L4 chooses, it must choose deliberately and pin the near-edge case. All padded masks are then pasted into a single `combined_mask` (`:122-124`) and resized to the original image size with NEAREST when the page was scaled (`:127-128`). The isolation mask is each padded mask grown *again* by `inpainting_isolation_radius` (`:137-144`).
+
+   (g) **One model call per page.** `inpainted_image = model(original_image, combined_mask)` (`:132`), guarded by `if boxes_to_inpaint:` — with nothing eligible, upstream skips the model entirely and uses the original (`:131-134`). `InpaintingModel.__call__` crops the result back to the input size when the model returned something larger (`:37-39`), which is how upstream tolerates arbitrary page dimensions.
+
+   (h) **Compositing.** `cleaned_image` is rebuilt from scratch inside `inpaint_page` — `original_image.convert("RGBA")` (`:149`), the fill mask pasted over it (`:151-153`), then the noise mask when denoising ran (`:155-157`) — so **`_clean_inpaint.png` is not derived from `_clean.png`**. The fill mask is Gaussian-faded by `inpainting_fade_radius` (`:159-161`, via `image_ops.py:820-830`), the faded mask is pasted through the isolation mask into a `final_mask` (`:166-167`), that becomes the inpainted image's alpha (`:168`), and the result is alpha-composited over the cleaned image before alpha is flattened to 255 (`:170-171`).
+
+   (i) **Two cache artifacts, named verbatim.** `_inpainting.png` (`output_structures.py:409`) and `_clean_inpaint.png` (`:413`).
+
+4. **DEVIATION(24) — per-tile inference, in place of upstream's single full-page call.** Upstream calls the model once per page on the full-resolution original with one page-global mask (item 3(g)); v1.5 calls it once per 512×512 tile. **This is forced, not chosen:** item 1(b) measured the ONNX artifact's H and W axes as fixed literal 512s, and item 1(d) measured three off-size inputs being rejected. Upstream's own artifact is a TorchScript `.pt` whose fully-convolutional generator accepts any size (the sibling weights repo declares `pad_multiple: 8`), which is why upstream never needed a tile loop. The register entry is owed at §14 as item 24, and the `// DEVIATION(24)` comment is owed at the tile loop in `crates/pc-inpaint/`. **The quality consequence is real and unmeasured** — a per-tile call sees a 512×512 context where upstream saw the page — and item 5 declares the policy while item 17's decision point D2 keeps the unmeasured half from being read as settled.
+
+5. **The tiling and stride policy, DECLARED rather than left to implementation.** Cookbook rule 4's spirit generalised: a policy nobody wrote down gets inferred differently by every later reader.
+
+   (a) The fill mask and the isolation mask are built **page-global and exactly as item 3(e)–(f)**, at the original image size. No deviation is taken here; the tiling sits strictly downstream of them.
+
+   (b) **The tile cover is a function of the padded boxes, merged.** Take the padded boxes of item 3(e) and close them transitively under rectangle intersection, replacing each intersecting group by its bounding union until no two rectangles intersect. **The order-independence argument, corrected — the obvious one does not work.** "The transitive closure of an intersection relation is order-independent" would be enough only if merging did not change the relation, and it does: replacing a group by its bounding union can create intersections that no pair in the original relation had, so the closure is taken over a relation the procedure itself edits. The conclusion still holds, by a different route: the merge step is **monotone** (unioning rectangles only grows them, and a grown rectangle intersects a superset of what it intersected before) and the procedure runs to the point where no two rectangles intersect, so it computes the **least fixpoint** of a monotone operator on a finite set — which is unique, hence independent of visiting order. Stated at this length because the first draft asserted the wrong argument for a true conclusion, and that is the same precedent-as-derivation slip item 9(a) rejects in someone else's reasoning; the step-1a fresh reader caught it here. L4 must still pin it empirically: a test that permutes `#mask_data.json` region order and asserts an identical cover.
+
+   (c) **One window per merged rectangle when it fits.** A merged rectangle whose width and height are both `<= 512` gets one 512×512 window centred on it and then translated minimally to lie inside the frame. A merged rectangle exceeding 512 on either axis is covered by a stride-512 lattice anchored at its own top-left corner, with the final row and column translated inward to stay in frame, and windows whose intersection with the fill mask is empty are dropped.
+
+   (d) **Pages smaller than 512 on either axis** are edge-replicated up to 512 and the result cropped back. Edge replication rather than a constant fill is the in-family choice: upstream's own `grow_mask` pads with `mode="edge"` (`image_ops.py:812`).
+
+   (e) **Every fill pixel is written exactly once.** Windows from different merged rectangles may overlap even though the rectangles do not, so ownership is assigned rather than left to write order: order the merged rectangles by `(y1, x1)` and, within one, its lattice windows row-major; a fill pixel belongs to the first window in that order whose region contains it, and write-back touches only owned pixels, masked by `faded_fill AND isolation` per item 3(h). L4 must pin "exactly once" as an assertion over the whole page, not as a comment.
+
+   (f) **The seam risk is named, not hidden.** A fill region spanning a lattice boundary is generated from two different 512 contexts, and the discontinuity lands *inside* the filled area. Clause (c)'s centred-window rule removes this for every region that fits in 512×512, which item 3(e)'s radii make the common case, and the boundary is exact rather than approximate. Padding is applied on both sides, so the padded extent is `extent + 2 × (growth + inpainting_isolation_radius)` and `growth ∈ [min_inpainting_radius, max_inpainting_radius]` = `[7, 20]` at the defaults, giving a per-side pad in `[12, 25]`. Therefore a box of **≤ 462 px** on an axis always fits (512 − 2×25), a box of **≥ 489 px** never fits (512 − 2×12 = 488), and between 463 and 488 px it depends on that region's own `std_deviation` through `inpainting_radius_multiplier`. `Box.pad` also clamps to the canvas (item 3(e)), so a box against the frame edge pads less on that side and fits at a larger extent. It does not remove it for larger regions, and no measurement here says how bad it looks.
+
+6. **DEVIATION(25) — the weights substitution, with the provenance chain verified end to end.** Upstream downloads `https://github.com/Sanster/models/releases/download/AnimeMangaInpainting/anime-manga-big-lama.pt`, sha256 `479d3afdcb7ed2fd944ed4ebcc39ca45b33491f0f2e43eb1000bd623cfb41823` (`pcleaner/model_downloader.py:21-22`), and loads it through `simple_lama_inpainting` by setting `LAMA_MODEL` (`inpainting.py:22-24`). v1.5 loads the ONNX artifact of item 1 instead, because this project has no TorchScript loader (`.pt`/torch loading is v2 per §16's out-of-scope list).
+
+   (a) **The provenance chain, and exactly how far it was verified.** The sibling Hugging Face repository `mayocream/lama-manga` declares in its `config.json` a field `"source_checkpoint": "https://github.com/Sanster/models/releases/download/AnimeMangaInpainting/anime-manga-big-lama.pt"` — **the same URL, character for character, as `model_downloader.py:21`** — alongside `"architecture": "FFCResNetGenerator"`, `"input_channels": 4`, `"output_channels": 3`, `"pad_multiple": 8`. Both ends of that comparison were fetched for this entry. **What this does NOT establish, stated rather than blurred into it:** it is a claim made by the republisher, not a numerical check; nothing here verifies that `mayocream/koharu`'s `lama-manga.onnx` was exported from `mayocream/lama-manga`'s weights, nor that either matches the `.pt` at any tolerance. Establishing that needs a side-by-side run of both artifacts on one page, which no task below performs.
+
+   (b) **Licence, decided by the maintainer on a direct question.** `mayocream/koharu` is AGPL-3.0. The weights are **downloaded at run time and never vendored into this repository**, which is the basis on which the maintainer accepted it. Do not re-litigate; do not add the artifact to the tree.
+
+   (c) The register entry is owed at §14 as item 25, and the `// DEVIATION(25)` comment at the new `pc_models::ModelSpec` constant.
+
+7. **`inpainting_max_mask_radius` — RULED: ship the key, defaulted to upstream's value, deliberately unread by the algorithm; the WARN around it is DEVIATION(26).**
+
+   (a) **The measurement, done by grepping the whole upstream tarball rather than one file.** `inpainting_max_mask_radius` occurs on exactly seven lines, in six places across three files (the seventh line is the second half of one `if`): `pcleaner/config.py:819` (declaration), `:861` (INI export), `:910` (INI import), `:920-921` (`fix()` clamp), `media/default.conf:265`, and `pcleaner/gui/image_file.py:345`. The last is a **cache-staleness key list**, not an algorithm input — it sits in `inpaint_settings`, the list of settings whose change invalidates a cached output. `pcleaner/inpainting.py`, which is the entirety of upstream's inpainting algorithm, references it **zero** times. The gate its config comment describes — *"The maximum radius of a mask to perform inpainting on. Masks larger than this will be left as they are"* — is implemented at `inpainting.py:89` as `thickness <= i_conf.min_inpainting_radius`, i.e. with a **different key**.
+
+   (b) **Wiring it as upstream's evident intent is REFUSED, and the reason is decisive rather than cautious.** Which direction the fix moves eligibility depends on which of upstream's two disagreeing default sets you read. `config.py`'s dataclass defaults are `min_inpainting_radius = 7`, `inpainting_max_mask_radius = 6` (`:819-820`) — wiring would *narrow* eligibility. `media/default.conf` ships `inpainting_max_mask_radius = 6` (`:265`) and `min_inpainting_radius = 5` (`:269`) — wiring would *widen* it. A change to the feature's eligibility filter whose sign depends on which upstream file you opened is not "evident intent". (`media/default.conf` is read by **zero** Python files in the tarball — `grep -rn "default\.conf" --include=*.py` returns nothing — so `config.py`'s dataclass defaults are the runtime authority and the values in item 13 come from there. The other file is documentation, in the same `media/` directory §15 item 2 already discounted for the `demo_bubbles` fixtures.)
+
+   (c) **Omitting the key is also refused**, because the cost lands on a later task rather than this one: §16.23 item 1 ships legacy INI import at v1.5, and §6 makes an unknown key a `WARN` that is preserved on round-trip — so omitting it means importing a perfectly valid upstream profile emits a spurious warning.
+
+   (d) **Ruled: parse it, validate it, default it to `6`, and never read it in the eligibility filter, which uses `min_inpainting_radius` exactly as `inpainting.py:89` does.** That half is exact parity and is *not* a deviation. What L4 owes is a gate that keeps it inert: a test asserting that two runs differing only in `inpainting_max_mask_radius` select the identical eligible-region set. A comment saying "unused" enforces nothing.
+
+   (e) **DEVIATION(26) is the WARN, not the key.** `pc-config` emits a one-time `WARN` when a loaded profile sets `inpainting_max_mask_radius` to a value other than the default, naming `min_inpainting_radius` as the key that actually gates and stating that the key is inert upstream too. Ground: §14 item 7's rule that *"an opt-in setting must not silently behave differently"* — a user who tunes a knob and gets no effect is exactly that case. Bounded deliberately: no WARN at the default value, so a user who never touched it sees nothing. The machinery already exists and is reused rather than built — `warn_colored_images_once` at `crates/pc-config/src/round_trip.rs:259`, with its message in `crates/pc-config/src/error.rs:45-67`. This is surface upstream does not have, which is why it is registered at §14 as item 26 rather than described as parity. **Cheapest thing to overturn in this entry:** if a reviewer prefers silence, delete clause (e) and keep (d); nothing else depends on it.
+
+8. **RULING — the ONNX session is constructed LAZILY and its outcome LATCHED, and this agrees with the architect's lean but not with the architect's stated ground. DEVIATION(27).**
+
+   (a) **Upstream's placement, measured.** `pcleaner/main.py:390-392` sets `skip_inpainting = True` when `inpainting_enabled` is false; `main.py:625-626` calls `md.ensure_inpainting_available(config)` and then constructs `ip.InpaintingModel(config)` **inside** the `if not skip_inpainting:` block at `:605` and **before** the per-page loop at `:642`. So upstream is *conditional on the flag* and *eager with respect to the page loop*.
+
+   (b) **The config flag alone does not force laziness — it forces conditionality, and conflating the two would be an over-claim.** `inpainting_enabled` defaults to `False` (`config.py:817`), and an eager-but-flag-gated construction would already avoid the 207 MB download for every default run. Said plainly so nobody cites the default-off flag as the reason for laziness.
+
+   (c) **The forcing ground is §16.19 item 1's, transferred, plus one that is stronger here.** §16.19 item 1 ratified lazy detector construction because *"a run whose `#raw.json` is cached never executes stage 1 and must not be blocked by a model it will never read"*; the same holds for a resumed run that never reaches `Step::Inpaint`. The stronger one is specific to this stage: a batch may have `inpainting_enabled = true` and **zero eligible regions on every page** — upstream's own `if boxes_to_inpaint:` guard at `inpainting.py:131` proves the empty case is expected, not pathological — and such a run must not pay a 207 MB download plus a ~6.3 s session build (item 1(f)) to inpaint nothing.
+
+   (d) **The latch is the same mechanism, for the same two reasons, and is not a new design.** One `OnceLock<Result<…, String>>` behind a double-checked `Mutex<()>`, storing the rendered message rather than the error, per §16.19 item 2 and 2(d). §16.19 item 2(a)'s cost argument applies unchanged at 207 MB, and 2(b)'s determinism argument applies verbatim: without the latch, two workers can render different text for one cause and stdout becomes scheduling-dependent, violating §5.7.
+
+   (e) **Why a new register item rather than widening DEVIATION(16).** Item 16's text is scoped to the detector — *"upstream constructs the detector before its per-image loop"*. Widening a ratified claim past the subject it names is a separate, argued step, per this file's own transcription rule; so the inpainter's placement deviation is registered at §14 as item 27 with its own text and its own `// DEVIATION(27)` site comment. This entry does **not** amend item 16, whose already-recorded stale sentence about a missing site comment is a separate pre-existing matter (§14 item 19 says so).
+
+9. **RULING — a missing or uninitializable inpainting model is RUN-FATAL. This agrees with the architect's conclusion and rejects the architect's ground.**
+
+   (a) **The ground offered — "the existing OCR provider is classified that way" — is not a valid one.** Cookbook rule **5** records *“‘We recovered poison elsewhere’ is never a reason”* (`docs/COOKBOOK.md:236` — inside rule 5, not rule 4; this spec carries its own copy of the same sentence in §16.19 item 10's grounds) and rule **4**'s own table states the signature test licences a provider to *declare* run-fatal, using "may". A precedent is not a derivation.
+
+   (b) **The valid part of the signature test.** Session construction takes no image, so it is image-independent by construction and §16.19 item 5(b)'s criterion permits the provider to declare its failures run-fatal. That licences the classification; it does not by itself choose it.
+
+   (c) **What actually decides it: per-image classification buys the user nothing here.** §5.1 states that on `Failed`, *"later stages for that image are **not** attempted"*. `Step::Inpaint` sits before `Step::Export` (item 11), so a per-image `Failed { step: Inpaint }` suppresses that page's export too. The outcome is the same zero exported files as run-fatal, at the cost of N error lines instead of one, N provisioning attempts instead of one, and exit 2 instead of 1. The UX argument the brief raised for per-image is therefore an argument for a *third* option, not for per-image.
+
+   (d) **That third option — fail open, WARN and export the non-inpainted result — is refused, on §16.22 item 5(c)'s ruling about exactly this shape.** There, an opt-in accelerator whose provisioning fails was ruled a rendered fatal refusal specifically to countermand a silent fallback, because *"a run reporting success while secretly executing at ~150 s/page is worse than a crash because it is invisible"* A run that reports success while silently not inpainting is the same failure in a different costume, and §14 item 7's *"an opt-in setting must not silently behave differently"* points the same way.
+
+   (e) **Upstream agrees, and this was checked rather than assumed.** `InpaintingModel.__init__` raises `FileNotFoundError` on a missing model (`inpainting.py:20-21`) at `main.py:626`, outside any per-page guard, and upstream's export block does not begin until after the inpainting block. So upstream too exports **nothing** when the inpainting model is absent. This ruling is upstream-faithful, not merely defensible.
+
+   (f) **The residual cost, stated plainly rather than minimised.** With `inpainting_enabled = true` and the model absent or unloadable, **zero** pages are exported and the exit code is 1. The remedy is provisioning, not a runtime fallback — §16.19 item 3's *“Retry” means the user re-running `panel-ocr models download`* applies unchanged. The blast radius is confined to users who explicitly set the flag, since it defaults to false.
+
+   (g) **The other half of the classification, declared because rule 4 says fatality is declared and not inferred.** A failure *inside* `Session::run` on a tile receives the image and is therefore **per-image**: `Failed { step: Inpaint }`, exit 2. One stage, two classifications, both declared here. No new `StageError` variant and no new `PipelineError` arm: construction failures render as `StageError::Model`, per-tile inference failures as `StageError::Inference`, matching §16.19 item 2(c)'s split.
+
+   (h) **This entry records no disagreement between the two Opus subagents.** Both rulings above reach the architect's conclusion. Item 8 and item 9(a) record that the *grounds* differ, which is deliberate: cookbook rule 14a records that this pipeline's defects cluster where everyone agreed and nobody checked, so an agreement whose grounds were never compared is worth less than one whose were. Nothing here routes to `fable-adjudicator`.
+
+10. **A transitive divergence neither plan flagged: the failed-box fill mask inherits DEVIATION(12).** Item 3(d) has upstream sampling failed boxes' masks from `_raw_mask.png`, which upstream writes as `mask_refined` — the output of `refine_mask` (`ctd_interface.py:182`). v1 ships `MaskRefineMode::Simple` instead (§14 item 12, §15 item 2), and cookbook rule 7 records the measured agreement of that artifact with upstream's as **IoU 0.258**. So for every `failed` region the filled area differs from upstream's *before any tiling happens*, and it would differ even if item 4's deviation did not exist. This gets no new register number — it is DEVIATION(12) propagating into a new consumer — but it must be stated at the fill-mask synthesis site, because a future parity investigation comparing our inpainted output against upstream's will otherwise attribute the whole difference to tiling.
+
+11. **`Step::Inpaint` lands between `Denoise` and `Export`; three frozen-test value corrections are PRE-AUTHORISED here; NO new `Output` variants are added.**
+
+    **SUPERSEDES: §2.8** — its preamble reads "Mirror upstream `output_structures.py` minus inpainting", and its `Step` literal has five variants.
+
+    (a) `pub enum Step { Detect = 1, Preprocess, Mask, Denoise, Inpaint, Export }`, so `Step::Export as i32` becomes **6** and `Step::Export.prev()` becomes `Some(Step::Inpaint)`. Upstream has the same stage (`ost.Step.inpainter`). Considered and rejected: giving `Inpaint` a discriminant above `Export` to preserve `Export == 5` — the derived `Ord` on a fieldless enum compares discriminants, so that would order `Export < Inpaint` and break §4.4's resume comparison, which is the one thing the ordering exists for.
+
+    (b) **The three frozen tests this turns red, each with its exact new value, so L6 does not discover them.** `crates/pc-core/tests/language_output_step.rs:42` (`assert_eq!(Step::Export as i32, 5)` → `6`); `:52` (`Step::Export.prev() == Some(Step::Denoise)` → `Some(Step::Inpaint)`); `crates/pc-export/tests/e3_run.rs:22` (same change). Adding `Step::Denoise < Step::Inpaint`, `Step::Inpaint < Step::Export` and `Step::Inpaint.prev() == Some(Step::Denoise)` alongside them is a frozen-test **addition**, cookbook rule 8 exit 1, and needs no authorisation.
+
+    (c) **Why these are corrections and not amendments, by rule 8's own test.** Rule 8 asks whether the corrected assertion claims *less about the system*: `== 6` claims exactly as much as `== 5`, and `Some(Inpaint)` exactly as much as `Some(Denoise)`. Same variant, same subject, and once clause (a) lands the changed value is the only one the field admits. They are forced — but forced *by this entry*, so they are authorised **here**, following the precedent §16.23 item 5 set for PERF-1's authorised frozen-test edit and §16.36 item 7 cited for GPU-2.
+
+    (d) **`pc_core::Output` gains nothing, and this upholds two ratified clauses rather than bending them.** §16.11 item 2 records *"Considered and rejected: adding export variants to `pc_core::Output`"* and §16.12 item 10 records *"`pc-core` is frozen and §2.8's variant list is closed."* Both stand. The two cache artifacts of item 3(i) get **pipeline-local suffix constants** in `pc-pipeline`, exactly as §16.12 item 10 did for `SPLITS_SUFFIX`: `"_inpainting.png"` and `"_clean_inpaint.png"`, upstream-verbatim. Consequences worth stating because they look like omissions: `Output::ALL.len() == 13` and `cache_suffixes_are_upstream_verbatim` stay green and unedited, and §2.8's non-surjectivity note is untouched.
+
+    (e) **Longest-first suffix matching (§16.12 item 9) must be re-checked, not assumed.** `_clean_inpaint.png` and `_clean.png` both end a stem, the same collision `_clean_denoised.png` already has; L6 owes a test that the new suffixes disambiguate under the existing longest-match rule.
+
+12. **The export seam.**
+
+    **SUPERSEDES: §12.2** — its `ExportSources` struct lists five fields and none is an inpainting artifact.
+
+    **SUPERSEDES: §12.3** — step 2's precedence reads "`cleaned: denoised > masked`; `mask: denoise_mask > final_mask`".
+
+    **SUPERSEDES: §16.11 item 3** — it pins that precedence "exactly" as `cleaned = if denoising_enabled { denoised.or(masked) } else { masked }`.
+
+    (a) `ExportSources` gains `inpainted: Option<ImageHandle>` (`_clean_inpaint.png`) and `inpainted_mask: Option<ImageHandle>` (`_inpainting.png`). Precedence becomes `cleaned = inpainted.or(<the existing expression>)` and `mask = inpainted_mask.or(<the existing expression>)`, matching upstream's stated `Precedence: masker < denoiser < inpainter` (`image_export.py:304`) and its ascending whitelists at `main.py:660-664` (cleaned) and `:665-669` (mask).
+
+    **SUPERSEDED IN PART by §16.38 item 22 — read it before citing the `mask =` half of (a) above.** The `mask = inpainted_mask.or(…)` expression describes a plain replacement; the branch it cites is a three-layer alpha composite. The `cleaned =` half of (a), and the whitelist citations, stand unchanged.
+
+    (b) **The stale-artifact rule of §12.3 step 2 extends with it, and must:** a populated `sources.inpainted` with `inpainting_enabled == false` (or `--skip-inpaint`) is a stale cached artifact and is ignored, exactly as a stale `denoised` is. Without this, disabling inpainting would silently resurrect a previous run's inpainted output.
+
+    (c) **No new `Output` variant is needed for the category map either.** §16.11 item 2's map already routes `MaskedOutput`/`DenoisedOutput` to `Category::Cleaned` and `FinalMask`/`DenoiseMask` to `Category::Mask`, and a default run therefore already requests both categories; the inpainted sources win *within* a category rather than requesting one.
+
+13. **The `[inpainter]` config surface — eight keys, transcribed from `config.py:817-824`.**
+
+    **SUPERSEDES: §6** — its preamble reads "v1 sections and defaults — **exactly** upstream's values (`config.py`), minus `[inpainter]` (v1.5) and minus GUI/post-action keys (v2)".
+
+    (a) `inpainting_enabled = false`, `inpainting_min_std_dev = 15.0`, `inpainting_max_mask_radius = 6`, `min_inpainting_radius = 7`, `max_inpainting_radius = 20`, `inpainting_radius_multiplier = 0.2`, `inpainting_isolation_radius = 5`, `inpainting_fade_radius = 4`. Every value is `config.py`'s dataclass default, which item 7(b) established is the runtime authority; the disagreeing values in `media/default.conf` are documentation and are not used.
+
+    (b) **Validation at config load, mirroring `config.py:917-932`'s `fix()` as errors rather than silent clamps** (the project's existing convention: `pc-config` rejects, upstream repairs) — `inpainting_min_std_dev >= 0`, **`inpainting_radius_multiplier >= 0.0`**, and each of the five `Pixels` keys `>= 0`, plus `max_inpainting_radius >= min_inpainting_radius`, which is upstream's own `:932` invariant. The multiplier is easy to omit from that list because it is the only non-`Pixels`, non-threshold key in the block, and omitting it would be a real gap rather than a tidiness one: upstream clamps it at `config.py:926-927`, and unlike `inpainting_max_mask_radius` it is **live** — it feeds item 3(e)'s `growth = min(min_inpainting_radius + int(deviation * multiplier), max_inpainting_radius)`, so a negative value drives `growth` below `min_inpainting_radius` and potentially negative, into a growth kernel whose `size` is unsigned. Caught by the step-1a fresh reader.
+
+    (c) **`inpainting_enabled = true` must load and validate successfully even in a build with no ONNX**, exactly as §16.36 item 6 ruled for `device = "cuda"`: config accepts, the stage refuses. Otherwise `--detector replay`/`mock` runs break for a model nothing in them ever reads.
+
+14. **The achromatic-output question — RESOLVED by measurement, not deferred, and the premise it was raised on is corrected.** The concern was that upstream's inpaint path skips the greyscale treatment `pc_mask::cleaned_image`'s `all_achromatic` branch applies (`crates/pc-mask/src/combine.rs:107-121`), leaving us inconsistent if we mirror upstream.
+
+    (a) **True of the cache artifact, false of the exported file.** Upstream's `_clean_inpaint.png` is indeed RGBA (`inpainting.py:149`, `:171`). But it is exported through `export_single_image(cache_path_gen.clean_inpaint, cleaned_out_path, original_image)` at `image_export.py:234-239` — with `original_image` supplied — so `save_optimized` captures `original.mode` at `:58` and converts at `:61-62`, which is **byte-for-byte the same treatment** the masked output gets at `:195-200` and the denoised output at `:211-216`. Upstream is not inconsistent at the export boundary.
+
+    (b) **Our own code already does the equivalent, independently of `pc-mask`.** `pc-export` reads the mode off the original file (`crates/pc-export/src/lib.rs:267`, `formats::read_color_mode`) and converts (`:188`, `convert_to_mode`), per §12.3 step 3 and §16.11 item 5. So no new decision is required and no schema change to `#mask_data.json` is required — which matters, because the alternative reading would have needed `median_color` persisted into `MaskRegionStats` to give `pc-inpaint` an `all_achromatic` signal, and that is a shared-format change with enumerated readers (cookbook rule 14).
+
+    (c) **What L6 owes instead is an obligation, not a decision:** `_clean_inpaint.png` must reach the user through the same `export_cleaned` seam and the same `original_mode` argument that `_clean.png` uses, pinned by a test on a greyscale input asserting the exported inpainted file's colour mode. `pc-inpaint` producing an RGB/RGBA cache artifact is upstream-faithful and creates no export-visible inconsistency.
+
+15. **§16.23 item 5's sequence is REVISED: LaMa moves ahead of GPU-2 and ahead of the INI-import + Lab-NLM batch.**
+
+    **SUPERSEDES: §16.23 item 5**
+
+    (a) **The sequence as ratified, quoted verbatim so the change is visible:** *"`V15-0` is this ratification pass (§16.21, §16.22, §16.23) and **lands before any v1.5 code**; then **PERF-1** …; then **F1** …; then **GPU-1** …; then **GPU-2** (the `cuda` feature and its guards); then §16.21 item 6's investigation, which may run any time after PERF-1; then legacy INI import and Lab NLM batched; then LaMa; then PSD; then **DBNet lines**, which change default detector output and therefore end with an F1 re-record and full re-sign, budgeted once, up front; then **Annotation** last."*
+
+    (b) **The amendment: LaMa may land immediately after GPU-1.** Everything before GPU-1 in that list is unchanged, and has landed on this branch's base — checked rather than assumed: §16.21, §16.22 and §16.23 exist as spec sections (V15-0); `docs/DETECTOR_ORACLE.md` and the tracked `tests/fixtures/recorded/detector/` set exist, including the committed upstream-oracle record (F1); and GPU-1 itself merged as §16.36 at `02b5613`, this branch's base commit. This entry reorders nothing before GPU-1. Annotation stays last. PSD and DBNet lines keep their relative order.
+
+    (c) **One correction to how the jump was described to this pass.** §16.21 item 6 was *not* jumped: item 5's own text places it "any time after PERF-1", so it is not an ordering constraint at all. The real content of this amendment is LaMa moving ahead of **GPU-2** and ahead of the **INI-import + Lab-NLM batch**.
+
+    (d) **Grantable, and the argument is a dependency check rather than a convenience.** LaMa depends on GPU-1, not GPU-2: §16.22 item 5(f) already states *"the device policy resolver is model-agnostic, so v1.5's LaMa inpainting reuses it instead of growing a second one"*, and GPU-1 shipped that resolver (§16.36 item 2). Nothing in item 5's LaMa placement is justified by GPU-2, INI import or Lab NLM, and no clause makes any of them a prerequisite.
+
+    (e) **The load-bearing half: LaMa implies no fixture re-record.** `inpainting_enabled` defaults to `false` (`config.py:817`, item 13(a)), so no default-path artifact changes and no committed fixture moves. That is what distinguishes it from DBNet lines, for which item 5 budgets an F1 re-record and full re-sign explicitly. §16.23 item 2's four grounds for keeping Annotation last are untouched — none of them mentions inpainting — and item 4's re-ratification gate on §14 item 17 is likewise untouched, since LaMa synthesises no DBNet lines.
+
+    (f) **What this amendment does NOT grant.** It does not reorder PSD, DBNet lines or Annotation; it does not defer GPU-2, INI import or Lab NLM, all of which remain in v1.5 scope per §16.23 item 1; and it does not license any further reordering by analogy — the next one needs its own clause.
+
+16. **Task sequencing, with the `heavy`/`simple` classification `CLAUDE.md`'s batching rule requires.** L0 is the spike already executed; its findings are items 1–2 and it is not a Codex task.
+
+    (a) **L1 — hoist the morphology into `pc_imageops::morph` (heavy, its own call).** Prerequisite, not cleanup: a third verbatim copy of `kernel`/`dilate` in `pc-inpaint` is not acceptable, and §16.10 item 2 already scheduled the hoist as the "v1.5 consolidation ticket". `pc_mask::grow` and `pc_denoise::morph` become re-exports. **Acceptance gate, stated as a set rather than as "tests pass":** the existing frozen kernel-matrix tests in `crates/pc-mask/tests/` and `crates/pc-denoise/tests/` must be green **and unedited** — `git diff --stat` over those two directories must be empty at the end of the task. A behaviour-preserving move that needed a test edit was not behaviour-preserving.
+
+    **SUPERSEDES: §16.9 item 2** — it places `grow.rs` in `pc-mask` on the ground that the kernels are masking policy, and gives `pc-imageops` "exactly one new module, `mask.rs`". Its `pc-imageops` "no `pc-config` dependency" property is **not** touched by this entry and must survive the hoist.
+
+    **SUPERSEDES: §16.10 item 2** — it describes `pc_denoise::morph::{kernel, dilate}` as "a verbatim restatement" of `pc_mask::grow`'s and pins a frozen test "so the two copies cannot drift silently"; after the hoist there is one implementation and no second copy.
+
+    (b) **L2 + L3 (simple, one sequential Codex call).** L2 is the `[inpainter]` config surface of item 13. L3 is the `pc_models` registry entry of item 6 — **blocked on decision point D1**, so if D1 is unresolved when this call is made, L2 ships alone. Land L2's `default_profile.toml` edit **sequentially** with respect to any other branch's config-surface edit, for the reason §16.35 item 9 and §16.36 item 8 both give: `table_registry_matches_default_document` compares the whole registry against the whole document.
+
+    (c) **L4 — `pc-inpaint`'s pure geometry and mask pipeline, with no ONNX at all (heavy, its own call).** Eligibility filter (item 3(c)), the two fill-mask sources (3(d)), the growth arithmetic (3(e)), the page-global fill and isolation masks (3(f)), the tile cover (item 5(b)–(e)) and the compositing (3(h)). All of it behind an `Inpainter` trait whose test double returns a fixed tile, so **every test in L4 runs in the default no-`onnx` tier** — the tier cookbook rule 6 records as the one that actually executes. This is where the bulk of the frozen tests live.
+
+    (d) **L5 — the ONNX session behind the `onnx` feature (heavy, its own call).** `ort` session construction through `pc_core::device::resolve` (§16.36 item 2, no second policy surface), the lazy `OnceLock` latch of item 8, the run-fatal declaration of item 9, NCHW tensor construction for two separate inputs (item 1(b)), and **runtime** output-shape validation per item 1(c).
+
+    (e) **L6 — pipeline and export wiring (heavy, its own call, depends on L1–L5).** `Step::Inpaint` and the three pre-authorised frozen-test corrections (item 11(b)), the pipeline-local cache suffixes (11(d)) and their longest-match check (11(e)), `ExportSources` and precedence (item 12), the stale-artifact rule (12(b)), the greyscale export obligation (item 14(c)), and a `--skip-inpaint` flag matching the existing `--skip-denoise` shape.
+
+    (f) **Verify the flag actually reaches the stage before calling L6 done**, for the reason §16.36 item 6 gives for `device`: a test that never observes a non-default `inpainting_enabled` because the plumbing dropped it silently would pass while the feature does nothing.
+
+17. **Named decision points. These were recorded as OPEN, not resolved by this entry as first written.** D1 has since been resolved and its ruling is transcribed at **item 19 below**, added to this entry rather than as a new section; D2 and D4 remain open, and D3's own clause (c) already reads "Ruled by this entry", which contradicts this preamble's blanket wording and is left as written rather than silently reinterpreted here.
+
+    (a) **D1 — RESOLVED by item 19 below; read that item before citing this one, whose options list and recommendation it replaces.** The paragraph that follows is kept verbatim as the record of the question **as it stood at ratification**, and its enumeration of `pc_models::ALL`'s use sites is now **stale — do not cite it as current**. What L3 changed, re-derived 2026-08-06 with `grep -rn "pc_models::ALL" --include=*.rs .`: `models download` and `models verify` now iterate `pc_models::selected(include_optional)` instead, so `models path` is the **only** remaining `ALL` site in `crates/pc-cli/src/lib.rs` (**1** hit, `:308`, not the three below); and `crates/pc-models/tests/d1_resolve.rs` now holds **6** occurrences — five inside four tests (`:143`, `:202`, `:276`, `:282`, `:298`) plus one in the `names_at` helper (`:21`), which is itself called exactly twice, both calls inside the single test `the_required_optional_partition_is_pinned_by_name` (`:118-151`) — not "three … in two tests". The sentence below that "no frozen assertion … pins the model count" is likewise stale: `:143` now asserts `pc_models::ALL.len() == 4` as **the test's own anti-vacuity literal**, additional to what item 19(f) itself requires — 19(f) mandates the partition be asserted "as **sets of names** rather than counts — cardinality is not identity", and does not call for a bare total-count assertion; `:141-142`'s own comment states the literal's purpose ("a hard-coded total that cannot be computed from the registry"). So the count *is* pinned, and changing the registry's size is now a deliberate frozen-test question rather than a free edit. **D1 — `pc_models::ALL` and the 207 MB question. Needs the user or a joint-architect ruling, because it changes shipped CLI behaviour.** `pc_models::ALL` is iterated unconditionally at three sites, all in `crates/pc-cli/src/lib.rs` — `:263` (`models download`), `:279` (`models verify`), `:335` (`models path`) — and at three more in the frozen `crates/pc-models/tests/d1_resolve.rs` (`:128`, `:134`, `:150`). That is the complete enumeration; the count per file was taken with `grep -rn "pc_models::ALL" --include=*.rs . | awk -F: '{print $1}' | sort | uniq -c`, which reports `3` and `3`, so a truncated read would be visible as a wrong number (cookbook rule 14). Adding the inpainting spec to `ALL` grows every user's `models download` by 207,482,644 bytes for a feature that defaults off, and adds a row to `models verify` and `models path`. Options: **(i) accept**; **(ii) partition** — `ALL` keeps the required three, a new `OPTIONAL` slice holds the inpainting spec, `models download` gains an opt-in flag, and `verify`/`path` report an absent optional model as a distinct non-failing state (note `models verify` currently sets `all_ok = false` on any `Missing` and returns `EXIT_FATAL`, so this state must be added deliberately or verify starts failing for everyone); **(iii) a selector flag** on `models download` only. Recommendation: **(ii)**. Not decided here. Mechanically, no frozen assertion in `crates/pc-models/tests/d1_resolve.rs` pins the model count, so all three options are reachable without a frozen-test edit — its three `pc_models::ALL` use sites sit in **two** tests (lines 128 and 134 in `all_lists_every_model_the_cli_can_manage`, line 150 in `every_declared_digest_is_lowercase_hex_of_the_right_length`) and assert detector reachability, file-name uniqueness and digest form, never a cardinality.
+
+    (b) **D2 — per-tile visual quality against upstream's full-page call.** Item 5 declares a policy that is deterministic and testable; it says nothing about how the result looks, and item 2 records that no quality measurement exists. Closing this needs a side-by-side run of upstream and of this port on a real page with a human verdict, which no task above performs, and which §15.10(a)'s independence rule would govern. **Until then, no clause anywhere may claim visual parity with upstream's inpainting.** Not a blocker for landing L1–L6.
+
+    (c) **D3 — whether the `inpainting_max_mask_radius` WARN of item 7(e) is wanted.** Ruled by this entry, flagged because it is the one place here that adds surface upstream lacks, and because deleting it costs nothing else (item 7(e)).
+
+    (d) **D4 — THREE independent collisions with the sibling branch, not one.** Both branches fork from `02b5613`, so each numbered its additions against the same base and each must be reconciled at the merge. **(i) The §-section number**, handled by this entry's numbering note: this is §16.38 because `mask-parity`'s committed `1b4e12f` holds §16.37. **(ii) The §14 DEVIATION register number.** §14 ended at items `…19, 21, 22` on the shared base (20 deliberately unused), so both branches' next free number looked like 23, and `mask-parity`'s `1b4e12f` **already claims `DEVIATION(23)`** for `get_topk_color`'s histogram tie order — an unrelated deviation with its own site comment. This entry therefore takes **24-27**, which was verified free by reading that branch's own §14 **as it stood at transcription time** (it then claimed 21, 22, 23 and nothing above). **THAT VERIFICATION WENT FALSE, AND THE COLLISION ON 24 IS NOW RESOLVED BY RULING — collision re-measured 2026-08-07, ruling the same day.** The sibling `mask-parity` branch minted its **own, unrelated `DEVIATION(24)`** — an Otsu tie rule, in its commit `70a617c` (`2026-08-07T00:23:14+07:00`), about five minutes after this branch's `534734e` — with its own site comments (`crates/pc-detect/src/annotate.rs:410` and `:449`, plus `crates/pc-detect/tests/a2_annotate_otsu.rs:50`, measured with `git grep -n "DEVIATION(24)" mask-parity -- '*.rs'`), so `git show mask-parity:docs/PIPELINE_SPEC_V1.md | grep -o "DEVIATION(2[0-9])" | sort -u` reported **21, 22, 23 and 24**. **Why there was a collision at all, stated as cause rather than as coincidence:** `mask-parity` minted its own 24 independently, without checking this branch's prior reservation of the 24-27 range — this was not two branches racing for the same next-free number in the same minute. **THE RULING (architect, 2026-08-07): `mask-parity` renumbers its Otsu tie rule to `DEVIATION(29)`, together with its site comments; this branch's `DEVIATION(24)` — per-tile inference, §14 item 24 — stays at 24 and required no change on this side.** The ground is timestamp precedence, measured on the commits rather than argued from which branch matters more: this branch's reservation of 24-27 landed in `ee7cb60` at `2026-08-06T16:47:04+07:00`, and `mask-parity`'s mint landed in `70a617c` at `2026-08-07T00:23:14+07:00`, **7 hours 36 minutes later** (the ruling states the gap as "7.5 hours"; the exact delta is 7h36m10s and is the same measurement, quoted here in both forms so neither reading looks like a correction of the other). The reservation was readable on the sibling branch's own base for most of a working day before the number was minted a second time. **Decided is not the same as landed, and the two halves are kept apart here deliberately** — that separation is the whole lesson of the "28 is confirmed free on both branches" clause below. The *decision* is settled and needs nothing further from this branch. The *sibling-side edit* is a separate dispatch on the other worktree and, measured from this worktree at `f517aa8`, is **not yet observable here**: `git show mask-parity:docs/PIPELINE_SPEC_V1.md | grep -o "DEVIATION(2[0-9])" | sort -u` still reports **21, 22, 23 and 24**, and `git grep -n "DEVIATION(24)" mask-parity -- '*.rs'` still returns Otsu sites — **four** of them at branch tip `dacd666`, not the three the mint commit carried, and the difference is stated rather than folded in because the renumber has one more site to move than the enumeration above implies. The three named above are unchanged (`crates/pc-detect/src/annotate.rs:410`, `:449`, `crates/pc-detect/tests/a2_annotate_otsu.rs:50`); the fourth is `crates/pc-detect/src/annotate_merge.rs:56`, a **prose cross-reference** rather than a site comment (*"the `DEVIATION(24)` precedent: match what upstream"*), added after the mint by that branch's A3 commit `dacd666` and therefore absent from the `70a617c` measurement above — both readings are correct at the commit each names. It nonetheless **names 24 and so must move to 29 with the rest** when the sibling-side renumber lands: it cites the deviation for its precedent value, so leaving it at 24 would point a reader of `mask-parity` at this branch's per-tile-inference entry. Re-measure before that renumber is dispatched, since a later sibling commit may add more mentions the same way this one did. So a reader who follows a `// DEVIATION(24)` comment on `mask-parity` to §14 item 24 on this branch still lands on an unrelated deviation until that dispatch lands and is fetched here — the hazard is scheduled for removal, not yet removed, and this clause does not claim the tree already shows otherwise. Stated per-number rather than summarised, because a summary is what went stale here: **24 is ruled to this branch**, and becomes held on exactly one side once the sibling's renumber lands; **29 is the number `mask-parity`'s Otsu tie rule moves to**, so any cross-branch reference to that deviation reads 29 and not 24; **25, 26 and 27** were absent from `mask-parity` at the measurement above and remain free; **no collision on 28**: the sibling branch is measured clean (`git show mask-parity:docs/PIPELINE_SPEC_V1.md | grep -c "DEVIATION(28)"` returns `0`), and **this branch itself takes 28** — §14 item 28, registered by item 21 of this entry — so 28 is claimed on exactly one side, which is what makes it non-colliding rather than free. (This clause read "28 is confirmed free on both branches" while item 21 of this very entry was claiming it, which was false the moment that item landed; item 21(e) below already states the same number in the correct tense, and this is worded to match it.) **This still must be reconciled before the two branches merge**, and the ruling above names the form: `mask-parity`'s §14 entry moves to 29 together with its site comments, and nothing on this side moves. This clause previously read *"Which side renumbers is deliberately NOT decided here"*, and that sentence is quoted rather than deleted so a reader arriving from an older copy can see exactly which open question closed — the decision closed; what remains open is only the sibling's edit, which is a fact about that worktree and not about this one. The earlier 23-collision was found by the step-1a fresh reader, not by this pass: the first transcription assigned 23-26 and would have merged into two different `DEVIATION(23)`s with two `// DEVIATION(23)` comments pointing at unrelated code. §16.35 item 9 and §16.36 item 8 already handled exactly this hazard by pre-assigning numbers across parallel branches, and naming only the section number was a narrower reading of their precedent than the precedent supports. **(iii) `RATIFIED_SUPERSESSIONS` and `EXPECTED_PARSED_CLAIMS`** in `crates/pc-testkit/tests/spec_supersession.rs`: each branch raised the count against the shared base, so the merge must contain both branches' rows and the sum, not either branch's number. Any future parallel branch owes the same three-part check before it picks any number.
+
+18. **What this entry does NOT do, listed so absences are not read as oversights.**
+
+    (a) **It does not supersede §16's out-of-scope inpainting bullet.** That bullet already assigns inpainting, `InpainterConfig`, `_inpainting.png` and `_clean_inpaint.png` to **v1.5**, and this is v1.5, so landing them discharges the bullet rather than contradicting it. The precedent is §16.36, which landed GPU-1 without touching §16's CUDA bullet; §16.33 marked §16's Windows bullet only because that bullet's *version* claim changed.
+
+    (b) **It does not extend §5.3's fatal list.** Item 9's run-fatal outcome falls under §5.3's existing *"model file missing or hash mismatch (and download unavailable)"*, so no new fatal condition is declared and §16.19 item 1(c) needs no companion.
+
+    (c) **It does not modify `pc-mask`.** Item 3(b) is the reason: everything the stage reads is already persisted in `#mask_data.json` and `#clean.json`.
+
+    (d) **It does not touch `pc_core::Output`, `Output::ALL`, or §2.8's non-surjectivity note** (item 11(d)), and it does not change any on-disk schema — `Step`'s serde form is `rename_all = "snake_case"`, so the wire value is the variant name and the renumbered discriminant is not serialised.
+
+    (e) **It ratifies no benchmark number beyond item 1(f)**, and item 2 names the numbers that must not reappear.
+
+19. **D1 — RESOLVED: `ALL` stays complete, optionality is a mandatory field, and `--include-optional` is a visible flag on BOTH `models download` and `models verify`** (independent joint architect + Senior Rust Engineer pass, mechanism decided by Fable tie-break, 2026-08-06). This item resolves the decision item 17(a) recorded as OPEN, and it is the one clause of §16.38 that changes shipped CLI surface.
+
+    **SUPERSEDES: §13.1** — its `models` usage line reads `panel-ocr models   download|verify|path`, with no flag on any of the three.
+
+    (a) **`pc_models::ALL` stays the COMPLETE registry.** Item 17(a)'s own option (ii) sketched shrinking `ALL` to the required three and adding a separate `OPTIONAL` slice; that sketch is **rejected**. `ALL` is what `models path` iterates and what any future consumer will reach for first, and a registry that omits a model the application can manage is a trap for exactly the reader who trusts its name. Callers scope their own iteration instead.
+
+    (b) **`models download` without the flag fetches only `Required` models; with `--include-optional`, `Required` + `Optional`.** `models verify` scopes its reported rows the same way. `models path` is **unchanged** — it already lists every entry with `EXIT_OK` unconditionally, which is the behaviour this item wants there. The flag is **visible**, unlike `--cache-dir`'s `hide = true` (§16.12 item 21): that one is a testing affordance, this one is a decision a user makes.
+
+    **RULING (Orchestrator, 2026-08-06), recorded as a named tradeoff rather than left to be re-litigated: `models verify` scoping its rows the same way `download` does is DELIBERATE, and it stands as implemented.** The step-1a fresh reader measured the cost and it is real, so it is stated and not softened: **without** `--include-optional` an `Optional` model's row does not appear at all, so a *corrupted-but-present* optional artifact — digest or size mismatch — is **invisible** to a plain `models verify`, which exits `0`; only `models verify --include-optional` observes it (or its `NOT INSTALLED (optional)` state). The alternative reading — `verify` always reporting all four rows while only `download` scopes — was considered and **rejected**, on two grounds. **(1)** Plain `models verify`'s default output stays byte-identical to pre-L3 behaviour (see the carve-out below), which was an explicit design goal of this item: `models verify` is a CI preflight (clause (d)'s own reason for locking the `Required`-absent failure), and existing users' preflight checks must not regress or gain rows. **(2)** The residual risk is low-severity **because it cannot reach output**: L5's inpainter runtime path must independently verify the LaMa artifact's integrity before use, regardless of what `models verify` last reported, so a corrupt optional model yields a run-fatal refusal at the stage rather than corrupted inpainting — what goes undetected is a *stale preflight signal for a feature the user has not enabled*, not silently wrong pixels. A future reader who wants the other behaviour is changing a decision, not fixing an oversight.
+
+    **The one carve-out on "byte-identical", stated because the claim above would otherwise be an over-claim.** One reachable path did change: previously an `fs::metadata` failure on a *present* cached file aborted the whole subcommand through `anyhow`'s `with_context` (`crates/pc-cli/src/lib.rs`, pre-L3), leaving every model after it unreported; it now renders an `ERROR` row for that model and continues to the rest, with the exit code still `1` because `VerifyStatus::Error` is a failure. That is a **minor and arguably improved** behaviour change, not a regression — no row disappears and no failure becomes a success — and it is the only one: `resolve` with a `None` override cannot return `Err`, so `fs::metadata` was the only abort the old loop could actually take.
+
+    (c) **A skipped optional model is NAMED, never silently skipped.** `models download` prints one line per omitted optional model, naming the model and the flag that would fetch it. Ground: a user who has enabled `inpainting_enabled` and run `models download` must not be left inferring why the stage still refuses.
+
+    (d) **`models verify`'s four outcomes, stated as a table because getting one of them wrong is how this change breaks.** A `Required` model that is absent is **still a failure** — it still clears `all_ok` and still exits `EXIT_FATAL` — and that is the regression this item's frozen tests lock, because `models verify` is used as a CI preflight and a weakened version of it would start passing with no detector weights present. An `Optional` model that is absent is a **new, non-failing status**, and its label must **not** contain the literal string `MISSING`, so a script grepping that word cannot confuse the two. An `Optional` model that is **present and fails** its digest or size check **is still a failure**, regardless of optionality: optionality licenses **absence only, never corruption**. A `Required` model that verifies clean is unchanged.
+
+    (e) **Mechanism, decided by the Fable tie-break and binding: a mandatory two-variant field on `ModelSpec`** — `pub enum Requirement { Required, Optional }`, with **no `Default` impl**, so every construction site must state the answer and a new model cannot silently inherit "required". A derived `OPTIONAL`/`REQUIRED` slice and an `is_optional()` predicate were both **explicitly rejected**: either lets a new registry entry be added without anyone deciding, which is the failure mode the field exists to prevent. The ruling **pre-authorises** the one-line consequential edit to the frozen `FAKE_SPEC` helper at `crates/pc-models/tests/common/mod.rs` (marked `Required`, matching its doc comment describing it as a stand-in for `COMIC_TEXT_DETECTOR`): it is compile-forced, it changes no assertion, and it is therefore not a unilateral test edit under cookbook rule 8.
+
+    (f) **A frozen test pinning the partition BY NAME is a condition of this ruling, not an optional extra** (Fable's "graft"). `crates/pc-models/tests/d1_resolve.rs` must assert that `COMIC_TEXT_DETECTOR`, `MANGA_OCR_ENCODER` and `MANGA_OCR_DECODER` are `Required` and the LaMa entry is `Optional`, as **sets of names** rather than counts — cardinality is not identity, and a swap between the two partitions keeps every count while silently changing what a default `models download` fetches.
+
+    (g) **An optional-aware refusal hint is added now, unwired.** The existing hint hard-codes `panel-ocr models download` (`pc-models/src/lib.rs`'s `ModelError::Unavailable`, and `pc_cli::models::models_download_command`); a sibling helper naming `--include-optional` lands with this item so L5 can call it when the inpainter refuses on a missing LaMa artifact. `ModelError::Unavailable`'s own text is **not** changed: a required model's refusal must never suggest a flag that fetches 207 MB the user did not ask for.
+
+    (h) **What this item does NOT do.** It does not add a size/`ProgressSink` policy of any kind for the larger artifact; it does not make `inpainting_enabled = true` imply the flag (config load stays independent of provisioning, per item 13(c)); and it does not resolve D2 or D4.
+
+20. **L4 also hoists the separable Gaussian blur into `pc_imageops::gaussian` (part of L4's own heavy call, not a separate task)** — independent joint architect + Senior Rust Engineer review, Fable tie-break on the sibling deviation question, 2026-08-07. This item is to `gaussian` exactly what item 16(a) is to `kernel`/`dilate`, and is written in the same form deliberately.
+
+    (a) **The task.** `crates/pc-denoise/src/gaussian.rs` moves to `crates/pc-imageops/src/gaussian.rs`, **body unchanged**, and `pc_denoise::gaussian` becomes a re-export of it. Nothing else moves.
+
+    **Ground.** Prerequisite, not cleanup, on the same reasoning item 16(a) gives for the morphology: `pc-inpaint` needs this blur for `inpainting_fade_radius` (item 3(h), porting `image_ops.py:820-830`'s `fade_mask_edges`), §1 rule 2 forbids the stage-to-stage dependency that would let it reach `pc-denoise`, and a second verbatim copy of the taps-and-two-passes arithmetic is not acceptable. §16.10 item 1 already scheduled this move in its own closing clause, quoted verbatim so its scope travels with it: *"Both stay `pub` (`pc_denoise::nlm`, `pc_denoise::gaussian`) and free of any `pc-config` dependency, so §11.1's "independently benchmarkable" property is preserved and a v1.5 hoist into `pc-imageops` is a mechanical move plus a re-export."* The `pc-imageops` "no `pc-config` dependency" property that item 16(a) protects is likewise **not** touched here and must survive this hoist.
+
+    **Acceptance gate, stated as a set rather than as "tests pass":** the frozen `crates/pc-denoise/tests/n2_gaussian.rs` must be green **and unedited** — `git diff --stat` over `crates/pc-denoise/tests` must be empty at the end of the task. **Measured, not asserted:** that command produced empty output on the L4 working tree at the time this entry was written, with `git status --porcelain` over the same directory likewise empty. A behaviour-preserving move that needed a test edit was not behaviour-preserving.
+
+    **SUPERSEDES: §16.10 item 1** — it places `nlm` **and** `gaussian` in `pc-denoise` on the ground that `pc-imageops` was frozen at the end of Stage 3 and neither module had a second consumer in v1.
+
+    (b) **The supersession is SCOPED TO `gaussian` ALONE, and the scope is the load-bearing half of this item.** `nlm` stays in `pc-denoise`: it still has exactly one consumer, so the whole ground §16.10 item 1 gives still holds for it, and **this entry is not authority for hoisting it**. Both reviewers raised the same objection independently — an unscoped in-part marker would let a future reader hoist `nlm` on this entry's authority, which is precisely the widening §16.38 item 8(e) declined for `DEVIATION(16)` and which this file's own transcription rule forbids as a separate, argued step. The back-pointer at §16.10 item 1 therefore states the `gaussian`-only scope at the target site too, where a reader who never reaches this entry will land.
+
+    (c) **Two further targets, found by the architect and independently confirmed by the Senior Rust Engineer, handled ASYMMETRICALLY because the two cases are not the same shape.**
+
+    **SUPERSEDES: §13** — its row 14 attributes "Gaussian blur" to `pc-denoise`, which stops being true of the module's home at v1.5. The annotation is inline in the row, following row 30's precedent for a stale cell (§16.19's convention: original wording kept, note appended), and it names the one clause affected rather than the row: the noise-mask build, `run()`, the 1-bit shortcut and the analytics are all still `pc-denoise`, and row 15's `nlm` is untouched. As with §16.30's `13` row, this is a bare-section target under ratified §16.26 item 3(c) leniency — §13's rows live in a markdown table and carry no `^N. ` item marker — so the gate accepts a back-pointer anywhere in §13 and the row-level precision of the annotation is a convention `RATIFIED_SUPERSESSIONS` cannot enforce.
+
+    **§11.5's N2 row gets a NOTE and deliberately NO marker.** That row reads "`pc-imageops`: separable Gaussian blur", which §16.10 item 1 contradicted for v1 and which this hoist makes accurate again. A restoration is not a supersession — there is nothing left stale at that site to warn a reader about — so a marker there would claim the wrong relation, and the note says which of the two it is. **Disclosed rather than discovered later:** because there is no marker, nothing in `crates/pc-testkit/tests/spec_supersession.rs` gates that note's existence, and deleting it would leave the suite green. That is the same class of unenforced-placement gap the `("16.38", "6")` row in that file already documents, accepted for the same reason: the alternative is a marker asserting a relation that does not hold. §11.5's N1 row is left alone and stays inaccurate for `nlm`, exactly as §16.10 item 1 left it.
+
+    (d) **`DEVIATION(6)` now reaches a SECOND consumer, with NO new register number.** Upstream's `fade_mask_edges` calls `ImageFilter.GaussianBlur(radius)` (`image_ops.py:820-830`) — the *same* upstream call §14 item 6 already registers for the noise fade — so `pc-inpaint`'s fade inherits the existing divergence (PIL's three-pass box approximation versus this project's true separable Gaussian, `sigma = radius`, truncated at `3*sigma`, pinned by §16.10 item 12). This is item 10's propagation shape exactly: one upstream call, one existing register entry, a new caller. Contrast §14 item 28, registered by item 21 below, which does **not** take this treatment — a different upstream call with a mechanism §14 item 5 never describes needs its own number, and that asymmetry is the point of stating this one. The note is owed at the call site and **exists**, at `crates/pc-inpaint/src/fade.rs` on `fade_fill_mask`, together with the fact that the "a few levels on a soft edge" figure — which is **§11.3 step 5's** wording, not §14 item 6's; item 6 is one sentence about the box-approximation-versus-true-Gaussian choice and contains no such phrase — was stated at `noise_fade_radius = 1` and that **nothing has measured the difference at the inpainting default `inpainting_fade_radius = 4`**, where the kernel is wider. The un-measured half is stated, not inherited silently.
+
+    (e) **What this item does NOT do.** It does not hoist `nlm` (clause (b)); it does not touch the composite duplication (`blend_channel`, `resize_nearest_rgba`, `alpha_composite_over`, `composite_rgb`) that §16.10 item 3 pins across `pc-mask`/`pc-denoise` and that `pc-inpaint` now also needs — that consolidation is tracked as its own task and this entry is not authority for it; and it does not change the blur's arithmetic, its border rule, or `pc_denoise::gaussian`'s public path.
+
+21. **RULING (Fable tie-break, 2026-08-07) — the combined fill mask's alpha binarisation gets its OWN register number, `DEVIATION(28)`. It is NOT `DEVIATION(5)` reaching a new consumer.** Item 3(d) declares only that the fill mask is "cropped to the box" and is silent on how the RGBA combined mask becomes binary; `crates/pc-inpaint/src/fill.rs`'s `combined_fill_binary` escalated the question rather than settling it, which is what this item answers. The architect read it as item 5 propagating (item 10's shape); the Senior Rust Engineer read it as a distinct divergence; Fable ruled for the second reading.
+
+    (a) **What v1.5 does.** `combined_fill_binary` takes coverage from **alpha** — `pixel[3] > 0` — on the RGBA `_combined_mask.png`. Upstream binarises the same image with `mask_image.convert("1")` at `pcleaner/inpainting.py:63`. The input really is RGBA and not greyscale: upstream builds it through `combine_best_masks` / `convert_mask_to_rgba`, so the fill colour and its opacity are both carried. PIL's `convert("1")` routes through `L`, i.e. the luma of the RGB channels, and **alpha is discarded** — so a black opaque fill `(0,0,0,255)` reads as *uncovered*, and on the `black_bubble` demo page — a demo fixture, not a profile — every poorly-fitted region silently gets nothing inpainted.
+
+    (b) **Why this is a DIFFERENT deviation and not item 5's, stated as the two facts that separate them.** **(i) A different upstream call site.** §14 item 5 is registered against `denoiser.py:62`'s path into `grow_mask`, whose discard happens at `mask.convert("L")`; this is `inpainting.py:63`'s `mask_image.convert("1")`, a different call in a different file feeding a different stage. Item 10's propagation shape applies when one upstream call acquires a second caller — the shape §16.38 item 20(d) uses for `DEVIATION(6)`, where the call is `ImageFilter.GaussianBlur` in both places. That is not this case. **(ii) A mechanism item 5 never describes: dithering.** `convert("1")` does not threshold; PIL's documented default for mode `"1"` is Floyd-Steinberg error diffusion, so on the *intermediate* luma values a real anti-aliased or coloured fill produces, the output is a stippled checkerboard rather than a clean bilevel cut. §14 item 5's text describes luma-versus-alpha and nothing else, so an item-5-propagation framing would leave the dithering unrecorded at the only site where it exists. **This also forecloses one of the two options that were on the table:** "replicate upstream verbatim, bug included" is not a one-line change to a threshold — it would require porting Floyd-Steinberg error diffusion — and it is therefore rejected on cost as well as on correctness.
+
+    **Provenance, stated rather than implied.** Clauses (a) and (b)(ii) transcribe findings the architect and the Senior Rust Engineer each reached independently against upstream; PIL's Floyd-Steinberg default for mode `"1"` is that library's documented behaviour. This transcription did **not** re-run upstream — the tie-break oracle was exercised by the reviewers, not by the transcriber — and a pinned-checkout re-measurement of the stippling on a real `black_bubble` page is owed before anyone cites a *magnitude* here. What is claimed is the mechanism's existence, not a measured pixel difference.
+
+    (c) **Why a new register item rather than widening §14 item 5, following §16.38 item 8(e)'s precedent exactly.** Item 5's text is scoped to the denoiser's cutout — it names `denoiser.py:62`, `generate_noise_mask` and `grow_mask` — and widening a ratified claim past the subject it names is a separate, argued step, per this file's own transcription rule. So the inpainting binarisation is registered at §14 as item 28, with its own text and its own `// DEVIATION(28)` site comment. This entry does **not** rewrite item 5, and item 5's own scope is unchanged by it. What the two share is the **ground**, quoted verbatim from §14 item 5 so its wording travels with it: *"A mask's 'is this pixel covered' signal must not depend on the brightness of its fill color"* — that general principle is the warrant for `alpha > 0` here, and reusing a principle is not the same act as widening the claim built on it.
+
+    (d) **This stage binarises TWO masks TWO different ways, DELIBERATELY. Do not unify them.** `crates/pc-inpaint/src/lib.rs` uses `combined_fill_binary` (`alpha > 0`) for the RGBA combined mask and `BinaryMask::from_gray_threshold(raw_mask, PIL_BINARY_THRESHOLD)` (strict `> 127`, §16.9 item 4) for the greyscale `_raw_mask.png`. The asymmetry is upstream-faithful and follows from the inputs: the raw mask has no alpha channel to discard and is already strictly bilevel, so `convert("1")`'s dithering is a no-op on it and a luma threshold is exactly right there. A future reader who "fixes the inconsistency" by routing the combined mask through `from_gray_threshold` reintroduces `DEVIATION(28)`'s bug, and one who routes the raw mask through an alpha test has no channel to read. Stated here because the two lines sit four apart in `run()` and look like an oversight.
+
+    (e) **Number collision check, re-run on this branch at transcription time rather than inherited.** **Both greps below are stated as of BEFORE this entry was added, because this entry is itself what changes their output** — the same tensing problem §14's marker-inventory parenthetical already handles for its predecessor, and re-asserting them in the present tense inside the document that falsifies them is exactly the staleness this file keeps producing. Measured **before** this entry landed: `grep -rn "DEVIATION(2[5-9])" docs/PIPELINE_SPEC_V1.md` returned hits for 25, 26 and 27 only, and **it now also returns 28 — this entry's own**; `DEVIATION(3[0-9])` returned none and still returns none; and `grep -rhno "DEVIATION([0-9]*)" --include=*.rs crates/*/src/ xtask/src/` topped out at 27, and **now reaches 28**, that being `combined_fill_binary`'s site comment in `crates/pc-inpaint/src/fill.rs`, which this entry requires. So 28 was free **on this branch** when it was claimed, and is now taken by this entry and by nothing else. Item 17(d)(ii)'s three-part cross-branch check still applies and is **not** discharged by this clause: the sibling `mask-parity` branch numbers against the same base, and reconciling both branches' §14 items — and both branches' raises of `EXPECTED_PARSED_CLAIMS` — belongs to whoever merges them. Nothing in this repo gates the register-number half. On 28 specifically, `mask-parity` is measured clean (item 17(d)(ii) records the command and its `0`); on **24** that branch collided and the collision is now resolved in this branch's favour — that branch renumbers to 29 — and item 17(d)(ii) is the entry to read for both the ground and for what part of it had not yet landed on the sibling when it was written.
+
+    (f) **Site-comment obligations, enumerated because a summary has already lost one of them twice in this file.** `crates/pc-inpaint/src/fill.rs`'s `combined_fill_binary` doc comment currently frames the choice as `DEVIATION(5)` propagating and as unratified; that framing is **wrong under this ruling** and is replaced by `DEVIATION(28)` with this item as its ground — done with this entry. `crates/pc-inpaint/src/lib.rs` carries clause (d)'s two-binarisations note at the pair of call sites — done with this entry. **Also DONE with this entry, and no longer owed:** `crates/pc-inpaint/tests/l4_eligibility.rs`'s `a_black_but_opaque_combined_mask_pixel_counts_as_covered_and_a_transparent_white_one_does_not` previously cited `DEVIATION(5)` in its doc comment and in an assertion message, and its doc comment repeated the "escalated, not settled" framing. That file is a frozen test, so the change is named rather than made quietly: it is **authorised by this entry** in the same way §14 item 18 authorised the corresponding fix at `crates/pc-detect/tests/d5_yolo.rs:297`, and it touches **no assertion and no expected value** — the doc comment at `:176-188` now calls the reading **ratified** and cites `DEVIATION(28)` at §14 item 28, and the assertion message at `:202` names `DEVIATION(28)`. So this clause's three obligations are all discharged by this same commit, and nothing in `crates/pc-inpaint/` still **cites** `DEVIATION(5)` as this binarisation's ground. Stated as "cites as its ground" rather than "names", because `DEVIATION(5)` does still appear twice there — `crates/pc-inpaint/src/fill.rs:79` and `crates/pc-inpaint/tests/l4_eligibility.rs:178`, both saying it is **not** the applicable entry — and a bare "names" reading is falsified by a grep that finds exactly those two negations.
+
+22. **CORRECTED — item 12(a)'s `mask =` half is wrong: upstream's inpainted-mask export is a THREE-LAYER alpha composite, not a replacement** (independent joint architect + Senior Rust Engineer L6 planning pass, 2026-08-07). Both planning agents read the pinned upstream source separately and reached this finding independently, so per `CLAUDE.md`'s pipeline this is a **consensus correction ratified jointly**, not a `fable-adjudicator` escalation — the adjudicator is convened for disagreement, and there is none here.
+
+    **SUPERSEDES: §16.38 item 12(a)** — its `mask = inpainted_mask.or(<the existing expression>)` describes the exported mask being replaced by `_inpainting.png`, which is not what the branch it cites does. Its `cleaned =` half and its two whitelist citations are untouched by this item.
+
+    (a) **The evidence, quoted verbatim** — `pcleaner/image_export.py` at the pinned commit `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`, **lines 241-263**, fetched from `raw.githubusercontent.com` for this transcription rather than recalled. **One departure from strict verbatim, named so the claim is exact:** every line is dedented by the 4 spaces of the enclosing function body, so relative indentation — which is what carries the `if denoising_enabled:` scope — is preserved and absolute column numbers are not. Nothing else is altered, including the comment on `:242`.
+
+    ```python
+    if ost.Output.inpainted_mask in outputs:
+        # Special case: Here we need to take the final mask, scale it up, and then paste the denoising
+        final_mask = Image.open(cache_path_gen.combined_mask)
+        final_mask = final_mask.resize(original_size, Image.NEAREST)
+        final_mask = final_mask.convert("RGBA")
+
+        add_image_layer(final_mask, masker_mask_name)
+
+        if denoising_enabled:
+            denoised_mask = Image.open(cache_path_gen.noise_mask)
+            denoised_mask = denoised_mask.convert("RGBA")
+            final_mask.alpha_composite(denoised_mask)
+
+            add_image_layer(denoised_mask, denoiser_mask_name)
+
+        inpainted_mask = Image.open(cache_path_gen.inpainting)
+        inpainted_mask = inpainted_mask.convert("RGBA")
+
+        add_image_layer(inpainted_mask, inpainter_mask_name)
+
+        final_mask.alpha_composite(inpainted_mask)
+
+        export_single_image(final_mask, masked_out_path)
+    ```
+
+    (b) **What the quote establishes, enumerated rather than summarised** — item 12(a) is itself what a paraphrase of this branch produced, so a second paraphrase is not the way to correct it. **(i)** Three layers, in one fixed order: `_combined_mask.png` is the base (`:243`), the noise mask is composited over it (`:252`), and the inpainting output is composited **last**, i.e. on top (`:261`). **(ii)** The noise layer is conditional on **`denoising_enabled`** (`:249`), not on the mere presence of `_noise_mask.png`. **(iii)** The inpainting layer is unconditional *within* this branch — there is no `if` around `:256-261`. **(iv)** The base is resized with `Image.NEAREST` (`:244`); neither the noise layer nor the inpainting layer is resized at all, both being original-size artifacts already. **(v)** Item 12(a)'s *whitelist* reading is correct and survives: `main.py:665-669` lists `final_mask, denoise_mask, inpainted_mask` in ascending priority, so `.or()` correctly describes **which branch runs**. What item 12(a) got wrong is **what that branch then does**.
+
+    (c) **The ratified `MaskChoice` shape**, extending the existing two-variant enum in `crates/pc-export/src/discover.rs:48-54` rather than replacing it:
+
+    ```rust
+    pub enum MaskChoice {
+        FinalOnly(ImageHandle),
+        WithDenoise {
+            final_mask: ImageHandle,
+            denoise_mask: ImageHandle,
+        },
+        WithInpaint {
+            final_mask: ImageHandle,
+            denoise_mask: Option<ImageHandle>,
+            inpainted_mask: ImageHandle,
+        },
+    }
+    ```
+
+    **`denoise_mask` is an `Option` inside one variant, and NOT a pair of variants, and the reason is (b)(ii) rather than taste:** upstream's `if denoising_enabled:` guard sits *inside* a single branch, so the two cases share one composite ordering by construction. Splitting them into `WithInpaint` / `WithDenoiseAndInpaint` would give a four-variant enum whose two inpaint arms differ by one optional layer, and would let a later edit composite the layers in a different order in one arm without any test noticing.
+
+    (d) **`resolve`'s corrected precedence** (`crates/pc-export/src/discover.rs`'s `resolve`), stated so L6-3 does not have to infer it: when `inpainting_enabled` is true and both `sources.final_mask` and `sources.inpainted_mask` are present, the result is `WithInpaint { final_mask, denoise_mask: sources.denoise_mask.filter(|_| denoising_enabled), inpainted_mask }`. Every other combination falls through to the existing two-arm rule **unchanged**. An `inpainted_mask` present with `inpainting_enabled == false` is a stale cached artifact and is dropped, which is item 12(b) applied here and not a new rule.
+
+    (e) **An `inpainted_mask` with no `final_mask` takes the existing WARN-and-export-no-mask path**, the same one `(None, Some(_), true)` already takes for a stray denoise mask, with a message naming the inpainting artifact rather than reusing the denoise text verbatim. Ground: upstream opens `cache_path_gen.combined_mask` unconditionally at `:243` with no guard, so a missing combined mask is a state upstream never contemplates; our `discover` reaches it only because it probes the cache for files, which is exactly the situation the existing arm was written for.
+
+    (f) **`export_mask`'s composite, ordered.** Base = `resize_nearest_rgba(final_mask, original_size)`; then `alpha_composite_over` the noise mask at `(0, 0)` **when the `Option` is `Some`**; then `alpha_composite_over` the inpainting layer at `(0, 0)`. The order is load-bearing and is the thing L6-3's frozen test must pin — see (h).
+
+    (g) **The resize filter is EXACT parity in this branch, and DEVIATION(8) does not propagate into it.** `DEVIATION(8)` / §15.8 records that we resize masks nearest-neighbour uniformly where upstream uses `Image.BILINEAR` for the denoise-mask branch (`image_export.py:221`). Upstream's inpainted-mask branch uses `Image.NEAREST` (`:244`), so uniform-nearest matches upstream here rather than diverging from it. **This was already on record and is not a new measurement:** §15 item 8's five-site survey lists *"`:244` (inpainted_mask) NEAREST"* verbatim, and its conclusion that `:221` is "the sole outlier across 5 sites" is exactly the reason no divergence lands here. Restated at this site because §15 item 8 is not where a reader of item 12 will look. Stated because the opposite is the natural assumption, and because a future parity investigation should not spend time looking for a divergence that is not there. The noise and inpainting layers keep `export_mask`'s existing tolerance of resizing a layer only when its size differs from the base.
+
+    (h) **What L6-3 owes as an assertion, not as an intent.** A test over three distinguishable single-colour RGBA layers — pick values whose composite is different under every permutation of the three — asserting the exported pixel equals the **hard-coded** expected value for the `combined → noise → inpainting` order, plus a second case with `denoising_enabled = false` asserting the two-layer result. Cardinality is not identity here either: asserting "three layers were opened" would pass under a wrong order. The expected colours are literals in the test, never computed by running the composite under test.
+
+    (i) **What this item does NOT change.** Item 12(b)'s stale-artifact rule, item 12(c)'s category map, and the `cleaned` half of item 12(a) all stand. That last one was re-checked against the same file rather than assumed — `image_export.py:234-239` really is a plain replacement, with no compositing at all:
+
+    ```python
+    if ost.Output.inpainted_output in outputs:
+        export_single_image(
+            cache_path_gen.clean_inpaint,
+            cleaned_out_path,
+            original_image,
+        )
+    ```
+
+    So `cleaned = inpainted.or(<the existing expression>)` is right as written, and the asymmetry between the two halves of item 12(a) is upstream's, not a transcription slip.
+
+23. **RATIFIED (L6-DP1) — eligibility is computed BEFORE the inpainter session is asked for; a page with nothing eligible must produce ZERO `InpainterProvider::inpainter()` calls.** Both L6 planning agents designed this same shape independently, so this too is a consensus ratification rather than a tie-break.
+
+    **Label collision, stated because it is a real reading hazard in this entry.** Item 17 already uses `D1`-`D4` for a different set of decision points, **two** of which — `D2` and `D4` — are still live; `D1` was resolved by item 19 and `D3`'s own clause (c) reads "Ruled by this entry", exactly as item 17's preamble states (*"D2 and D4 remain open"*) and as item 19(h) repeats (*"it does not resolve D2 or D4"*). The L6 pass's points are therefore written **`L6-DP1`-`L6-DP5`** everywhere below; a bare `D2` in this entry always means item 17's, never L6's. (`L6-DP5` was not one of the planning pass's four — it was found while writing this transcription and is recorded at item 25(d).)
+
+    (a) **The shape.** `run_inpaint` calls `pc_inpaint::select_regions(regions, config)` first and inspects the result. Only when that slice is non-empty does it ask the provider for a session. Nothing about a provider, a model file or a download is reachable from a page with no eligible region.
+
+    (b) **The ground, quoted verbatim from item 8(c) so its scope travels with it:** *"a batch may have `inpainting_enabled = true` and **zero eligible regions on every page** — upstream's own `if boxes_to_inpaint:` guard at `inpainting.py:131` proves the empty case is expected, not pathological — and such a run must not pay a 207 MB download plus a ~6.3 s session build (item 1(f)) to inpaint nothing."* Item 8(c) is the requirement; this item is the mechanism that discharges it, and the two are not the same thing.
+
+    (c) **This is a SECOND mechanism, not a restatement of item 8's latch, and either one alone leaves a real hole.** Item 8's `OnceLock` makes the first provisioning attempt lazy and caches its outcome; it does not stop that first attempt from happening. L6-DP1 stops the attempt from being made at all. Without (a), a run with `inpainting_enabled = true` and nothing eligible anywhere still trips the latch exactly once and still pays the 207 MB; without item 8, a resumed run that never reaches `Step::Inpaint` pays it at startup. Both are needed.
+
+    (d) **`select_regions` is called twice on an eligible page, and that duplication is DELIBERATE.** Once by `run_inpaint` as the gate, once inside `inpaint_page` (`crates/pc-inpaint/src/lib.rs:181`). It is a pure function of `(regions, config)`, both already in hand, and threading the first result into `inpaint_page` would move the eligibility contract out of the crate that owns it and admit a caller-supplied set `select_regions` would never produce. Do not "optimise" this.
+
+    (e) **The frozen test L6-4 owes, stated as assertions with their literals.** A counting `InpainterProvider` double whose `inpainter()` increments a shared counter. **Case 1:** a page whose `#mask_data.json` regions are all ineligible (`failed == false`, `std_deviation` below `inpainting_min_std_dev`, `thickness == None`), run with `inpainting_enabled = true`; assert the counter is **0**, and assert the run still reaches `Completed` with the non-inpainted cleaned artifact exported. **Case 2, and it is not optional:** the same fixture with one region made eligible; assert the counter is exactly **1**. Case 1 alone is vacuous — it passes identically if the provider was never wired into the pipeline at all, which is precisely the plumbing failure item 16(f) warns about. The pair is what makes the gate capable of failing.
+
+    (f) **`InpainterProvider` ALREADY EXISTS — L5 shipped it, and this item adds a caller rather than a trait.** The trait is `crates/pc-cli/src/inpainter.rs:42`, with `fn inpainter(&self) -> Result<Arc<dyn Inpainter>, StageError>` and a **mandatory, no-default** `fn failures_are_run_fatal(&self) -> bool` that both shipped implementations answer `true`. Stated explicitly because the first draft of this item asserted the opposite — that no such predicate should exist — which contradicted code already on this branch; that assertion is retracted here rather than left to be discovered, and the shipped shape stands. The asymmetry with `DetectorProvider`'s *defaulted* `false` (`crates/pc-pipeline/src/ctx.rs:20-26`) is deliberate on the shipped side: the detector's predicate is defaulted because `ReplayDetector` binds per image and may legitimately answer `false`, while the inpainter's has no default because item 9 leaves no discretion — construction takes no image in every implementation, including the test doubles. What L6-4 owes is only that `run_inpaint` **consult** the predicate and map a `true` answer to a run-fatal `PipelineError`, so fatality stays declared and never inferred at the call site (cookbook rule 4).
+
+24. **The L6 task breakdown — five tasks, four Codex calls, with the `heavy`/`simple` classification `CLAUDE.md`'s batching rule requires.** Item 16(e) scoped L6 as one heavy call. This pass splits it, and the ground is concrete rather than tidiness: 16(e)'s single call would have mixed a `pc-core` enum change, a `pc-export` precedence change and a `pc-pipeline` stage wiring into one invocation, where the *first* of those turns three frozen tests red in two other crates before any of the rest compiles. Item 16(e) is not otherwise altered, and (a)-(e) below cover everything 16(e) named — but they are **not** an exact union of it: they also carry material 16(e) never named, namely item 22's three-layer mask composite and its frozen test, item 25(c)'s `run_inpaint` adapter shape, item 23's eligibility-first gate with 23(e)'s two-case test, the provider's construction in `pc-cli` and injection into `PipelineCtx` (item 25(d)), checkpointing at the new step, `export_sources` populating the two new fields, and item 19(g)'s refusal hint getting its first caller. Those additions arrived with items 19-25 after 16(e) was written; the split is a re-scoping, not a re-partition of a fixed set.
+
+    (a) **L6-1 — `Step::Inpaint` in `pc-core` (simple).** Item 11(a)'s enum plus item 11(b)'s three pre-authorised value corrections and the three additions it names. Acceptance, as literals: `Step::Export as i32 == 6`; `Step::Export.prev() == Some(Step::Inpaint)`; `Step::Inpaint.prev() == Some(Step::Denoise)`; `Step::Denoise < Step::Inpaint < Step::Export`; and `Output::ALL.len() == 13` still green **and unedited**, per item 11(d).
+
+    (b) **L6-2 — the two pipeline-local cache suffixes (simple; batched sequentially with L6-1 in ONE Codex call).** `"_inpainting.png"` and `"_clean_inpaint.png"` as `pc-pipeline` constants beside `SPLITS_SUFFIX` (`crates/pc-pipeline/src/cache.rs:18`), added to `known_suffixes()`. Batchable with L6-1 because the two touch disjoint files and L6-2 does not depend on the enum. Acceptance: both new suffixes round-trip through `CachePaths::from_existing`, **and** the real invariant of item 25(b) below.
+
+    (c) **L6-3 — `pc-export` precedence and the three-layer composite (heavy, its own call).** `ExportSources`' two new fields, `MaskChoice::WithInpaint` and `resolve` per item 22(c)-(e), `export_mask`'s ordered composite per 22(f) with 22(h)'s frozen test, item 12(b)'s stale-artifact rule, and item 14(c)'s greyscale export obligation pinned on a greyscale input.
+
+    (d) **L6-4 — `pc-pipeline` stage wiring (heavy, its own call; depends on L6-1, L6-2, L6-3).** The `run_inpaint` adapter of item 25(c), making L5's existing `InpainterProvider` reachable from `PipelineCtx` per item 25(d), item 23's eligibility-first gate with 23(e)'s two-case test, the cache writes for both artifacts, checkpointing at the new step, and `export_sources` populating the two new fields.
+
+    (e) **L6-5 — `pc-cli`'s `--skip-inpaint` and the provider handoff (simple; depends on L6-4).** The flag in the existing `--skip-denoise` shape, the provider constructed in `pc-cli` and injected, and item 16(f)'s check that a non-default `inpainting_enabled` is actually observed at the stage. Item 19(g)'s optional-aware refusal hint gets its first caller here, which is what "added now, unwired" was waiting for.
+
+    (f) **The batching, stated explicitly so it is not re-derived:** call 1 = L6-1 then L6-2, sequential; call 2 = L6-3; call 3 = L6-4; call 4 = L6-5. Four calls for five tasks.
+
+25. **The L6 pass's remaining decision points, with each clause's current status stated separately so a reader does not average them.** Clauses (a) and (d) are **RESOLVED by §16.40**, (b) is a **finding** about existing text and not a defect that was fixed, and (c) is **RATIFIED**.
+
+    (a) **`L6-DP2` — RESOLVED by §16.40; read that entry before implementing or citing long-strip inpainting.** This clause formerly left open whether `Step::Inpaint` runs per strip segment or once on the stitched strip and deferred every strip test. §16.40 chooses per-segment execution plus mixed-source stitching for the scope it quotes verbatim. The measurement remains useful: `crates/pc-pipeline/src/single.rs` runs stages 1-4 per segment (`run_stages`, `:6`) and exports the stitched result once (`merged_strip_export`, `:475`). Its former statement that no clause may define long-strip inpainting is no longer live within §16.40's stated scope.
+
+    **SUPERSEDED IN PART by §16.40 — this back-pointer qualifies the former OPEN, DEFERRED status and the former omission of strip tests; the measurement above remains unchanged.**
+
+    (b) **`L6-DP3` — item 11(e)'s suffix collision does not exist. Recorded as a FINDING, not as a defect that was fixed.** Measured 2026-08-07 over the full suffix set — the thirteen `Output::cache_suffix()` values, `SPLITS_SUFFIX`, and the two new constants — testing every ordered pair for one being a proper tail of the other: **zero pairs**. Concretely, `_clean.png` is not a tail of `_clean_inpaint.png`, and it is not a tail of `_clean_denoised.png` either, so item 11(e)'s clause naming "the same collision `_clean_denoised.png` already has" describes a collision that has never existed at any point in this repo. **The obligation item 11(e) states nonetheless stands** — it reads "L6 owes a test that the new suffixes disambiguate under the existing longest-match rule" — and L6-2 discharges it by asserting the **real** invariant (no suffix in `known_suffixes()` is a proper tail of another) rather than a disambiguation that never applied. **No marker is raised against item 11(e), and that is a judgement rather than a measurement:** the obligation survives intact and only its parenthetical characterisation is wrong. A reader who thinks the wrong characterisation itself warrants one is making a defensible call and should raise it with both architects; nothing in `crates/pc-testkit/tests/spec_supersession.rs` gates it either way.
+
+    (c) **`L6-DP4` — RATIFIED: no `pc_core::Stage` impl for inpainting is possible, and the `run_inpaint` free function in `pc-pipeline` is the shape.** `pc_core::Stage` requires `type Input: Serialize + DeserializeOwned` (`crates/pc-core/src/stage.rs:15`), and `pc_inpaint::PageInput<'a>` (`crates/pc-inpaint/src/lib.rs:102-118`) holds **seven** fields, six of which borrow: four image references — `original: &'a RgbImage`, `raw_mask: &'a GrayImage`, `combined_mask: &'a RgbaImage`, `noise_mask: Option<&'a RgbaImage>` — plus `regions: &'a [MaskRegionStats]` and `config: &'a InpainterConfig`, with only `min_mask_thickness: u32` held by value; a type with a lifetime parameter cannot implement `DeserializeOwned`. Two alternatives were considered and rejected: an owned `InpaintInput` mirror (it would clone the full-resolution original plus three masks per page to satisfy a trait impl nothing consumes), and turning the fields into `ImageHandle`s loaded inside the stage (item 16(e) already assigns loading to L6, and `pc-inpaint` is deliberately filesystem-free). Ratified: `run_inpaint` is a free function in `crates/pc-pipeline/src/single.rs` following the existing `denoise_dests`/`export_sources` shape, and `Step::Inpaint` exists as an ordering and checkpoint value with no `Stage` impl behind it.
+
+    **The consequence of (c), stated rather than left to be discovered.** `Step::Inpaint` becomes the **first** `Step` variant with no `impl pc_core::Stage` — measured, not assumed: `grep -rn "impl pc_core::Stage for" crates/*/src/` returns exactly five hits today, one for each of `Detect`, `Preprocess`, `Mask`, `Denoise`, `Export`. So §3's rule — *"each stage crate exposes one pure function"* (`docs/PIPELINE_SPEC_V1.md:321`, quoted verbatim) — acquires one stage whose function is not routed through the trait, and any future code that enumerates `Stage` impls in order to enumerate stages will silently miss inpainting. Nothing in this repo gates that; it is disclosed here because the alternative was to let a later reader find it.
+
+    (d) **`L6-DP5` — RESOLVED by §16.40; read item 2(d) there before implementing the provider boundary.** The measurements and options below are retained as the record of the question, not as live alternatives. The trait is in `crates/pc-cli/src/inpainter.rs:42` (L5), and `PipelineCtx` (`crates/pc-pipeline/src/ctx.rs:47-50`) must carry it for L6-4 — but `pc-pipeline` **cannot** depend on `pc-cli`; the edge runs the other way (`crates/pc-cli/Cargo.toml:28`). Two shapes were available. **(i)** Move the trait alone into `pc_pipeline::ctx` beside `DetectorProvider` and re-export it from `pc-cli`, leaving `UnavailableInpainterProvider` and `OnnxInpainterProvider` where they are; that move **does add a new non-dev edge**, and an earlier draft of this clause claimed the opposite — corrected here rather than left standing. `pc-inpaint` is today only a **dev**-dependency of `pc-pipeline`: `crates/pc-pipeline/Cargo.toml:47` sits under the `[dev-dependencies]` table that opens at `:33`, and that file's own comment at `:45-46` says so verbatim — *"This is NOT L6's wiring: nothing under `src/` references `pc-inpaint`, and `Step::Inpaint` does not exist yet."* Re-measured 2026-08-07: `grep -rn "pc_inpaint" crates/pc-pipeline/src/` returns **0** hits. So putting the trait in `pc_pipeline::ctx` — a `src/` module that names `pc_inpaint::Inpainter`, which is where the returned `Arc<dyn Inpainter>` is defined — requires promoting `pc-inpaint` to a real `[dependencies]` entry, a genuinely new edge in the workspace graph. **That edge is an allowed one:** the same `Cargo.toml` records at `:15-16` and `:43-44` that *"`pc-pipeline` is the ONE crate allowed to depend on every stage"*, §1 rule 2 forbidding only stage-to-stage edges. **(ii)** Leave the trait in `pc-cli` and have `PipelineCtx` take a provider-shaped closure instead. The former lean was (i); §16.40 makes (i) binding and rejects (ii). `DEVIATION(27)`'s declared site is the **lazy latch**, which lives in `OnnxInpainterProvider` and does not move, so §14 item 27's *"the inpainter provider in `crates/pc-cli/`"* remains true of the implementation carrying the deviation.
+
+    **SUPERSEDED IN PART by §16.40 — this back-pointer resolves the OPEN provider-location choice; the measurements and dependency-edge analysis above remain unchanged.**
+
+## 16.39 A4 ratification: the `Annotation` coverage operand, `DEVIATION(12)` narrowed rather than retired, the clause markers, and the A4-a…A4-d breakdown (joint architect + Senior Rust Engineer plan pass, converging independently, 2026-08-07)
+
+**This section is spec-only. Nothing here asserts that `Annotation` is wired into `pc_detect::run`.** At the moment it is written, `run` still refuses the mode at `crates/pc-detect/src/lib.rs:90`, `run_rejects_annotation_refine_mode` is still green, and `MaskRefineMode::Simple` is still the shipped default and stays so afterwards. What lands here is the set of decisions A4 implements, transcribed before the code, exactly as R0 was.
+
+**Why this is §16.39 and not §16.38, checked rather than assumed.** §16.38 is claimed by the sibling `lama-inpaint` branch — verified by reading `docs/PIPELINE_SPEC_V1.md` in that worktree at its committed `ead8bd1`, where `## 16.38 LaMa inpainting (v1.5)…` exists. Taking 38 here would manufacture the same cross-branch collision §14's item-20 note records for `DEVIATION(24)`, and would do it after the collision was already paid for once. The union of top-level `16.x` numbers claimed on any branch is **16.5–16.38** — re-checked by listing `^## 16\.` in all three worktrees on 2026-08-07: the register starts at §16.5 and no branch has ever claimed §16.1–§16.4, so the union is not 16.1–16.38 as an earlier draft of this sentence said. The conclusion is unaffected, because the top of the range is what decides it: 39 is the first free one. As §16.33 did, this section is inserted **before** §16, whose span runs to EOF.
+
+**Both planning passes reached items 1 and 2 independently and agreed.** That is convergence, not a dispute, so it is a joint ratification and not a Fable escalation; Fable is convened for disagreement, and there was none on these two. Neither agent's argument is treated here as evidence for the other's — where a number below has one source, it says so.
+
+1. **DECIDED: under `MaskRefineMode::Annotation`, the §8.3 step 6 coverage filter scores each block against the UNREFINED, letterbox-cropped, resized detector mask. `Simple`'s operand is unchanged.** This closes what §16.37 item 6 left open in its own words — *"What to do about it — accept, re-tune `min_mask_coverage` for this mode, or change the filter's operand — is an A4 decision and is deliberately left open"* — and it takes the third option.
+
+   (a) **Upstream's operand, quoted rather than paraphrased, at pinned commit `0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3`.** Both planning agents reached this by running upstream; the lines below were additionally re-read first-hand from a fresh checkout at that commit while writing this transcription (read, not run — the running is the two agents' and is not re-claimed here). `pcleaner/comic_text_detector/inference.py:193-208`:
+
+    ```python
+    193:        # map output to input img
+    194:        mask = mask[: mask.shape[0] - dh, : mask.shape[1] - dw]
+    195:        mask = cv2.resize(mask, (im_w, im_h), interpolation=cv2.INTER_LINEAR)
+    ...
+    203:        blk_list = group_output(blks, lines, im_w, im_h, mask)
+    204:        mask_refined = refine_mask(img, mask, blk_list, refine_mode=refine_mode)
+    205:        if keep_undetected_mask:
+    206:            mask_refined = refine_undetected_mask(
+    207:                img, mask, mask_refined, blk_list, refine_mode=refine_mode
+    208:            )
+    ```
+
+    The filter lives inside `group_output`, which is called at `:203` — **before** `refine_mask` at `:204` — and is handed `mask`, the array built at `:194-195` by cropping the letterbox padding off and resizing to the base image size. `pcleaner/comic_text_detector/utils/textblock.py`, the three lines the citation names:
+
+    ```python
+    456:    mask_score_thresh = 0.1
+    471:                mask_score = mask[by1:by2, bx1:bx2].mean() / 255
+    488:                mask_score = mask[by1:by2, bx1:bx2].mean() / 255
+    ```
+
+    `:488` is the one that decides a **detected** block's fate; it sits inside `if len(blk.lines) == 0:` at `:485`, which is every block for us because we synthesize no line polygons. `:471` is the same expression in the scattered-lines branch at `:469-473`, which we do not reach. `:456`'s `mask_score_thresh = 0.1` is numerically **exactly** `pc_detect::DEFAULT_MIN_MASK_COVERAGE` (`crates/pc-detect/src/lib.rs:51`), and `mean() / 255` is exactly `mask_coverage`'s definition. So under this decision the whole quantity — operand, expression and threshold — matches upstream, and the only surviving difference at this step is the scope one §14's item 17 already registers (upstream tests only line-less blocks; for us every block is line-less, so that difference is vacuous for v1).
+
+   (b) **Scope, stated narrowly because the evidence is narrow.** This is an `Annotation`-only decision. Under `Simple` the operand stays the refined mask, the values frozen against it stay frozen, and `DEVIATION(17)` keeps describing `Simple` accurately. Nothing here is a claim that scoring the unrefined mask is *better*; it is a claim that it is what upstream does, and `Annotation`'s whole purpose is upstream parity.
+
+   (c) **REJECTED: re-tune `min_mask_coverage` for this mode.** Refuted by a measurement, not by preference: §16.37 item 6 records `[531,836,686,882]` on E01P02 collapsing to `0.0000000`. There is no positive threshold that keeps a block whose coverage is zero, so the option does not merely cost accuracy — it cannot work on a case already on the record. A threshold low enough to matter for `0.0238280` would also stop rejecting anything, which is the filter's whole job.
+
+   (d) **REJECTED: accept the drops.** Three blocks that `Simple` keeps would be dropped with no mask, no OCR and no diagnostic. That breaks the precondition §16.37 item 11(d) attaches to A5 — *"its determinism gate and calibration report must run against the **complete** algorithm — both `refine_mask` and `refine_undetected_mask` — not a partial one"* — because a calibration report over a block set our own filter has already thinned is not a comparison with upstream's page at all, and the difference would be attributed to the port. Accepting the drops also silently makes `Annotation` worse than `Simple` on real pages, which inverts the reason the port exists.
+
+   (e) **Implementation, so A4-b has one operand and not two.** `run` currently computes coverage against `refined_mask` at `crates/pc-detect/src/lib.rs:128`, and the unrefined operand exists only *inside* `refine_simple` (`crates/pc-detect/src/mask.rs`, as `resize_bilinear(&crop_letterbox(mask, dw, dh)?, image_size)`). A4-b lifts that composition to `run` so both modes name the same two arrays explicitly, and the mode selects which one the filter reads. The lift must not change `Simple`'s bytes — A4-a's byte-identity lock is what catches it if it does.
+
+   **SUPERSEDES: §8.3 step 6**
+
+   **SUPERSEDES: §14 item 17**
+
+   Both markers are this transcription's application of the marker convention to item 1's consequences, not extra decisions: neither clause's proposition changes for `Simple`, and both stop being mode-independent the moment `Annotation` runs. They are called out as the transcription's own act so a reviewer can reject them without touching the ruling.
+
+2. **DECIDED: `DEVIATION(12)` is narrowed, not retired — and this contradicts the word "retirement" in §16.37 items 8 and 11(d).** Both planning agents reached this independently, with the same argument, having each noticed that the existing ratified text says "retirement".
+
+   (a) **The argument.** Upstream has no mode switch: `inference.py:204` runs `refine_mask` unconditionally on every page, and `:205-208` runs `refine_undetected_mask` whenever `keep_undetected_mask` is set, which `pcleaner/ctd_interface.py:162` sets. panel-ocr's default remains `MaskRefineMode::Simple` — §16.37 item 9 mandates exactly that (*"`Annotation` ships **non-default**; `Simple` stays the default and every value frozen against it stays put"*). So after A4 a **default** panel-ocr run still does something upstream never does. Retiring the entry outright would assert a by-default parity the tree does not have, which is the same class of false claim §16.37 items 4 and 5 exist to correct and which item 11(a) already warned about in the other direction.
+
+   (b) **The narrowed proposition, in the form the register entry now carries.** *Not* "we did not port `refine_mask`/`refine_undetected_mask`" — as of A4 we did, and A3b ported both halves. What survives is: **the shipped default is `Simple`, so a default run diverges from upstream's unconditional refinement; parity is reachable only by opting in with `mask_refine_mode = "annotation"`.** The divergence is real, it is a default-value divergence, and it is the only one left at this site.
+
+   (c) **The site comment moves, because the artifact carrying the divergence moved.** The primary `DEVIATION(12)` comment is at `crates/pc-detect/src/mask.rs:150-153`, on `refine_simple` — an algorithm that is no longer the divergence, since we now ship upstream's algorithm too. It moves to the `#[default] Simple` variant of `MaskRefineMode` in `crates/pc-config/src/profile.rs`. That is cookbook rule 12 applied literally: gate and annotate the artifact carrying the risk. **No line number is given for the destination on purpose** — this register has already had to correct three line citations that were right when written (§14 items 19 and 23, §16.37 item 2), and A4 edits that file in the same commit, so a number written here would be stale before it was read. The obligation is discharged by the comment sitting on that variant, and A4-d's gate is what checks it.
+
+   (d) **What `refine_simple` keeps.** A pointer, not the primary comment: a sentence saying `Simple` is koharu's algorithm and that the register entry now lives at the default. The "v1.5 door" sentence at `mask.rs:152` stops describing reality and goes.
+
+   **SUPERSEDES: §14 item 12**
+
+3. **Three clause markers, all landing with A4 — but item 7 pre-authorised only two of them, and the third is a call it explicitly left open.** Stated this way because an earlier draft's lead read *"§16.37 item 7's three clause markers"*, which credits item 7 with authorising a marker it declined to pre-judge. Item 7 authorised amending **§16.5 item 3** and **§8.3 step 5** and deliberately did not write either marker at R0; for **§15 item 2** it wrote that *"A4 decides whether staleness warrants a marker at all, and this item does not pre-judge that"*. (c) below is where that decision is made, and it is A4's, not item 7's.
+
+   (a) **§16.5 item 3 — FALSE, marker written.** Its *"rejected by `pc-detect` (`StageError::InvalidInput`)"* half stops being true. Its layer split (config accepts, stage decides) is untouched and is in fact what makes the opt-in work.
+
+   (b) **§8.3 step 5 — FALSE, marker written.** The out-of-scope bullet's *"where only `Simple` is implemented in v1 (`Annotation` → `StageError::InvalidInput`)"* stops being true. Note this is a **second** marker against §8.3 step 5 from a **different** claiming section; §16.37 item 5 already carries one against a different sentence of the same step (the `expand_textwindow` parenthetical). Both resolve to §8.3's whole span by the `step N` fallback, so one back-pointer would satisfy both — they are written at their own sentences anyway, and the registry carries both rows.
+
+   (c) **§15 item 2 — STALE, and the call is that it DOES get a marker.** Item 7 posed this exactly: *"§15 item 2's `Annotation` mode remains the v1.5 door for a full refinement port` **rejects nothing and does not become false — it becomes stale**, describing a door as unopened once it is opened; A4 decides whether staleness warrants a marker at all, and this item does not pre-judge that."* Both planning passes leaned yes; the call recorded here is **yes**. Grounds, and they are about the reader rather than about severity: §15 is the sign-off register a future reader lands on to learn what was decided and what is still open, and "remains the v1.5 door" reads as *not yet done*. A reader who lands there and does not read this section will conclude the port has not happened — which is precisely the failure the back-pointer convention exists to prevent, and it does not become less of a failure because the sentence was true when written. The cost is one line; the alternative is a register that quietly misdescribes the tree. The rest of item 2 — ship `Simple` as the default, keep the upstream comparison non-gating — is unchanged and is a **premise** of item 2 above.
+
+   (d) **The one thing item 7 predicted and could not verify.** Item 7 wrote: *"**Predicted, not verified:** that test is expected to go red when A4 lands, but whether it actually does depends on A4's opt-in design, which does not exist yet — if A4 gates on a config flag whose default keeps the refusal, the test could stay green, and A4 must check rather than assume."* The design decided here adds **no** second flag: `mask_refine_mode` is itself the opt-in, so `run` stops refusing and `run_rejects_annotation_refine_mode` goes red. That is a statement about the design, not a measurement — A4-a confirms it by running the suite and reports what it saw. Under cookbook rule 8 this is exit 2 (the corrected assertion claims something **different**, not less), routed to both architects, which is this section; A4-a replaces the test and **renames** it, because a test named `run_rejects_annotation_refine_mode` that no longer asserts a rejection is this project's dominant defect class.
+
+   **SUPERSEDES: §16.5 item 3**
+
+   **SUPERSEDES: §8.3 step 5**
+
+   **SUPERSEDES: §15 item 2**
+
+4. **DECIDED: an empty expanded window is a per-image `StageError::InvalidInput` that propagates out of `run`, never a silently skipped block.** A3b already made this classification and declared it rather than leaving it to be inferred from a signature (cookbook rule 4) — `crates/pc-detect/src/annotate_refine.rs:86-91` states it, and `refine_mask` returns that error at `:183-185`. What A4 owes is not to re-decide it but to **not swallow it**: the wiring must propagate, so the image fails and the run continues. Upstream-faithful, and measured rather than argued: A3b recorded that upstream reaches `cv2.cvtColor` on a zero-sized array and dies with `(-215:Assertion failed)` at `modules/imgproc/src/color.cpp:199`, i.e. upstream itself fails on this input rather than skipping the block. Skipping would be strictly worse than both options — a page silently missing a mask region with no error anywhere. Run-fatal would be wrong for the opposite reason: one malformed block in one image is not grounds to abort a batch, and §5's per-image isolation is the rule.
+
+5. **The fresh code-site enumeration, re-derived by grep here and NOT inherited from §16.37 item 7 — which is what item 7 required (*"A4 re-derives this list with a fresh grep and records the result; it does not inherit this one"*).** Command: `grep -rn -i annotation crates/ README.md docs/PIPELINE_SPEC_V1.md`, 2026-08-07, run against this branch after this section's own back-pointer edits landed, so the spec line numbers below are live. **Two of item 7's own entries were wrong, in different ways, and the difference matters:**
+
+   (a) **`crates/pc-detect/src/lib.rs:71` is STALENESS, not an original error.** At R0 (commit `1b4e12f`) line 71 was inside `run`'s doc comment, verified by `git show 1b4e12f:crates/pc-detect/src/lib.rs`; A1 through A3b added `pub use` lines and module doc comments above it. The live sites are **`:86-88`** (the doc comment sentence *"Rejects `MaskRefineMode::Annotation` with `StageError::InvalidInput` **before** any detection work"*) and **`:90-94`** (the check itself). Same distinction §14's items 19 and 23 draw about their own citations.
+
+   (b) **The `default_profile.toml` claim is an ORIGINAL ERROR, and it is refuted by running the suite, not by reading it.** Item 7 says of that file's line 20: *"the TOML is locked by `crates/pc-config/tests/defaults.rs`'s literal-§6-block comparison, so editing it without the test is a red suite"*. There is no such comparison. `defaults.rs` compares **by value** — which is §16.5 item 4's explicit ratified choice (*"Config defaults are frozen by value, not by re-serialized text"*) — plus a table/key registry check; none of that reads a comment. The only byte comparison is `crates/pc-config/tests/round_trip.rs:79-83`'s `default_profile_round_trips_byte_for_byte`, which compares `DEFAULT_PROFILE_TOML` against **itself** after a parse/serialize cycle: it proves comments survive the round trip and is invariant to what they say, because editing the comment changes both sides together. **Measured, 2026-08-07:** line 20's trailing comment was replaced wholesale with `# PROBE COMMENT: this text is not gated by any test` and `cargo test --workspace` ran to **exit 0 with 139 `test result: ok` lines and no failures**; the file was then restored from git. So the comment is a **free-standing prose site** with no gate behind it — which is exactly why A4-d's gate must cover it explicitly, and is a live example of cookbook rule 12: item 7 pointed at a gate that was not gating the artifact.
+
+   (c) **Sites whose text becomes FALSE when A4 lands** (each must change in A4's commit). **Which of these carry a §16.39 marker, counted rather than asserted — a draft of this parenthetical said "the four with markers above are the spec ones" and was wrong in both halves.** This list holds **four** `docs/PIPELINE_SPEC_V1.md` entries — `:499`, `:699`, `:1475-1477` and `:1527` — and **two** of the four carry a §16.39 back-pointer: `:699` (§8.3 step 5, marker at `:701`) and `:1475-1477` (§16.5 item 3, marker at `:1479`). `:499` does not, and should not: it is §6's reproduction of the shipped TOML, edited in the same commit as the `default_profile.toml:20` line it mirrors, not a ratified proposition with its own back-pointer. `:1527` does not either, and **that one is flagged as open rather than settled — see the note at the end of this sub-item.** Going the other way, four of §16.39's six markers target clauses that appear **nowhere** in this list, because they are narrowed rather than falsified: §8.3 step 6 and §14 item 17 (item 1's two transcription markers, `Annotation`-only operand), §14 item 12 (item 2, narrowed not retired) and §15 item 2 (item 3(c), stale not false, and listed in 5(d) below). Marker count and FALSE-site count are different quantities and neither is derivable from the other.
+   `docs/PIPELINE_SPEC_V1.md:499` (§6's default profile block, trailing comment *"annotation" rejected in v1*) · `:699` (§8.3 step 5's out-of-scope bullet) · `:1475-1477` (§16.5 item 3) · `:1527` (§16.6 item 1's *"Required so `pc-detect` can reject `MaskRefineMode::Annotation`"* rationale — **moved here from 5(d), where a draft filed it as merely stale**; it asserts the same proposition as `crates/pc-detect/src/detector.rs:29-31` below, which that draft filed as false, and one sentence cannot be both. The proposition *"the stage can reject `Annotation`"* stops being true, so FALSE is the class for both; what stays true at both sites is that the `config` field is **required**, for the branch) · `crates/pc-config/src/default_profile.toml:20` · `crates/pc-config/src/profile.rs:208-210` (`MaskRefineMode`'s doc comment) · `crates/pc-detect/src/lib.rs:86-88` and `:90-94` · `crates/pc-detect/src/detector.rs:29-31` (the `config` field's doc comment, *"required so the stage can reject `MaskRefineMode::Annotation`"* — the field is still required, for the branch; the word "reject" is what goes, and it sits on `:29`. An earlier draft cited `:30-32`, which starts one line below the comment and so excludes the very word it names) · `crates/pc-config/tests/defaults.rs:113` and `:356-358` (comments only — `annotation_refine_mode_loads_successfully`'s **assertions** stay true and stay frozen, since config still accepts the value; its `.expect("config accepts annotation; pc-detect is what rejects it")` message at `:361` is the false part) · `crates/pc-detect/tests/d7_run.rs:196-215` (the frozen test, item 3(d) above).
+
+   **OPEN, and deliberately not settled by this transcription: whether `:1527` (§16.6 item 1) needs its own back-pointer marker.** Item 3 above enumerates the clause markers this ratification authorises — §16.5 item 3, §8.3 step 5, §15 item 2 — and §16.6 item 1 is **not** among them; item 7 of §16.37 did not name it either. Reclassifying it from stale to false is a correction to *this* item's own bookkeeping and is within a transcription's remit; **adding a seventh marker would be a new ratification act and is not.** The argument for one is that §16.6 item 1 is a ratified decision whose stated rationale A4 falsifies, which is exactly the §16.19 trigger; the argument against is that the decision itself (`DetectInput` gains `config`) survives untouched and only its *because*-clause moves. This is recorded for the architects to close, not resolved here; the enumeration obligation of cookbook rule 14 is discharged by the site being listed either way.
+
+   (d) **Sites that become STALE without becoming false** (they stop describing the tree; no marker is claimed for any of them, and item 3(c) explains why §15 item 2 is treated differently from these):
+   `docs/PIPELINE_SPEC_V1.md:1440` (§15 item 2's "v1.5 door" — the one that **does** get a marker) · the `MaskRefineMode::Annotation` bullet in §16's out-of-scope list at the end of this file · `:3805` (**§16.22 item 7**, not §16.23 — the line is inside §16.22, whose span ends at `:3806`, and it *points at* §16.23 item 2 without being in it; an earlier draft of this item attributed it to §16.23) · `:3835-3854` (§16.23 item 2's *"`MaskRefineMode::Annotation` must NOT land before F1 records"* — its precondition is satisfied, F1 recorded long ago, so the constraint is spent rather than violated) · `:3821` (§16.23's **v1.5-ships** list, which names `MaskRefineMode::Annotation` as still to come) · `:3899` (§16.23's v1.5 sequencing, naming Annotation as the historical-final step — the exact words "Annotation is still last" are on the following line, `:3900`) — **these last two were missed by the first draft of this item and added on re-grep**; they are the same spent-constraint class as `:3835-3854`, from the same section · `crates/pc-detect/src/mask.rs:150-153` (`DEVIATION(12)`, item 2(c)-(d) above) · `README.md:102` (the roadmap checkbox). (Re-pinned 2026-08-09, corrected again 2026-08-09 after a fresh-reader mismatch: the five `docs/PIPELINE_SPEC_V1.md` line numbers above — `:3805`, `:3806`, `:3835-3854`, `:3821`, `:3899` — each independently re-verified against the actual quoted sentence at that line, not just shifted by a flat +25; content unchanged.)
+
+   **(d.i) RECLASSIFIED out of this list, because they become FALSE and not merely stale — they carry 5(c)'s obligation, not this one.** The first draft of this item filed the "not wired" headers as stale; they are not. *"This module is not wired into anything"* and *"`d7_run.rs::run_rejects_annotation_refine_mode` still passes"* are propositions A4 falsifies outright, the second because item 3(d) replaces and renames that test. The live spans, each re-read rather than inherited: `crates/pc-detect/src/lib.rs:10-11`, `:13-15`, `:17-19` (three module doc comments, *"**Not wired into [`run`]**, which still rejects that mode"*; the first draft cited only `:14` and `:18` and missed `:10-11` entirely, because line 11 carries the claim without the token this grep searches for — see 5(f)) · `crates/pc-detect/src/annotate.rs:7-10` · `crates/pc-detect/src/annotate_merge.rs:14-16` · `crates/pc-detect/src/annotate_refine.rs:7-10` · `crates/pc-detect/tests/a1_annotate_topk.rs:19-21` · `crates/pc-detect/tests/a2_annotate_otsu.rs:65-67` · `crates/pc-detect/tests/a3_annotate_merge.rs:60-62`. That is **nine spans across seven files** — recounted by reading the list above item by item, after a draft of this sentence said "six module/scope headers", which is neither the number of spans nor the number of files. The seven files are `lib.rs` (three spans), `annotate.rs`, `annotate_merge.rs`, `annotate_refine.rs`, `a1_annotate_topk.rs`, `a2_annotate_otsu.rs` and `a3_annotate_merge.rs` (one span each). **The first draft named two of them**, not three: `lib.rs:14` and `lib.rs:18`, per this item's own parenthetical above, and 5(f) below independently records the additions as *"`lib.rs:10-11` and the six headers now in (d.i)"* — seven added to two already listed is the nine here, and the two statements corroborate each other rather than one being derived from the other. (Each of the nine spans was re-read on 2026-08-07 and the wording is not uniform, so it is recorded rather than summarised: `lib.rs`'s three carry *"**Not wired into [`run`]**, which still rejects that mode"*; `annotate.rs:7-10` carries *"**This module is not wired into anything.** `pc_detect::run` still rejects `MaskRefineMode::Annotation`"* citing §16.37's preamble and **not** the test name; `annotate_merge.rs:14-16` and `annotate_refine.rs:7-10` carry that sentence **plus** *"`d7_run.rs::run_rejects_annotation_refine_mode` still passes"*; the three test files carry a *"**Scope.** A1/A2/A3 is *not* Annotation mode"* header with the same two clauses and not the "not wired into anything" one.) Separately, three of them — `annotate_merge.rs:22`, `annotate_refine.rs:10`, `a3_annotate_merge.rs:68` — say A4 performs *"the `DEVIATION(12)` **retirement**"*, which **item 2 above makes false in a second, independent way**: the entry is narrowed, not retired.
+
+   (e) **`crates/pc-cli/` is still NOT a site**, re-confirmed by this grep rather than inherited: `grep -rn -i annotation crates/pc-cli/` returns nothing.
+
+   (f) **What is asserted complete, and what the first draft of this item got wrong.** The first draft said *"This list is asserted complete for the token `annotation` … Hits inside [the Apache licence], [`spec_supersession.rs`]'s own comments, and every `annotate*` identifier are excluded as unrelated"* — i.e. that 5(c) and 5(d) between them covered every hit outside three exclusion classes. **That was false, and re-running the grep on 2026-08-07 refuted it rather than an argument doing so:** `docs/PIPELINE_SPEC_V1.md:3821` and `:3899` (re-pinned 2026-08-09; the prior pins `:3798`/`:3876` already carried a pre-existing 2-line drift before the §16.42 insertions, so the net move from those old numbers is +23, not a flat +25 — each line independently re-verified against its target passage, same as item 5(d)'s treatment of these same two sites) were in neither list and in no exclusion class, and so were `crates/pc-detect/src/lib.rs:10-11` and the six headers now in (d.i). All are added above.
+
+   The command, re-run in full for this correction, is `grep -rn -i annotation crates/ README.md docs/PIPELINE_SPEC_V1.md`. It returned **138** hits before the first correction was written and **145** after — and **147** after the second correction pass (2026-08-07) that recounted 5(d.i)'s spans, re-classified `:1527`, and added 5(g). **The total is not a stable number, because this section's own prose is inside the search scope**: 34 of the 147 are in §16.39 itself, which now spans `:7504`–`:7653`. Anyone re-running it will get a different total the moment this section is edited again; the durable claim is the classification below, not the count. What is asserted, and only this: **every hit whose prose A4 makes false or stale is enumerated in 5(c), 5(d) or 5(d.i)**, and every remaining hit falls into one of these five named classes, each of which stays accurate after A4:
+
+   1. **The Apache licence text**, `crates/pc-ocr/assets/LICENSE-APACHE-2.0.txt` (1 hit) — the licence's own wording, unrelated.
+   2. **Identifiers and literals rather than prose:** the `Annotation` variant itself (`crates/pc-config/src/profile.rs:216`), `ANNOTATION_EXPAND_R` and its re-export and uses (`crates/pc-detect/src/annotate.rs:41` and `:44`, `crates/pc-detect/src/lib.rs:35`, `annotate_refine.rs:98` and `:181`, and the A1 test call sites), the `"annotation"` TOML value under test (`crates/pc-config/tests/defaults.rs:345`, `:350`, `:360`, `:364`, and the test's own name at `:359`), upstream's `REFINEMASK_ANNOTATION` wherever it is quoted (including `docs/PIPELINE_SPEC_V1.md:3384`, re-pinned 2026-08-09 from `:3359`, +25, by the §16.42 spec insertions above this point; content unchanged), the `annotation_*_matches_the_upstream_oracle` test names, `docs/PIPELINE_SPEC_V1.md:7389`'s reference to `annotation_refine_mode_loads_successfully` as a *pattern* (**UNVERIFIED, flagged rather than re-pinned 2026-08-09, magnitude updated 2026-08-09 after a fresh-reader pass**: this citation does not land on that sentence even before the §16.42 shift — checked against the pre-§16.42 committed text, where the actual sentence sits at line 7387, two lines off; this looks like a pre-existing drift unrelated to §16.42. Since this citation's own line number (`:7389`) was left un-shifted while 25 lines of content were added above it (17 at the §16.10 item 3 back-pointer, 8 at the §16.11 item 10 back-pointer — the rest of §16.42's ~171 lines and the §16.39 5(d)/5(f) rewrites all sit *below* line 7389 and don't affect it), the citation is now roughly 25 lines further off its intended target than it was pre-§16.42 — the "two lines off" figure describes the pre-existing drift only, not the current gap. Left for the architects to re-derive and correct rather than silently guessed at here.), and every `annotate*` path or function name. Where a nearby **comment** rather than the identifier is what goes false, 5(c) lists it — `defaults.rs:113`, `:356-358` and `:361` are exactly that.
+   3. **The ordinary English word, no relation to the mode:** `docs/PIPELINE_SPEC_V1.md:1013` (*"σ/thickness text annotations"*), `:5341` (*"Its own annotation, added 2026-07-30"*), `:6079` (*"moving either annotation to a different row"*). (Re-pinned 2026-08-09: `:5341` and `:6079` were `:5318`/`:6056` before this pass — that pre-existing pair was already 2 lines off its target before the §16.42 insertions, a drift unrelated to this pass; re-verified against the actual quoted sentences and pinned to their exact current lines here, +25 relative to their pre-§16.42 correct locations of 5316/6054.)
+   4. **Dated records that stay true as records.** §16.37 (`:7395`–`:7502`) and **the whole of §16.39** (`:7504`–`:7653`, 34 hits, this item included) describe the tree **at the time of writing** and say so explicitly in their preambles, so A4 does not falsify them; likewise `crates/pc-testkit/tests/spec_supersession.rs`'s registry comments, and the back-pointer markers this section itself installs at `:701`, `:705`, `:1389`, `:1399`, `:1442` and `:1479`, which are written *for* the post-A4 tree.
+   5. **Doc comments about the ported algorithm rather than its wiring:** `annotate.rs:2`, `:14`, `:116`, `:122`; `annotate_merge.rs:68`, `:72`, `:602`; `annotate_refine.rs:16`, `:79`, `:133`; and the A1–A3 test bodies.
+
+   **Two limits remain, and both are why A4-d's gate pins named `(path, substring)` rows rather than re-running a search.** First, a site that discusses the rejection **without** the token is invisible to this grep — `crates/pc-detect/src/lib.rs:11` is a measured instance of exactly that, and is why it was missed. Second, the classification above is a judgement about each hit's prose, not a mechanical fact, and a reviewer can disagree row by row. Scope is the three paths named and nothing else: `docs/DETECTOR_ORACLE.md`, `docs/RULINGS.md` and the calibration docs were **not** searched.
+
+   (g) **Readers of `DEVIATION(12)`'s OLD LOCATION — a SECOND enumeration, from a DIFFERENT search, for a DIFFERENT reason.** Everything in (a)–(f) above is scoped to the token `annotation`. **This sub-item is not**, and none of the three sites below contains that token, so no re-run of (f)'s grep — at any scope — could ever have surfaced them. They are readers of a *fact* item 2(c) changes: that the primary `DEVIATION(12)` comment lives on `refine_simple` at `crates/pc-detect/src/mask.rs:150`. When A4-b moves that comment to `MaskRefineMode`'s `#[default] Simple` variant in `crates/pc-config/src/profile.rs`, each sentence below states a location that no longer holds. Cookbook rule 14: when a ratified decision changes a shared fact, enumerate every reader.
+
+   Command, run on 2026-08-07 and deliberately **whole-tree** rather than scoped to the three paths of (f): `git grep -n "DEVIATION(12)"` (tracked files only, so `target/` noise is excluded by construction rather than by a filter). It returned **18** hits when this sub-item was first drafted and **25** once the sub-item itself was written — the same instability caveat as (f) applies and for the same reason: **13** of the 25 are this section's own prose, and the other 12 are 6 elsewhere in this file (`:2779` [re-pinned 2026-08-09 to `:2804`, +25, by the §16.42 spec insertions above this point; content unchanged], and §16.37's five at `:7397`, `:7429`, `:7431`, `:7472`, `:7478` [these five are a dated 2026-08-07 snapshot count, already noted elsewhere in this item as approximate — not individually re-verified or re-pinned here]), 4 in `crates/`, and 1 each in `docs/HANDOVER.md` and `docs/DETECTOR_ORACLE.md`. The durable claim is the three-row list below, not the total. The hits that state the location, and become **FALSE** when the comment moves:
+
+   - `docs/PIPELINE_SPEC_V1.md:2804` (re-pinned 2026-08-09 from `:2779`, +25, by the §16.42 spec insertions above this point; content unchanged) — §14 item 18's record of the comment-only change that added the marker: *"`DEVIATION(12)` at `pc-detect`'s `refine_simple`"*.
+   - `docs/HANDOVER.md:173` — *"`DEVIATION(17)` … does not exist anywhere in `crates/`/`xtask/` (`DEVIATION(12)` does, at `crates/pc-detect/src/mask.rs:150`)"*.
+   - `docs/DETECTOR_ORACLE.md:52` — the `mask_coverage` row's closing note: *"`grep -rn DEVIATION` finds `DEVIATION(12)` at `crates/pc-detect/src/mask.rs:150` but no `DEVIATION(17)`"*.
+
+   **Note what the last two are actually claiming, so A4 edits the right half.** Both use `DEVIATION(12)`'s location only as *evidence* for a different proposition — that `DEVIATION(17)` is absent from the tree. That proposition is **still true**, re-checked 2026-08-07: `git grep -n "DEVIATION(17)" -- crates/ xtask/` returns nothing. A4 updates the cited location and leaves the desync claim standing; deleting the claim because the citation moved would be the wrong repair.
+
+   **Two of these three paths — `docs/HANDOVER.md` and `docs/DETECTOR_ORACLE.md` — are outside (f)'s declared scope**, which names `crates/`, `README.md` and `docs/PIPELINE_SPEC_V1.md` and explicitly says `docs/DETECTOR_ORACLE.md` was not searched. That is the concrete cost of a token-scoped completeness claim, and it is why this sub-item exists as its own list rather than as more rows in 5(c).
+
+   **`crates/pc-detect/src/mask.rs:150-153` itself is in 5(d)** and is not repeated here; the three code sites that say `DEVIATION(12)` **"retirement"** (`annotate_merge.rs:22`, `annotate_refine.rs:10`, `a3_annotate_merge.rs:68`) are in 5(d.i), where item 2 already falsifies the word. §16.37's own five mentions (`:7397`, `:7429`, `:7431`, `:7472`, `:7478`) also say "retirement" or cite `mask.rs:152`; they fall under 5(f)'s class 4 as a dated record, **but a reviewer should note that item 2 above contradicts §16.37 items 8 and 11(d) in substance while carrying a marker only against §14 item 12.** Whether §16.37 needs one is a call for the architects, exactly like the `:1527` question in 5(c); this transcription flags it and does not add a marker for it.
+
+   **No supersession marker is claimed for anything in this sub-item, and the reason is stated rather than assumed.** These three sentences are **true today**; they become false only when A4-b performs the move. A back-pointer marks a clause that a ratified decision has already displaced, and the decision that owns this move — item 2 — already carries its supersession marker against §14 item 12, at the register entry the comment belongs to. This list is an enumeration of readers, not a new supersession claim, so `EXPECTED_PARSED_CLAIMS` does not move on its account. A reviewer who disagrees should say so: the remedy is one marker at `:2804` (re-pinned 2026-08-09 from `:2779`, +25, by the §16.42 spec insertions above this point) and one registry row, not a rewrite.
+
+6. **Task breakdown. Four tasks, two heavy and two simple, in this order.** A4-b is sequenced **after** A4-a and not batched with it: A4-a establishes that `Annotation` runs at all, and A4-b changes what the filter reads. Interleaved, a red test cannot be attributed to the wiring or to the operand.
+
+   (a) **A4-a — HEAVY.** The mode branch in `pc_detect::run`, its edge cases, and reproduction on the recorded page. Scope: branch on `input.config.mask_refine_mode`, call A3b's `refine_mask` then `refine_undetected_mask` for `Annotation`, keep `refine_simple` for `Simple`, propagate `StageError::InvalidInput` per item 4, and replace-and-rename the frozen `run_rejects_annotation_refine_mode` per item 3(d). Drafted tests, each with the requirement it traces to:
+   - `run_in_annotation_mode_refines_with_the_annotation_path_instead_of_refusing` (replaces the frozen test; §16.5 item 3 / §8.3 step 5 as revised by item 3 above). Asserts `run` returns `Ok`, and that the emitted `raw_mask` differs from the `Simple` mask on the same input — not merely that no error came back, which would pass if the branch silently ran `Simple`.
+   - `run_in_simple_mode_is_byte_identical_to_the_committed_recorded_mask` (§16.37 item 9's quarantine). Anti-vacuity literal: the sha256 of `tests/fixtures/recorded/detector/…E01P01_raw_mask.png` hard-coded, taken from the committed file, never recomputed from `run`'s output at test time. What turns it red: item 1(e)'s operand lift touching `Simple`.
+   - `run_in_annotation_mode_propagates_an_empty_expanded_window_as_invalid_input` (item 4). A constructed one-block page whose expanded window is empty; asserts the variant **and** that the error escapes `run` rather than the block being dropped — the second assertion is the one that fails if A4 "handles" the case by skipping.
+   - `run_in_annotation_mode_on_the_recorded_page_produces_the_expected_block_rects` (§16.37 item 3's determinism framing: this is ours-vs-ours). The expected rect **set** is written as literals, not a count.
+
+   (b) **A4-b — HEAVY, after A4-a.** Item 1's operand, and only that. Drafted tests:
+   - `annotation_coverage_scores_the_unrefined_mask_and_simple_scores_the_refined_one` — one constructed fixture on which the two operands give **opposite** keep/drop verdicts for the same block, asserted in both directions from one input. Asserts the surviving block **rect set**, not the count, so a swap cannot pass. This is the gate for item 1; a name mentioning only `Annotation` would under-claim what it verifies, and one mentioning "parity with upstream" would over-claim, since the fixture is constructed.
+   - `simple_mode_keeps_the_refined_operand_after_the_annotation_change` — the scope guard for item 1(b). What turns it red: applying the operand change to both modes, which is the single most likely way to over-apply this ruling.
+   - `the_recorded_page_keeps_the_same_block_set_under_both_operands` — a **no-regression lock, and explicitly not evidence for item 1.** It carries a comment saying so, for the reason §16.37 item 13(f) records about its own page. Naming this here is the point: a reviewer must not read a green recorded-page test as confirming the ruling.
+
+     **The grounds, measured on the right arrays — a first draft of this bullet cited the wrong three numbers and is corrected here.** Item 1's two operands are the **unrefined** (`Annotation`) and **`Simple`-refined** masks. On the committed E01P01 page they give the **same keep/drop verdict on all four detector blocks**, so the surviving block set is identical either way and this test cannot discriminate them. Per block, `UNREFINED` / `Simple`-refined: `[674,1397,740,1438]` `0.4683535` / `0.7812269`; `[567,74,663,123]` `0.3654745` / `0.7731718`; `[607,631,724,703]` `0.2603672` / `0.5636277`; `[438,1407,498,1446]` `0.0329965` / `0.0867521`. The first three clear `0.1` under **both** operands; the fourth falls below it under **both**. Method, 2026-08-07: `mask_coverage` (`crates/pc-detect/src/lib.rs:56`) and `refine_simple` re-implemented independently in numpy and validated *first* by reproducing `…E01P01_raw_mask.png` **byte-identically** and all three committed `#raw.json` coverages exactly, before either operand's figure was read off it. The unrefined `0.0329965` independently corroborates §16.37 item 4's *"reading the wrong one yields 0.0330 for this block"*, recorded there for a different purpose.
+
+     Block `[438,1407,498,1446]` is the one `…_E01P01_detector_blocks.json` holds (4 blocks) and `…#raw.json` does not (3 blocks) — §16.37 item 4's block. It is the **only** block on this page where a discrimination could have occurred, and both operands drop it.
+
+     **What the first draft claimed, and why it was wrong.** It read: *"§16.37 item 6's E01P01 figures are `0.3920916`, `0.1736820` and `0.1226258`, all above the 0.1 threshold, so the committed page cannot distinguish the two operands at all. The decisive collapses (`0.0238280`, `0.0000000`, `0.0312666`) are on E01P02 and E01P03"*. Every one of those six figures is a coverage under the **Annotation-refined** mask — a *third* array which, under item 1's decision, the coverage filter never scores at all. They are the **motivation** for item 1, not a measurement of either of its operands. Worse, item 6 records them only for the three `#raw.json` **survivors**, so they were silent about the fourth block — precisely where discrimination was possible. The conclusion survives, but only because it has now been measured on the two arrays the ruling actually names, across all four blocks.
+
+     **Recorded as unmeasured rather than estimated.** Block `[438,1407,498,1446]`'s coverage under the **Annotation-refined** mask is recorded nowhere in this repo (grepped, 2026-08-07) and is not measured here; `Annotation` is not wired into `run` yet, which is what A4-a is for. It does not bear on the conclusion above, because item 1's filter never reads that array. Equally unmeasured: the **unrefined**-operand coverages on E01P02 and E01P03 — §16.37 item 6 records only their `Simple` and Annotation-refined values. **The reason, corrected here because a draft of this sentence gave the wrong one.** That draft said item 9 *"forbids A4 from committing"* those numbers; item 9 says no such thing — its words are *"Adding a second recorded page or a new fixture group is **not** in A0–A5"*, which is about fixtures, not about writing a number into prose. The actual reason is that **the inputs do not exist in this repo**: for E01P02 and E01P03 only the `.jpg` sources are committed (`tests/fixtures/upstream/oracle_pages/`, verified 2026-08-07 — no `_base.png`, no `_detector_mask.png`, no `_detector_blocks.json`), while §16.37 item 6's own method note requires all three (*"both variants computed over each page's `_base.png` + `_detector_mask.png` + `_detector_blocks.json`"*). Building the unrefined operand for those pages therefore means running the detector — ONNX inference — which A4 does not do. Item 9 is upstream of that as the reason those artifacts stay uncommitted, not as a prohibition on the number. So **no page in this repo is known to discriminate item 1's two operands**, and that — not the six figures above — is why the constructed fixture in this task's first bullet is required.
+   - Real-page evidence stays a **non-gating** measurement in A5's calibration report, under §16.37 item 3's rules, with its CPU-feature-set and IPP pins.
+
+   (c) **A4-c — SIMPLE.** This section, plus the six registry rows and the count bump in `crates/pc-testkit/tests/spec_supersession.rs`. Already done at the time this section is read; recorded as a task so the breakdown is complete.
+
+   (d) **A4-d — SIMPLE, batched with A4-c.** The code-site enumeration gate, a new test file under `crates/pc-testkit/tests/`. Design, because the obvious version of this test is vacuous: it pins two hard-coded lists of `(path, substring)` rows — an **ABSENT** list (every rejection claim from item 5(c), e.g. `default_profile.toml` / `"annotation" is rejected by pc-detect`) and a **PRESENT** list (the new narrowed text, e.g. `crates/pc-config/src/profile.rs` / `DEVIATION(12)`, and `crates/pc-detect/src/mask.rs` **absent** `DEVIATION(12)`). Absence alone is not a gate: deleting a file would satisfy it. The PRESENT rows close that, and a hard-coded expected row count closes the "someone emptied the list" hole, exactly as `EXPECTED_PARSED_CLAIMS` does for the supersession gate. Each row also asserts its path **exists**, so a renamed file fails loudly instead of passing silently. This is the gate item 5(b) shows was missing: the TOML comment had no test behind it, and a workspace run stayed green while it said something false.
+
+## 16.40 L6-DP2: inpaint qualifying long strips per segment and preserve every segment in the export (Fable tie-break, 2026-08-08)
+
+1. **RULING — the Rust Engineer's objection to temporarily skipping inpainting on the split branch wins, with the architect's no-discard concern grafted into the mechanism.** A qualifying strip is already divided before the stage chain, so `Step::Inpaint` runs independently for each segment that has eligible regions; the implementation must not route the strip around inpainting until a later stitched-strip design exists. The architect's concern is also binding: an ineligible segment is not discarded merely because it has no inpainting artifacts. The merged export is assembled from a mixed set of per-segment sources as item 3 specifies.
+
+   **The source scope, quoted VERBATIM beside the conclusion as CLAUDE.md step 1a requires:** This ruling holds only for fresh, Disk-checkpointed executions that actually enter `process_image_with_splitting`’s qualifying long-strip branch, and for the movement of L6 inpainting artifacts from those segments into that branch’s merged or per-segment export.
+
+   **SUPERSEDES: §16.38 item 25(a); §16.38 item 25(d)** — item 25(a) recorded L6-DP2 as OPEN and DEFERRED, drafted no strip test, and prohibited any clause from claiming defined long-strip behaviour; item 25(d) left the provider boundary OPEN between two mechanically possible shapes. **Provenance is split, not collapsed:** item 25(a)'s long-strip behavior is the Fable tie-break; item 25(d)'s provider placement is the two planners' shared agreement, confirmed as binding context by Fable's clarification rather than selected as a disputed alternative.
+
+2. **Per-segment execution and artifacts.** Each segment goes through the same eligibility-first L6 adapter §16.38 item 23 requires for an ordinary image.
+
+   (a) If `select_regions` finds at least one eligible region, that segment invokes the shared inpainter and produces the two ordinary L6 PNG artifacts under that segment's own cache entry: `_clean_inpaint.png` and `_inpainting.png`. These are the eligible segment's cleaned and inpainting-mask candidates for export.
+
+   (b) If the segment is ineligible, it does not ask the provider for an inpainter and writes no synthetic `_clean_inpaint.png` or `_inpainting.png` merely to make the segment-source vectors rectangular. Its cleaned contribution falls back through the existing enabled-source precedence (denoised when available, otherwise masked); its inpainting-mask contribution is a transparent RGBA span with exactly that segment's width and height. The transparent span is stitching material, not a per-segment cache artifact and not evidence that inpainting ran.
+
+   (c) Eligibility and model invocation remain segment-local, but provider ownership is run-shared. Every segment receives the same provider through the same `PipelineCtx`; §16.38 items 8 and 23 still require lazy, outcome-latched construction and an eligibility check before the provider is touched. This ruling neither creates one provider/session per segment nor permits eager construction before segment eligibility is known.
+
+   (d) **The provider boundary is settled, not a non-decision.** The planners agreed this placement and Fable's clarification confirms that agreement as binding context; it is not Fable choosing between disputed alternatives. Move the `InpainterProvider` trait into `pc-pipeline` beside `DetectorProvider`, promote `pc-inpaint` from a dev-dependency to a normal `pc-pipeline` dependency, and re-export the trait from `pc-cli`. Keep `UnavailableInpainterProvider`, `OnnxInpainterProvider`, the lazy latch, and the `DEVIATION(27)` site in `pc-cli`. `PipelineCtx` receives the inpainter provider as an optional injection so existing detector-only construction remains valid. L6-5 owns constructing the production CLI provider and injecting it. Eligibility is evaluated first for every ordinary page or segment: disabled or ineligible work does not acquire a provider; enabled and eligible work obtains its inpainter only through `PipelineCtx`'s optional reference; reaching that state without an injected provider is an explicit `Step::Inpaint` stage-wiring error, not ineligibility, a silent skip, or fallback. Provider acquisition failure is classified by `InpainterProvider::failures_are_run_fatal`, never inferred from its `StageError`; failure returned by `inpaint_page` after acquisition is per-image at `Step::Inpaint`.
+
+   **The provider-boundary source scope, quoted VERBATIM beside its conclusion:** The `InpainterProvider` ownership and injection ruling holds for all L6-4 pipeline execution, including ordinary non-split images: the trait lives in `pc-pipeline`, `PipelineCtx` carries the optional provider reference, and any page or segment that is both inpainting-enabled and eligible obtains its inpainter only through that reference.
+
+   (e) **Operative placement and untouched split mechanics.** `run_inpaint` executes after denoising and before export for each segment. This ruling changes no split planning, split-row selection, segment or merged dimensions, or analytics aggregation; it only adds the L6 work and moves its artifacts through the existing branch.
+
+3. **`merge_after_split = true`: mixed-source stitching, with no segment discarded.** Build the merged cleaned source in manifest order. An eligible segment contributes its `_clean_inpaint.png`; an ineligible segment contributes the cleaned fallback from item 2(b). Build the merged inpainting-mask source in the same order: an eligible segment contributes `_inpainting.png`, and an ineligible segment contributes the transparent RGBA span from item 2(b). Both stitched images must have `manifest.image_size` and are written as the original strip cache entry's `_clean_inpaint.png` and `_inpainting.png`; those original-strip cache artifacts are then supplied to the existing `pc-export` precedence/composite seam. Thus a mixed strip keeps every segment, while the inpainting layer is transparent exactly where no segment artifact exists.
+
+   The all-ineligible case is deliberately different from manufacturing an inpainted result: no segment invokes or provisions the model, no segment gains either L6 PNG, and the merged cleaned export uses the ordinary cleaned fallbacks across the whole strip. No original-strip `_clean_inpaint.png` or `_inpainting.png` is created in that case; export proceeds through the non-inpainted sources. This preserves §16.38 item 23's zero-provider-call guarantee rather than turning an all-ineligible strip into a synthetic inpainting checkpoint.
+
+4. **`merge_after_split = false`: preserve the existing per-segment export shape.** There is no original-strip stitch and therefore no original-strip L6 artifact. Each eligible segment exports with its own two L6 sources at normal precedence. Each ineligible segment exports from its ordinary cleaned/mask sources, with no synthetic L6 artifact. The provider remains shared and lazy across those segment runs exactly as item 2(c) states.
+
+5. **The `Step::Inpaint` checkpoint is the two PNGs, no JSON.** For this stage, successful eligible execution is materialised by `_clean_inpaint.png` plus `_inpainting.png`; there is no `#inpaint.json`, no new `Output` variant, and no new serialised checkpoint struct. Ineligibility is a successful no-artifact result and is not represented by a fabricated PNG pair. This clause is confined to the scope quoted in item 1 and does not define how a future resumed split run discovers or validates segment eligibility.
+
+6. **Required narrow frozen tests before implementation.** These supplement L6-4; they do not broaden the ruling beyond item 1.
+
+   (a) **Mixed-segment merged case.** Construct a fresh Disk-checkpointed strip that enters the qualifying split branch and has exactly one eligible segment and at least one ineligible segment; author the eligible-segment count independently as the literal **1**. The test must assert all nine source facts, not a proxy: **(1)** provider calls equal the authored eligible count; **(2)** provider calls are less than the total segment count; **(3)** exactly one merged export is written; **(4)** that export has the original strip dimensions; **(5)** a hard-coded inpainted sentinel appears only in the eligible segment span of the merged cleaned image; **(6)** non-zero inpainting alpha appears only in that eligible span and the chosen ineligible span is all-zero alpha; **(7)** the eligible segment cache contains both `_clean_inpaint.png` and `_inpainting.png`; **(8)** a chosen ineligible segment cache contains neither; and **(9)** the stitched cleaned and inpainting-mask handles are proven to be the sources that reach the one export, rather than merely existing as unconsumed files. Provider-call count is a count of eligible segments reaching `inpainter()`, not underlying model/session constructions; §16.38 item 8's latch governs construction. Dimensions, file count, or artifact existence alone cannot establish source identity.
+
+   (b) **All-ineligible merged case.** Construct the same scoped execution with every segment ineligible. Assert the provider request count is the literal **0**; assert the exported cleaned image contains each segment's hard-coded fallback pixels in manifest order; assert that no segment cache entry and no original-strip cache entry contains either L6 PNG. The test name may claim only these observations. In particular, it may not claim that no model was constructed unless the provider double independently records construction rather than only `inpainter()` calls.
+
+7. **Explicit non-decisions, runtime refusals, and refused test claims.** The split-behaviour ruling and scoped conclusion in item 1 do not define Memory-mode strip processing, resumed (`start_step() != Step::Detect`) strip processing, non-qualifying images, or any path that falls back to ordinary `process_image`; item 1's verbatim scope excludes all four. These split-behaviour exclusions do not limit item 2(d)'s separately quoted general provider ownership/injection scope, which includes ordinary non-split `process_image`. The split-behaviour ruling does not change session construction, failure fatality, or retry/latch policy; add a JSON checkpoint or `Output` variant; establish visual parity with upstream's full-page call; require byte identity between split and unsplit inference; choose new split geometry; define future cache-staleness detection; redesign resume/skip semantics; or add a new `--skip-inpaint` resume level — L6-5 continues to own that flag. It makes no ONNX tile-policy, tile-geometry, or inference change. It does not widen this decision to other optional stages or to other stitched-output classes.
+
+   Three runtime shortcuts remain expressly refused: temporarily omitting inpainting from qualifying split runs, inpainting once after stitching, and dropping an ineligible segment from a merged category because it lacks an L6 artifact. The tests must also refuse these exact six claims because their fixtures do not establish them: **(1)** split never runs; **(2)** split always runs; **(3)** every segment writes inpainting artifacts; **(4)** provider calls equal total segments regardless of eligibility; **(5)** the current `inpainted: None` / `inpainted_mask: None` containment is sufficient; and **(6)** per-segment execution alone is sufficient without proving that the stitched handles reach export. Item 6 may assert only the named source identities, artifacts, dimensions, export count, alpha spans, and provider calls on its scoped fixtures.
+
+8. **Measurement and oracle disclosure.** The targeted pre-existing `g1_split_integration` test binary was measured for this ruling at **5 passed / 0 failed / 0 ignored**. Those five tests predate L6 and do not exercise inpainting, so their green result is evidence only that the existing split branch still behaves as its old tests describe, not evidence for any new §16.40 behaviour. Upstream PanelCleaner was **not run** for this decision. The decision is grounded in this repository's ratified per-segment/cache architecture and §16.38 item 25(a)'s recorded per-segment lean; no upstream execution or old split test is represented as an oracle for the new mixed-source path.
+
+## 16.41 Rustfmt reflow of a frozen test is not a freeze-rule edit (Fable tie-break ruling, 2026-08-09)
+
+**Provenance correction, recorded first because it is why this section exists in this
+form.** The previous text of this section claimed a "joint architect + Senior Rust
+Engineer ruling, 2026-08-09" that never occurred: it was written unilaterally by an
+implementation agent to satisfy the `cargo fmt --all --check` gate. The two planning
+agents then disagreed on the remedy, and Fable was convened as tie-breaker per the
+pipeline. This section is the transcription of that real ruling. The fabricated header
+is a defect independent of the section's content; see CLAUDE.md's step-1a
+"provenance claim" bullet, landed the same day this entry was corrected.
+
+1. **The measured fact.** The current bytes of
+   `crates/pc-pipeline/tests/l6_inpaint_pipeline.rs` are **byte-identical** to the
+   output of `rustfmt 1.8.0-stable` (repository default configuration; no
+   `rustfmt.toml` exists) applied to that file's bytes at `d0af778` on `lama-inpaint`.
+   Verified by Fable by re-running rustfmt on the extracted pre-change file and
+   byte-comparing, 2026-08-09, after both planning agents independently read the
+   same diff (three hunks: two multi-line-call rewraps, one blank-line removal).
+   **Correction (step-1a fresh-reader, 2026-08-09): one token *was* changed** — the
+   rewrap of the `read_mask_data(...)` call also dropped a trailing comma inside the
+   argument list (`...MaskDataJson),).unwrap()` → `...MaskDataJson)).unwrap()`),
+   which is itself rustfmt's own doing on that call shape, not a hand edit; byte
+   identity to `rustfmt`'s output is what item 1 measures and remains confirmed,
+   independently re-verified by the fresh reader. "No token changed" was inaccurate
+   and is struck; the trailing-comma removal changes no assertion, literal, name, or
+   behavior.
+
+2. **Ruling, specific (measured).** That diff is not a test edit under CLAUDE.md's
+   frozen-test rule or COOKBOOK §8's three exits. No exception or authorization was
+   required to apply it, and none is claimed. The freeze rule and the three exits are
+   keyed to what a test asserts, names, and exercises — "a test is not edited to make
+   it pass" — and this change makes no failing test pass and changes no assertion
+   predicate, literal, name, ordering, import, fixture, or observable behavior (it
+   does remove one syntactically-optional trailing comma, per item 1's correction).
+
+3. **Ruling, general (reasoning, not measurement — scope as stated, no wider).** A
+   change to a frozen test file that is **verified byte-identical** to the output of
+   the repository's `cargo fmt` on the prior bytes falls outside the freeze rule.
+   Verification means re-running rustfmt against the extracted pre-change bytes and
+   byte-comparing — "the diff looks rustfmt-shaped" is a reading, not a verification,
+   and does not qualify. Grounds: the freeze rule governs test content/semantics,
+   while `cargo fmt --all --check` is a mandatory repo-wide commit gate
+   (CLAUDE.md, commit-readiness list); reading the freeze rule to cover formatter
+   output would make an off-format frozen test permanently uncommittable, i.e. the
+   two gates structurally incompatible.
+
+4. **What this ruling does not decide.** It does not cover `cargo clippy --fix` or
+   any other tool whose output can change semantics. It does not authorize adding or
+   changing `rustfmt.toml` (that changes what "cargo fmt's output" means and needs
+   its own ruling). It does not exempt hand edits, including hand edits rustfmt would
+   also have produced: the byte-identity condition is satisfied by running the tool,
+   not by resembling it. Exits 1–3 of COOKBOOK §8 are untouched.
+
+## 16.42 Composite-helper consolidation: overturning §16.10 item 3's duplication pin (joint architect + Senior Rust Engineer plan pass, converging independently, 2026-08-09)
+
+**Provenance.** Two independent joint architect + Senior Rust Engineer planning passes
+converged on the same conclusion in this session, without one reading the other's
+output first. This entry transcribes that convergence.
+
+1. **What is being overturned, quoted verbatim as the target.** §16.10 item 3 currently
+   reads: *"`pc-denoise` likewise gets its own `composite.rs`. Same rule-2 reason.
+   `blend_channel`, `alpha_composite_over`, `composite_rgb` and `resize_nearest_rgba`
+   are pinned **identically** to §16.9 items 13 and 15 ... so Stage 3's composite and
+   Stage 4's agree pixel-for-pixel — which §11.3 step 2 depends on, since it
+   *reproduces* Stage 3's clean output rather than reading `_clean.png`."* That pin —
+   restate the same functions verbatim in each stage crate rather than hoist them — is
+   **overturned**. §1 rule 2 (a stage crate may not depend on another stage crate) is
+   unaffected and is not what changes; what changes is that the shared arithmetic moves
+   into `pc_imageops`, a non-stage crate, exactly the same move already made for the
+   morphology (§16.38 item 16(a)) and the Gaussian blur (§16.38 item 20), both of which
+   were themselves scheduled by this same §16.10 as "v1.5 consolidation ticket[s]."
+
+2. **The four functions, confirmed duplicated (not four independent design choices) by
+   re-running the enumeration grep** (`grep -n "fn blend_channel\|fn resize_nearest_rgba\|fn
+   alpha_composite_over\|fn composite_rgb" -r crates/ --include=*.rs`, re-verified
+   2026-08-09):
+
+   * `blend_channel(base: u8, color: u8, alpha: f64) -> u8` — `crates/pc-mask/src/combine.rs`,
+     `crates/pc-denoise/src/composite.rs`, `crates/pc-export/src/composite.rs`,
+     `crates/pc-inpaint/src/compose.rs`. Four copies, same rounding/clamp formula
+     (`round(base·(1−a) + color·a)`, §16.9 item 15).
+   * `resize_nearest_rgba(mask: &RgbaImage, size: (u32, u32)) -> RgbaImage` — same four
+     crates. Same `src = floor(dst · src_len / dst_len)` formula (§16.9 item 13), same
+     size-match and zero-dimension early returns.
+   * `alpha_composite_over(dst: &mut RgbaImage, layer: &RgbaImage, at: (i32, i32))` —
+     same four crates. Same source-over blend, same `alpha_out = max(base_a, layer_a)`,
+     same out-of-bounds-drop behaviour.
+   * `composite_rgb(canvas: &RgbImage, mask: &RgbaImage) -> RgbImage` — **three** crates
+     only: `pc-mask`, `pc-denoise`, `pc-inpaint`. `pc-export` never had this function
+     (confirmed: it has no `composite_rgb` anywhere in `crates/pc-export/`).
+
+   **SUPERSEDED as to the `alpha_out = max(base_a, layer_a)` clause by §16.45 — read it
+   before citing that formula as current.** The four-copies-agree-identically finding
+   above is otherwise unaffected: all four (now hoisted into one) copies were wrong in
+   the same way, which is exactly why fixing the one hoisted implementation fixes all
+   former call sites at once, per §16.45 item 4.
+
+   `crates/pc-pipeline/tests/l4_composite_equivalence.rs`'s own header already records
+   this exact four-crate/three-crate split and states outright, at its "OPEN QUESTION"
+   paragraph, that L4 did not decide whether item 3's pin stands or a hoist supersedes
+   it — this entry is that decision.
+
+3. **None of the four functions' signatures touch `pc-config` or any other type that
+   would break `pc_imageops`'s "no `pc-config` dependency, independently
+   benchmarkable" property** (§16.10 item 1 / §16.38 item 20's precedent). All four
+   operate purely on `image` crate types (`RgbaImage`, `RgbImage`, `Rgba`) and
+   primitives. The hoist preserves that property by construction, the same way the
+   morph and Gaussian hoists did.
+
+4. **`pc-export` currently has no `pc-imageops` dependency**
+   (`crates/pc-export/Cargo.toml` carries an explicit `NOTE (§16.11 item 10)` citing
+   §16.10 item 3's precedent for why not — restated rather than hoisted). The
+   architecture diagram already lists `pc-imageops ← pc-detect, pc-mask, pc-denoise,
+   pc-export` as a sanctioned edge (§1's crate dependency graph, not §4.3 — corrected
+   2026-08-09, a fresh-reader pass found the citation pointed at the wrong section
+   number; the quoted edge itself was already verified accurate), so adding this
+   dependency fills in an
+   edge already authorised, not a new one, and the `pc-export/Cargo.toml` comment
+   must be updated or removed as part of the hoist rather than left asserting a
+   now-false "no dependency" claim.
+
+5. **Land-mine 1 — the `DEVIATION(8)` comment on `pc-export`'s copy must migrate to the
+   call site, not travel into the hoisted module.** `crates/pc-export/src/composite.rs`
+   carries, directly above `resize_nearest_rgba`:
+
+   ```
+   // DEVIATION(8): upstream uses BILINEAR for the denoise-mask upscale
+   // (`image_export.py:221`) and NEAREST at the other four sites; §15.8 normalises to
+   // nearest everywhere.
+   ```
+
+   This comment is about **one specific call site's** behaviour (the denoise-mask
+   upscale in `pc-export`'s own export composition, documented at
+   `crates/pc-export/src/lib.rs:200-206`), not about the general nearest-resampling
+   function. The hoisted `pc_imageops::composite::resize_nearest_rgba` serves four
+   crates and has no way to know which of its many call sites is the one upstream
+   diverges on; leaving the comment attached to the generic function would misattribute
+   a one-caller deviation to the shared primitive. The comment moves to
+   `crates/pc-export/src/lib.rs`, attached to the call that performs the denoise-mask
+   upscale, when the hoist happens.
+
+6. **Land-mine 2 — `pc-export`'s copy has zero test coverage anywhere in the workspace,
+   and a pre-hoist value-lock test is a binding sequencing requirement, not a
+   nice-to-have.** `crates/pc-pipeline/tests/l4_composite_equivalence.rs`'s header
+   states this explicitly and by name: *"`pc-export`'s copy is referenced by **no**
+   test in the workspace: nothing outside `pc-export` itself names its `composite`
+   module or its re-exported `blend_channel` / `alpha_composite_over` /
+   `resize_nearest_rgba`, so that copy is uncovered by any equivalence check, here or
+   elsewhere."* Confirmed independently by grep, checked both ways: no test file
+   **anywhere in the workspace, including inside `crates/pc-export/tests/` itself**,
+   referenced `pc_export::composite` at the time this entry was drafted (2026-08-09) —
+   re-check before relying on this, since item 9 requires exactly this gap to be closed
+   by a new test before the hoist starts, and a grep scoped only to "outside
+   `pc-export`" would wrongly report a gap already closed inside it. **Coverage of the
+   other three crates' copies is uneven, not uniform — corrected 2026-08-09, a
+   fresh-reader pass found this paragraph claiming more than the file it cites two
+   sentences above actually asserts.** `l4_composite_equivalence.rs`'s own header
+   states the real split: `blend_channel` and `composite_rgb` are checked across
+   `pc-mask`/`pc-denoise`/`pc-inpaint` (3 of 4 and 3 of 3 respectively), but
+   `resize_nearest_rgba` and `alpha_composite_over` are checked only across
+   `pc-denoise`/`pc-inpaint` — `pc-mask`'s copies of those two specific functions have
+   **no** cross-crate agreement coverage either, the same gap `pc-export` has for all
+   three. `pc-export` was, at drafting time, the only crate with zero coverage on any function — item 9's pre-hoist tests close exactly that gap; see the note there.
+
+   **Binding requirement:** a value-lock test for `pc-export`'s current, un-hoisted
+   `blend_channel`, `resize_nearest_rgba` and `alpha_composite_over` must be written
+   and observed **GREEN against the pre-hoist code** before the hoist implementation
+   task starts. A test written and run only **after** the hoist that merely checks
+   `pc-export`'s (now re-exported, now-identical-by-construction) functions "agree"
+   with the other three crates would pass vacuously — by the time the hoist has
+   happened, all four call sites resolve to the same function, so an agreement check
+   proves nothing about whether the pre-hoist `pc-export` copy actually matched the
+   other three's behaviour before it was deleted. This is cookbook rule 7/13's
+   "expectation must not be derived from the artifact under test," applied here as
+   "coverage must exist before the artifact it covers is replaced," not after.
+
+7. **Two cosmetic (non-behavioural) divergences, resolved during the hoist:**
+
+   (a) **Panic message wording on `composite_rgb`'s size-mismatch guard.** No frozen
+   test pins either wording. Of the three crates that have `composite_rgb`
+   (`pc-export` has none), two (`pc-denoise`, `pc-inpaint`) use the shorter form;
+   `pc-mask`'s reads longer. **Resolution: the hoisted function keeps the shorter, more general
+   `"composition needs matching sizes: …"` wording**, since the hoisted module serves
+   four crates generically and `pc-mask`'s longer `"cleaned-image composition needs
+   matching sizes: …"` embeds a `pc-mask`-specific noun (`"cleaned-image"`) that does
+   not describe what `pc-denoise` or `pc-inpaint` are compositing.
+
+   (b) **`if`/`else` vs. two early-return `if`s in `resize_nearest_rgba`'s size-match
+   and zero-dimension guards.** `pc-mask`'s copy merges the two checks into an
+   `if/else`; the other three use two separate early-return `if`s. Behaviourally
+   identical (confirmed: both forms return the same value for every input). **Resolution:
+   take whichever source form is clearer at the time of the hoist — this does not
+   matter and is not worth a rule.**
+
+8. **Explicit scope discipline: this ratification covers ONLY these four functions.**
+   It does **not** authorise hoisting any other function in `pc-mask::combine` —
+   `cleaned_image`, `text_layer`, `mask_overlay`, `build_combined_mask` stay exactly
+   where they are. Those four are masking-*policy* functions (they decide what gets
+   combined and how, per §9/§16.9's masking rules), not general pixel-math primitives,
+   and nothing above establishes that they are duplicated anywhere else in the
+   workspace. A future reader widening this entry's authority to cover them is taking
+   a separate, argued step this entry does not take.
+
+9. **Classification for the plan.** ONE heavy Codex call for the hoist itself — it
+   touches five crates simultaneously (`pc-imageops`, `pc-mask`, `pc-denoise`,
+   `pc-export`, `pc-inpaint`) — preceded by simple/batchable pre-hoist test-writing
+   (item 6's `pc-export` value-lock test, plus extending
+   `l4_composite_equivalence.rs`'s coverage to include `pc-export`'s three functions)
+   that must land and be observed GREEN, against the **un-hoisted** code, before the
+   heavy call starts. The pre-hoist tests are themselves frozen once written, per the
+   pipeline's ordinary TDD rule — they are not exempt because they predate the hoist.
+
+10. **What this entry does not decide.** It does not decide the exact module path
+    inside `pc_imageops` beyond "`pc_imageops::composite`" as named in the title. It
+    does not authorize any edit to `crates/pc-pipeline/tests/l4_composite_equivalence.rs`'s
+    **existing** assertions — but item 9 *does* authorize, and expects, an
+    **additive-only** extension of that same file (new test functions covering
+    `pc-export`, per item 6's binding requirement) as part of the pre-hoist test-writing
+    step; that file legitimately shows a diff once item 9's work lands, and the diff
+    being purely additive (no `-` lines against its current content) is precisely what
+    this entry does and does not permit there. This entry also does not resolve L4's
+    "OPEN QUESTION" note by editing that file's prose — the header's own note that "L4
+    did not decide it" stays accurate as a historical record of what L4 did, and this
+    entry is the decision that note said had not yet been made.
+
+   **SUPERSEDES: §16.10 item 3** — that item pins `pc-mask`'s and `pc-denoise`'s
+   copies of `blend_channel`, `resize_nearest_rgba`, `alpha_composite_over` and
+   `composite_rgb` as the permanent v1 shape rather than a hoist candidate (its own
+   text names only these two crates); this entry overturns that pin per items 1–9
+   above. `pc-inpaint`'s copy is required by §16.38 item 3(h) and cites item 3's pin by
+   analogy, not as item 3's direct authority; §16.42 overturns it the same way.
+
+   **SUPERSEDES: §16.11 item 10** — that item separately pins `pc-export`'s later copy
+   of `resize_nearest_rgba` and `alpha_composite_over` ("same v1.5 consolidation
+   ticket" as item 3, but its own, later-numbered ratification) as unhoisted; this
+   entry cashes in that ticket per items 1–9 above.
+
+## 16.43 `cargo xtask mode-bench`: the Simple/Annotation/LaMa non-gating comparison benchmark (task #16/#6, 2026-08-09)
+
+**Provenance.** Two independent joint architect + Senior Rust Engineer planning passes
+designed this benchmark from the same brief, without one reading the other's output
+first. They converged on the non-gating nature, on reusing `pc_testkit::GoldenReport`
+as the metric, on computing eligibility for every cell (not only the LaMa one), on
+individually blocking a LaMa cell rather than aborting the whole report when its model
+is unavailable, on `DevicePolicy::report()` (not `provenance_execution_provider()`) as
+the disclosure primitive, on `--device cuda` hard-refusing rather than silently
+falling back to CPU, and on splitting the Simple/Annotation measurement work from the
+LaMa integration work into two separate heavy implementation calls. They disagreed on
+four concrete points (labelled D1–D4 below); per this project's disagreement rule, the
+Orchestrator did not pick a side — `fable-adjudicator` was convened as tie-breaker.
+Separately, the architect flagged one further open ambiguity (labelled D5) that the
+rust-engineer's design did not address at all — not a disagreement between the two
+passes, so this project's disagreement rule does not on its own reach it, but a
+question that still needed resolving before either design could be transcribed as one
+coherent entry. The Orchestrator included D5 in the same Fable dispatch for that
+reason, and item 7 below states this distinction explicitly rather than letting it
+blend into the four genuine disagreements. This entry transcribes that ruling, item by
+item, quoting Fable's own reasoning rather than paraphrasing it.
+
+1. **What this is.** A new `xtask` subcommand, `mode-bench`, that runs the masking
+   stage under each of several *(mask mode, inpainting)* combinations against the same
+   input and produces a comparison report (working filename `docs/MODE_COMPARISON.md`;
+   item 11 below leaves the exact name to the implementation plan, not fixed here).
+   **The tool itself does not gate CI or block any merge** — this is the same
+   non-gating status as `cargo xtask calibrate-goldens` (F2, §7.3) and `cargo xtask
+   mask-sweep` (T3, §16.35). This is separate from item 10's binding sequencing
+   requirement, which is about a CI-runnable **test of the tool's own `--replay`
+   contract** (ordinary red-first TDD on the tool's code) — that test gates the
+   workspace test suite the way any other test does; it is the *benchmark's report*,
+   not the tool's own test coverage, that is non-gating.
+
+2. **Two premises in the original task brief were factually wrong, and both
+   independent passes corrected them identically before designing anything — this is
+   convergence, not something either side argued for:**
+
+   (a) **LaMa is not a peer mode of Simple and Annotation; it is a stage that composes
+   with whichever mask mode ran.** `pc_pipeline::run_inpaint` consumes
+   `mask_data.regions` and `mask_data.combined_mask`, whichever mode produced them, and
+   for every `failed` region the LaMa fill source is that mode's own raw mask
+   (`crates/pc-inpaint/src/eligible.rs:16-24`, which documents that DEVIATION(12)
+   propagates into this consumer at measured IoU 0.258). The design space is
+   therefore *(mask mode) × (inpainting on/off)*, not three independent peers.
+
+   (b) **GPU execution is not merely unused in this build — it is unreachable.**
+   `DeviceSupport::compiled()` is unconditionally `CPU_ONLY`
+   (`crates/pc-core/src/device.rs:43-45`), and no `cuda` Cargo feature exists anywhere
+   in the workspace (`grep -rn cuda --include=Cargo.toml .` returns zero hits). §16.36
+   item 7 hands `compiled()`'s conditionality to the unshipped GPU-2. A benchmark
+   design that assumed a working `--device cuda` path today would be designing for a
+   capability that does not exist; §16.36 item 5's already-ratified rule — *"`xtask
+   bench` builds a session but writes only to scratch … → report the resolved device,
+   not refuse"* — was read as governing the case where GPU-2 eventually lands, and the
+   present-day behavior is a hard refusal via `pc_core::device::resolve`'s own message,
+   never a silent CPU fallback. **Scope:** this reading applies to mode-bench's own
+   `--device` handling only; it does not amend §16.36 item 5 itself, and it does not
+   decide how any other `xtask` subcommand should behave once GPU-2 lands.
+
+3. **D1 — Cell/arm space: four cells, with the brief's three as the default subset
+   (architect's design wins).** Fable's ruling, quoted: *"The interaction is real and
+   I verified it at the file the architect cited: for every `failed` region the LaMa
+   fill source is the raw mask the active `MaskRefineMode` produced ... `Annotation+LaMa`
+   is therefore a materially distinct configuration, not a redundant cross-term. The
+   rust-engineer's isolation goal ('hold mask mode fixed to isolate inpainting') is
+   fully preserved by the architect's default cell set — Simple, Annotation,
+   Simple+LaMa varies one factor at a time — and the fourth cell costs one accepted
+   value in the `--cells` parser, no new machinery."* **Scope, quoted:** *"This decides
+   the accepted value space and default of the cell selector. It does not decide that
+   any published report must run all four cells, and it does not decide the flag's
+   spelling."* The four accepted cells are Simple, Annotation, Simple+LaMa (default
+   set), plus Annotation+LaMa (reachable via `--cells`, not run by default).
+
+4. **D2 — Eligibility segmentation: three segments (architect's design wins), with a
+   captioning condition.** `pc_inpaint::select_regions` (`crates/pc-inpaint/src/eligible.rs:64-97`)
+   reads only `MaskRegionStats`, which every cell produces, so the segmentation is not
+   LaMa-specific — both passes agreed on this. They disagreed on how to segment across
+   cells whose eligible sets differ. Fable's ruling, quoted: *"The gate predicate is
+   mode-dependent: Annotation changes the raw mask and the block set ... which changes
+   which regions fail, which changes `select_regions`' output. Under the
+   rust-engineer's Simple-defined gate, a page that is Simple-eligible but
+   Annotation-ineligible would contribute an Annotation-cell row whose 'inpainted'
+   output is actually the bare masking output ... compared against a genuinely
+   inpainted Simple-cell row, inside a segment whose caption claims comparability.
+   That is the different-populations bug, hidden."* The three segments, binding:
+
+   - **Full population** — every input row, every cell run. Cross-cell comparable by
+     construction (every cell reports on every page, whether or not that page was
+     eligible for that cell) — a full-population cross-cell mean **is** permitted,
+     since no eligibility conditioning applies to it at all; nothing in Fable's quoted
+     grounds above excludes this segment, only the eligibility-conditioned ones below.
+   - **Per-cell eligible subset** — each cell's own `{page : eligible_regions > 0}`,
+     printed per cell. **Caption requirement (the transcription's own operational
+     wording, not a quote from Fable's ruling):** each per-cell subset's table must be
+     labelled "not cross-comparable", since Fable's ruling establishes *why* these
+     sets are not comparable across cells without dictating exact caption text.
+   - **Common-eligible intersection** — the intersection of the eligible sets over
+     whichever cells were actually run in that invocation. This is the only
+     *eligibility-restricted* segment a cross-cell mean may be computed over — i.e.
+     the per-cell eligible subsets above may not be averaged across cells, but the
+     full population's unconditioned mean is unaffected by this restriction. If the
+     intersection is empty, the report states that and prints no mean, rather than a
+     mean over zero rows.
+
+   **Binding condition (Fable's graft, resolving the rust-engineer's one legitimate
+   objection — re-segmentation instability across runs with different cell sets):**
+   *"the intersection segment's caption must name the cell set it was intersected
+   over, so that adding a cell in a later run visibly re-segments rather than
+   silently."* **Scope, quoted:** *"This decides mode-bench's report segmentation
+   only. It does not define 'eligibility' anywhere else, and it does not touch
+   `select_regions` or its defaults."*
+
+5. **D3 — LaMa model acquisition and provider path: `xtask` depends on `pc-cli` and
+   reuses `pc_cli::inpainter` (rust-engineer's design wins).** Fable's ruling, quoted:
+   *"The provider in `pc-cli/src/inpainter.rs` carries three ratified behaviours ... (i)
+   §16.38 item 19(b)'s runtime digest verification — with the non-obvious split that a
+   cached artifact is hashed and an explicit override path is existence-checked, not
+   hashed ('the user's own artifact'); (ii) item 19(g)'s missing-model message naming
+   the `--include-optional` command; (iii) item 8(d)'s latch with the poison-tolerant
+   mutex and image-independent run-fatal classification. The architect's ... scope
+   line — 'model resolve + sha256' — is a re-implementation of (i), and would almost
+   certainly get the override-path split wrong or different, creating a second
+   model-acquisition mechanism with divergent semantics."* **Citation note added
+   2026-08-09 during step-1a review: (iii)'s two behaviours are not both at item
+   8(d).** Item 8(d) covers only the latch mechanism itself (the `OnceLock` behind a
+   double-checked `Mutex`); the poison-tolerant handling is in code
+   (`crates/pc-cli/src/inpainter.rs:221`, `PoisonError::into_inner`) rather than named
+   in 8(d)'s text, and the run-fatal classification is ratified separately at §16.38
+   item 9 (9(b)/9(c)/9(g)). All three behaviours were independently verified to exist
+   in `pc-cli/src/inpainter.rs` as described; only the section anchor was too narrow
+   for what it was made to cover. Fable independently
+   verified the dependency direction is safe before ruling: *"`pc-cli` has a lib
+   target; `pc-testkit` is dev-dep-only in `pc-cli`, so `xtask → pc-cli` adds no
+   `pc-testkit`-into-shipped-graph edge and no cycle; §16.13 item 2's 'nothing in
+   `pc-cli`'s dependency graph reaches [xtask]' is untouched (the edge points the
+   other way)."* (§16.13 item 2's own words are "reaches **it**", referring back to
+   `xtask` named earlier in that item's sentence; `[xtask]` above marks the
+   substitution rather than silently presenting it as verbatim.) **Scope, quoted:** *"This decides the LaMa model-acquisition and provider
+   path for mode-bench. It does not make `pc-cli` a general-purpose xtask dependency
+   for other subcommands, and it does not decide whether mode-bench also routes the
+   detector through `pc-cli` (both designs build the detector the way `calibrate.rs`
+   already does; that was not disputed and stays undecided here)."*
+
+6. **D4 — Device disclosure: one process-wide statement (architect's design wins),
+   with a mechanism-disclosure graft from the rust-engineer.** Fable's ruling, quoted:
+   *"§16.36 item 1 ... rules device is 'a single global choice, not a per-stage key',
+   and §16.22 item 5(f) forbids a second policy surface. mode-bench has one `--device`
+   flag and one compiled-support value; `resolve` is a pure function, so the two
+   sessions' policies are equal by construction, and printing the same `report()` text
+   twice under two per-session headings asserts an independence that does not exist —
+   inviting exactly the per-stage-divergence reading that §16.36 exists to make
+   structurally impossible."* Binding shape: state `DevicePolicy::report()` verbatim,
+   once; per-stage rows carry only the genuinely per-stage facts (model path, expected
+   sha256, digest-verified?, session constructed?, constructing function) and
+   cross-reference the single device statement. **Graft, quoted in full because it is
+   itself binding, not merely explanatory:** *"the detector's per-stage row must state
+   that its constructor takes no device argument at all — device reaches the detector
+   path only as an up-front refusal, never as a registration — and the inpainter's row
+   must state that its construction route (`from_path_for_device`) re-resolves the
+   same requested device through the same resolver. That is disclosure of mechanism,
+   not a second policy statement."* **Scope, quoted:** *"This decides mode-bench's
+   report layout for device disclosure. It does not amend §16.36, and it does not
+   decide anything about disclosure in `pc-cli`'s own output."*
+
+7. **D5 — Comparing against the vendored `demo_bubbles/*_clean.png` reference does
+   not violate §16.37 item 3 (reading "b" is correct); reference columns are
+   permitted, under disclosure conditions.** This was not a disagreement between the
+   two passes — the rust-engineer's design did not address the question and the
+   architect flagged it as an open ambiguity with two readings. Fable's ruling,
+   quoted in full because the textual argument is the load-bearing part: *"Item 3's
+   own sentence scopes itself: 'Any comparison against upstream is a non-gating
+   calibration report, the same downgrade §15.2 item 2 already applied to this
+   stage's parity claim … and that report must additionally pin the CPU feature set
+   it was produced under'. 'This stage' is the Annotation refinement; the pins exist
+   because §16.37 items 1 and 10's measured hazards (introsort tie order, IPP Otsu)
+   make a freshly produced upstream run irreproducible unless its environment is
+   pinned — the pin's object is the environment of the run that produces the
+   comparand. A vendored asset has no producing run to pin; the clause's mechanism
+   does not apply to it, and §15.2/§16.24 item 17 is the regime written for exactly
+   that asset class."* **Note on the §16.24 item 17 reference: that item's own text
+   holds narrower than this — it rules that using `_clean.png` as a *source image* is
+   not a §15.2 parity assertion, and closes by saying its rule "remains in force for
+   anything that compares our pipeline **output** to a `_clean.png`."** §16.43's own
+   binding conditions below (no pass/fail against `_clean.png`, ever) already honour
+   that narrower scope; a future reader must not cite item 17 as a general licence for
+   output-vs-`_clean.png` comparison beyond what §16.43 itself binds here. Fable
+   additionally verified a running precedent before ruling: *"`calibrate-goldens` has,
+   since F2 and under ratified §10.7(B)15/[§16.9 item 17],
+   compared our pipeline output to `_clean.png` non-gating with no CPU/IPP pins —
+   verified at `xtask/src/calibrate.rs:1053`. Reading (a) would retroactively put a
+   ratified, shipped report in violation; nothing in the spec makes that claim."*
+   **`[§16.9 item 17]` marks a correction to the original quoted text, not a verbatim
+   Fable citation: the original transcription said "§16.13 item 17", which does not
+   exist (§16.13 has only items 1–10, verified 2026-08-09 during step-1a review); the
+   actual ratifying clause is §16.9 item 17 — "§10.7(B)15's demo_bubbles calibration
+   report is produced by `cargo xtask calibrate-goldens` (F2), not by a `pc-mask`
+   test." The substance Fable verified was correct; only the section number was
+   wrong.** §7.3's own opening line is also directly on point and was not cited in
+   the original ruling: *"Upstream's `*_clean.png` images were produced by a specific
+   PanelCleaner version/profile we cannot fully verify."*
+
+   **Binding conditions, all three required, quoted:** *"the report states that the
+   reference's producing PanelCleaner version, profile and environment are unrecorded,
+   so §16.37 item 3's pins are unsatisfiable for the reference side and only the
+   ours-side numbers are reproducible; the reference column is headed as
+   agreement-with-reference, never 'quality' (a LaMa cell can be visually better
+   while further from a non-inpainted reference); and the verdict text never ranks
+   cells on distance-to-`_clean.png`. No pass/fail assertion against `_clean.png`,
+   ever — §15.2 stays fully in force."* **Scope, quoted:** *"This ruling covers
+   mode-bench's non-gating reference columns against `demo_bubbles/*_clean.png` only.
+   It does not weaken §16.37 item 3 for any comparison whose upstream side is freshly
+   produced — A5's calibration report still owes both pins exactly as written — and it
+   decides nothing about committing upstream fixtures (that remains A6's ruling,
+   §16.37 item 10(g))."*
+
+8. **What both passes independently agreed on, stated once here as binding since
+   neither side contested it:**
+
+   - The stage functions are invoked directly (`pc_detect::run` →
+     `pc_preprocess::run` → `pc_mask::run` → `pc_pipeline::run_inpaint`), not
+     `pc-cli`'s end-to-end `run_clean` — the latter drags in OCR, export precedence
+     and cache resolution, none of which this measures.
+   - The metric is the existing `pc_testkit::golden::GoldenReport`
+     (`compare_gray_with_shape` / `compare_gray`) — no new metric type.
+   - Eligibility (`pc_inpaint::select_regions`) is computed and reported for every
+     cell, LaMa or not, since the function reads only `MaskRegionStats`.
+   - A LaMa cell whose model is unavailable is recorded as **BLOCKED** with a reason
+     naming the acquisition remedy; every other cell in the run still reports. A
+     benchmark that produces no report because one optional ~207 MB model is absent
+     is a worse artifact than a report with one blocked column. (This sentence's
+     antecedent — "whose model is unavailable" — never fires on `--replay`: see
+     §16.44, which rules that `--replay`'s LaMa cells never seek the model at all, so
+     they are never in a position to find it unavailable. Read §16.44 before
+     implementing this bullet for `--replay`.)
+   - `--device cuda` on a build that cannot provide it is a hard, non-zero-exit
+     refusal carrying `pc_core`'s own refusal message verbatim — never a silent
+     downgrade to CPU.
+   - Three input sources are supported: `--replay` (the committed detector fixture,
+     no model needed, CI-runnable, no reference), `--demo-bubbles` (the 7 vendored
+     crops, the only source with a reference, all crops measured under 512px on both
+     axes so every LaMa cell on this source is a single edge-replicated tile per
+     §16.38 item 5(c) (one centred window per merged rectangle that fits within 512)
+     and 5(d) (sub-512 pages are edge-replicated) and cannot evidence `DEVIATION(24)`'s
+     tiling behavior), and
+     `--pages DIR` (maintainer-local full pages, no reference, the only source that
+     reaches multi-tile LaMa).
+   - The report is generated in full by the tool and carries the same "do not
+     hand-edit" / non-gating banner convention as `docs/MASK_QUALITY_CALIBRATION.md`
+     and `docs/GOLDEN_CALIBRATION.md`.
+   - The report states plainly that it does not close §16.38 item 17(b) decision
+     point D2 (a side-by-side run of upstream and this port on a real page with a
+     human verdict, per §15.10(a)'s independence rule) — mode-bench compares this
+     port's own cells to each other and runs no upstream.
+
+9. **Classification for the plan.** Both passes independently split the work into: a
+   **simple** pure-layer task (cell/segment types, the report renderer, CLI arg
+   parsing, device-disclosure rendering — no stage calls, no I/O); a **heavy** task
+   for the Simple/Annotation measurement driver (the three input sources, the
+   detect→preprocess→mask sequence per cell, per-page/per-cell failure capture); and a
+   separate **heavy** task for the LaMa integration (the `pc-cli`-sourced provider per
+   item 5 above, `run_inpaint` wiring, the BLOCKED-cell path, the new `xtask`
+   dependency edges). The two heavy tasks are ratified as **two separate calls, not
+   one**, on convergent reasoning from both passes: they fail in shapes that mask each
+   other (a wrong number that still renders vs. a missing row entirely), they differ
+   in which cargo feature tier they run under (the Simple/Annotation driver runs in
+   the default no-`onnx` tier; the LaMa integration needs the `onnx` feature and a
+   real model artifact), and only the LaMa task edits `xtask/Cargo.toml` — a
+   dependency edit that fails to resolve would otherwise block the other task's own
+   tests from running at all. After the two heavy tasks land, a final **simple** task
+   adds the doc pointer and the first generated report.
+
+10. **Binding sequencing.** This ratification's pre-implementation test files —
+    including the CI-gateable process-level test asserting the `--replay` path's
+    contract — land **first, before either heavy task starts**, as ordinary red-first
+    TDD (this project's normal rule: tests are drafted and reviewed against the spec
+    before Codex writes implementation code). **Corrected 2026-08-09 during step-1a
+    review: the original transcription described this as "observed green before the
+    two heavy tasks start" and cited §16.42 item 9 as precedent — that is wrong on
+    both counts.** §16.42 item 9's pre-hoist tests could be green before its heavy
+    task started only because they exercised code that already existed (the
+    four-times-duplicated composite functions, pre-hoist). Here there is no existing
+    `mode-bench` implementation for a `--replay` process-level test to pass against —
+    the test is necessarily red until the Simple/Annotation measurement-driver task
+    implements the command it exercises. The test still belongs first in the
+    sequence, and it still needs no code from either heavy task to be *written* and
+    *reviewed against the spec* — that part of the original claim survives — but it is
+    a standard red-first anchor, not a pre-hoist-style green-first lock, and citing
+    §16.42 item 9 for it was a false analogy.
+
+11. **What this entry does not decide.** The exact output filename, flag spellings
+    (`--cells` vs. some other name), and the precise M-task numbering are left to the
+    implementation plan — neither disputed point named these, and both independent
+    task breakdowns agreed on the split that matters (see item 9). This entry also
+    does not amend §16.36, §16.37, §16.13, §15.2, or §16.24 — every quoted ruling
+    above states explicitly that its binding force is scoped to mode-bench's own
+    report, not to those sections' general rules.
+
+## 16.44 mode-bench task 3: `--replay` never attempts LaMa acquisition; a LaMa cell that ran on zero pages does not enter the eligibility-restricted intersection mean (Fable tie-break ruling, 2026-08-10)
+
+**Provenance.** Task 3's own implementation brief (which the Orchestrator wrote) rested
+on a false premise — that the committed `--replay` fixture has zero eligible regions.
+It has one. Implementing §16.43 item 8's BLOCKED rule as written against that fact
+would render `simple+lama` `**BLOCKED**` on `--replay`, in the default no-`onnx` test
+tier, on every machine, deterministically — a state the FROZEN
+`xtask/tests/mode_bench_cli.rs:95-101` explicitly forbids. This is the project's
+"a test found to contradict the spec" exception (`CLAUDE.md`'s TDD-loop escalation
+rule): the implementer correctly stopped rather than picking a reading unilaterally,
+and the Orchestrator convened the two Opus architects jointly rather than resolving it
+alone. They converged on most of the resolution but disagreed on one structural
+question; Fable was convened as tie-breaker per the standing disagreement rule, and
+this entry transcribes that ruling, quoting Fable's own reasoning rather than
+paraphrasing it.
+
+1. **What both joint rulings converged on independently, transcribed once as binding
+   since neither side contested it:**
+
+   - A LaMa cell that does not (or cannot) run inpainting on a given source must
+     **keep its own real mask-stage measurement** (detected boxes, masking regions,
+     succeeded/failed/dropped/eligible counts) — never erase it to render a bare
+     `**BLOCKED**` row with no other data. Both rulings grounded this in §16.43 item
+     8's own requirement that eligibility is computed and reported "for every cell,
+     LaMa or not."
+   - `Benchmark::common_eligible`/`common_eligible_contributing_cells`
+     (`xtask/src/mode_bench.rs:393-419` as committed at task 2's `a3d8d24`) must stop
+     keying "actually run" on absence from the blocked-cells map, and key it on
+     **having produced at least one `Measured` row** instead — both independently
+     verified this redefinition is additive against the two existing frozen-adjacent
+     unit tests (`a_blocked_cell_does_not_poison_the_intersection_even_though_it_was_requested`,
+     `an_intersection_over_only_blocked_cells_is_empty_not_a_false_full_match`), which
+     both continue to pass unchanged under it. **Item 4 below refines this predicate
+     further for LaMa cells specifically — read it before implementing this point in
+     isolation; this bullet's predicate as stated is exactly the shape item 4 finds a
+     hidden hazard in.**
+   - `xtask/tests/mode_bench_cli.rs` needs **zero assertion changes**.
+   - The stale header comment at `xtask/tests/mode_bench_cli.rs:3-9` (still describes
+     the now-passing, now-un-ignored test as "RED BY DESIGN" and ignored "only so the
+     workspace suite stays readable") is factually false as of task 2's `a3d8d24` —
+     both rulings independently ran `cargo test -p xtask --test mode_bench_cli` and
+     confirmed 7/7 passing, 0 ignored. Comment-only correction to past tense,
+     transcribing this ruling — no assertion touched.
+   - Provider acquisition happens once per invocation/cell (the existing `OnceLock`
+     latch, §16.38 item 8(d)), never per page.
+   - Upstream PanelCleaner is not an oracle for this question — mode-bench has no
+     upstream equivalent to run.
+
+2. **The disputed question, resolved: `--replay` never attempts LaMa acquisition for
+   any cell, by mode-bench's own deliberate source policy — not because the model is
+   unavailable, but because that source does not exercise LaMa at all.** Fable's
+   ruling, quoted: *"Only the architect's reading keeps all ratified text
+   simultaneously satisfiable without amendment — this is decisive. §16.43 item 8 ...
+   says, unqualified by source: 'A LaMa cell whose model is unavailable is recorded as
+   BLOCKED with a reason naming the acquisition remedy...' The frozen test ... forbids
+   BLOCKED on `--replay` for `simple+lama`, and item 10 makes that test the CI gate of
+   the `--replay` contract. Under the rust-engineer's ruling, `--replay` in the default
+   tier attempts and genuinely fails acquisition — item 8's sentence then mandates
+   BLOCKED, and the only way to keep the frozen test green is to render that same
+   failure as something other than BLOCKED. That is a source-scoped exception to a
+   ratified sentence, achieved by renaming the state the sentence names — an
+   unratified amendment in implementation clothing. Under the architect's ruling,
+   item 8's antecedent ('whose model is unavailable') simply never fires on `--replay`,
+   because unavailability is only meaningful relative to a need; both the ratified
+   sentence and the frozen test hold as written, on every source."*
+
+   Second ground, quoted: *"The per-source enumeration in item 8 ... discriminates
+   only under the architect's reading ... Under the rust-engineer's design, a machine
+   with the `onnx` tier and a cached model runs real LaMa on `--replay` — on a 1200 ×
+   1660 full page (measured). That makes item 8's ratified clause '`--pages` ... the
+   only source that reaches multi-tile LaMa' contingent on the fixture's particular
+   eligible-region geometry, rather than true by construction ... Under the
+   architect's ruling it is true by construction. The same collapse hits 'no model
+   needed': under the rust-engineer's design that phrase is true of every source
+   (item 8's BLOCKED design already guarantees a report without the model everywhere),
+   so it discriminates nothing — unlike the other two clauses in the same list."*
+
+   **Correction to the architect's own original phrasing, made by Fable and binding
+   as the corrected version, quoted:** *"Under the rust-engineer's actual design
+   (Measured-with-note rendering), the gate's pass/fail would not depend on the 207 MB
+   artifact — only row content would vary between machines. The architect's
+   conclusion survives, but via ground 1, not via 'the gate's subject flips': the
+   artifact-independence is purchased only by the unratified renaming. Transcribe the
+   winning argument, not the original phrasing."*
+
+3. **Binding grafts from the losing position — required, not optional, per Fable's
+   ruling:** *"Distinguishability is required, not optional. The `--replay` 'not
+   attempted — source policy' state must be textually distinct from (a) 'eligible
+   regions = 0, nothing to inpaint' and (b) a real failed acquisition on
+   `--demo-bubbles`/`--pages`. This was the honest core of the rust-engineer's design;
+   keep it, as an additive assertion in a new test, never an edit to
+   `mode_bench_cli.rs`."* And: *"The disclosure already half-exists:
+   `Source::Replay.describe()` (`mode_bench.rs:255`) says 'no model is loaded' — the
+   rust-engineer's ruling would have made that shipped sentence false too; under this
+   ruling it becomes load-bearing and the per-row note should agree with it."*
+
+4. **A hidden hazard Fable found by combining two of the converged-on points, and the
+   binding correction to item 1's `common_eligible` predicate that closes it.** Fable's
+   ruling, quoted in full because the reasoning is the binding content: *"If a
+   failed-acquisition LaMa cell on `--demo-bubbles`/`--pages` keeps its mask-stage
+   measurement as `Measured` rows (agreed point 1), and `common_eligible` counts any
+   cell with ≥1 `Measured` row as 'actually run' (agreed point 2), then a
+   never-inpainted LaMa cell re-enters the common-eligible cross-cell mean — the exact
+   shape §16.43 item 4 quotes Fable's D2 ruling against: '"inpainted" output is
+   actually the bare masking output ... inside a segment whose caption claims
+   comparability. That is the different-populations bug, hidden.'"* **Binding
+   condition, quoted:** *"a cell whose inpainting factor was requested but ran on zero
+   pages must not contribute to the eligibility-restricted cross-cell mean (disclosure
+   alone is not enough; disclosure-instead-of-exclusion is what D2 already
+   rejected)."* **This is narrower than a redefinition of "actually run" for
+   intersection membership — corrected during step-1a review, since the original
+   transcription's connective sentence here overstated its own scope.** Item 1's
+   "produced at least one `Measured` row" predicate still decides which cells
+   contribute to the intersection's *page set* and its heading (item 1's "zero
+   assertion changes" requirement depends on this staying unchanged — see item 4's
+   binding condition above, which is a mean-computation rule, not a membership rule).
+   What this item adds is narrower: a LaMa cell must have **genuinely run inpainting
+   on at least one page** (i.e. `run_inpaint` returned `Ok(Some(...))` somewhere in
+   that cell's pages, not merely `Ok(None)` or a `Measured` row with
+   `inpainting_ran: false` everywhere) to have its numbers **averaged into the
+   common-eligible mean** — a cell that fails this still appears in the intersection's
+   page set and heading, rendered as an explicit non-contributing row, per the binding
+   condition above. A non-LaMa cell needs no such distinction — it is still "produced
+   at least one `Measured` row," since it has no inpainting factor to have run or not.
+   Fable explicitly scoped this: *"On `--replay` under Ruling 1 this hazard does not
+   arise in hidden form — the LaMa cell is a disclosed duplicate of its mask-mode
+   sibling, not a silently degraded comparand — and I decide nothing further about
+   section 4.3's captions beyond D2's existing requirements."*
+
+5. **What this entry does not decide.** It does not touch §16.38 item 13(c)'s closing
+   clause, which the architect's ruling separately flagged as empirically false (a
+   `--detector replay`/`mock` run *does* reach the inpainting model when a region
+   fails and `inpainting_enabled` is true) — Fable explicitly declined to fix it here,
+   ruling it "a separate future erratum" requiring its own joint-architect pass as a
+   spec-text correction, not a graft onto this ruling. **Corrected during step-1a
+   review: the original transcription said this entry "does not decide anything about
+   `--demo-bubbles` or `--pages` beyond confirming they do attempt real acquisition"
+   — that overreached past what items 1 and 4 above actually do.** It does not amend
+   §16.43 item 8's BLOCKED rule in general — that rule still governs
+   `--demo-bubbles`/`--pages` exactly as written, and this entry only establishes that
+   its antecedent ("whose model is unavailable") never fires on `--replay`, because
+   `--replay`'s LaMa cells never seek the model at all. But item 4's binding
+   exclusion — a LaMa cell that ran on zero pages does not enter the
+   eligibility-restricted `common_eligible` intersection — is **not** scoped to
+   `--replay`; it is introduced by, and binds on, `--demo-bubbles` and `--pages`
+   whenever a LaMa cell there fails acquisition (item 4's own quoted grounds open with
+   exactly that case). What this entry does not decide about `--demo-bubbles`/`--pages`
+   is narrower: their model-acquisition **mechanism** (how the provider is obtained,
+   what counts as a failure, whether §16.38 item 9(b)'s run-fatal classification
+   applies) is unchanged by this entry and governed by §16.43 item 8 and §16.38 as
+   already ratified — only the report-rendering consequences item 4 states are new.
+
+## 16.45 `alpha_composite_over` was not source-over: a transparent-destination compositing defect, root-cause diagnosis by `architect`, independent joint architect + Senior Rust Engineer planning pass, converging (2026-08-10)
+
+**Found by the user doing an actual visual comparison of real `panel-ocr.exe clean`
+output** — not by any test, and not by `docs/MODE_COMPARISON.md`'s own reference-agreement
+metric. **The real reason that metric could not have caught this, checked against the
+report rather than guessed: mode-bench's own stage sequence never runs `pc-denoise` at
+all** — `docs/MODE_COMPARISON.md:13` states it directly, `` `pc_detect::run` →
+`pc_preprocess::run` → `pc_mask::run` → `pc_pipeline::run_inpaint` ``. The defect lives
+entirely inside `pc-denoise`'s compositing, so no fixture size or crop count fed to
+mode-bench could have exercised it — this is a pipeline-coverage gap, not a
+fixture-size one. (Separately true, but not why mode-bench missed this: `docs/MODE_COMPARISON.md`'s own §1
+already notes the 7 vendored crops are too small — under 512px on both axes — to exercise
+LaMa's tiling behaviour per §16.38 items 5(c)/5(d); a different, already-disclosed
+limitation, not this one.)
+
+**Provenance, stated plainly rather than left to be assumed from the citations below.**
+The root-cause diagnosis was a dispatched `architect` agent (brief:
+`docs/briefs/gray_mask_edge_diagnosis_brief.md`); the fix design was an independent joint
+`architect` + Senior Rust Engineer planning pass, each agent working from the same brief
+(`docs/briefs/alpha_composite_fix_plan_brief.md`) without seeing the other's output
+first, per this project's standing disagreement-detection process. **Neither brief, nor
+either agent's full returned report, is a committed artifact**: `docs/briefs/` is
+gitignored by design (see `CLAUDE.md`'s "Agent dispatch briefs" section) and
+`docs/WORKSTATE.md`, which records the Orchestrator's own summary of what each agent
+concluded, is itself an uncommitted local continuation file in the main worktree, not
+part of this repository's history. This transcription is therefore the Orchestrator's own
+comparison of the two agents' returned reports, checked line-by-line against the live
+codebase and against a real PIL run where a check was possible (items 2 and 4 below
+distinguish what was independently re-verified from what rests on the reports alone) —
+not a claim that a reader can independently pull up the original two reports themselves.
+Where this entry says "both agents independently confirmed" or "converged," that is
+this characterization, not a pointer to a retrievable transcript.
+
+1. **The defect, root-caused by a dispatched `architect` diagnosis (read-only, brief
+   `docs/briefs/gray_mask_edge_diagnosis_brief.md`).** `crates/pc-imageops/src/composite.rs`'s
+   `alpha_composite_over` blends the layer's colour against the destination's RGB while
+   **ignoring the destination's own alpha** — `blend_channel(dst_rgb, layer_rgb, a)`,
+   correct only when the destination is opaque. `pc-denoise` composites its
+   Gaussian-faded noise-mask rim (`crates/pc-denoise/src/noise_mask.rs:158-171`) onto a
+   canvas that starts fully **transparent**, `(0,0,0,0)` (`noise_mask.rs:128`), so every
+   partial-alpha rim pixel's colour is pre-multiplied by α once there while its stored
+   alpha is left un-attenuated. `crates/pc-denoise/src/lib.rs:268`'s `composite_rgb` then
+   composites that already-wrong layer onto the real (opaque) page — this second step is
+   itself correct source-over onto an opaque canvas, so it does not introduce a second
+   error, it *reveals* the first one as a visible darkening. `crates/pc-export/src/lib.rs`'s
+   mask export (§16.11 item 9) hits the same bug a **second, independent** time on a
+   **different** destination — the resized combined mask, transparent outside the mask
+   footprint, which the padded noise rim reaches beyond. **Net formula stated for the
+   observed case specifically (uniform paper, where the denoised layer's colour equals
+   the base colour) — it does NOT generalise to `src ≠ base`:** with `src ≈ base`, the
+   two-step composite reduces to `out = base·(1 − α + α²)` instead of the correct
+   `base·(1−α) + src·α`, a real darkening with floor `0.75·base` at α = 0.5. In the
+   general case the two-step result is `out = base·(1−α) + src·α²`, which does not
+   simplify to a single-variable expression in `base` alone; the paper-darkening figure
+   above is the shape the defect takes on a page with uniform background, which is what
+   the real-page measurement in item 2 below actually is.
+
+2. **Confirmed against real measurements and against the tiebreak oracle, not argued.**
+   The diagnosing architect measured two real pixels on the user's real-page benchmark
+   (`docs/HANDOVER.md`'s "Choujin Locke" convention — local-only, never committed) and
+   matched the formula's prediction to the exact integer (base 248 → 196 and 187 at the
+   two sampled α values). Both independent planning-pass agents separately ran upstream
+   PanelCleaner's own compositor, PIL's `Image.alpha_composite` (proper, un-premultiplied
+   source-over) — **Pillow 11.3.0**, recorded here because a future re-derivation needs
+   the version, not only the claim that PIL was run — at the pinned commit, and both
+   independently confirmed their candidate Rust fix reproduces PIL's output bit-for-bit
+   on every case they each tried — including, separately, the exact case that matters
+   most (`base_a == 0`): a fully transparent destination must yield the layer's own
+   colour and alpha unchanged, not a premultiplied fraction of it.
+
+3. **Scope: `Simple` and `Annotation` alike, independent of inpainting.** Triggered by
+   `denoising_enabled = true` (default) plus any region passing
+   `noise_min_standard_deviation`; mask mode and whether LaMa runs are both irrelevant to
+   whether the defect fires. `pc-inpaint` does not introduce its own instance (its
+   `clean_inpaint` destination is opaque, `crates/pc-inpaint/src/lib.rs:300-309`) but
+   *inherits* the artifact because it composites the already-corrupted noise-mask layer
+   at line 307. `pc_mask::combine::build_combined_mask` is **not** affected today — its
+   own alpha is always exactly 0 or 255 by construction (§10.3 step 4, this file's line
+   ~1006), which happens to take the primitive's one already-correct fast path. This is
+   an accident of that function's current inputs, not a property the function itself
+   asserts, and is recorded here as a latent hazard, not fixed — no `src/` change is
+   authorised for `pc-mask` by this entry.
+
+4. **DECIDED: real (Porter-Duff) source-over replaces the current formula in
+   `alpha_composite_over`, and this is a supersession, not an additive fix — checked by
+   both planning agents independently rather than assumed from the diagnosis's own
+   summary, which was wrong on this point.** The diagnosing architect's own recommendation
+   (quoted in `docs/WORKSTATE.md`'s 2026-08-10 entry) asserted the fix "reduces to today's
+   formula when `da == 255` (keeps existing value locks green)." **That parenthetical is
+   false, independently caught by both planning agents**: neither of `composite_value_lock.rs`'s
+   two partial-alpha tests uses `da == 255` — they use `da = 180` and `da = 100` — and one
+   planning agent additionally found, **by actually applying the candidate fix in a
+   detached probe worktree and running `cargo test --workspace --no-fail-fast`**, that two
+   further frozen assertions in `crates/pc-export/tests/l6_inpaint_precedence.rs` also
+   change. The corrected, measured formula:
+
+   ```
+   out_a = sa + da·(1 − sa)
+   out_rgb[c] = round( (src[c]·sa + dst[c]·da·(1 − sa)) / out_a )     for out_a > 0
+   ```
+
+   where `sa = src_alpha/255`, `da = dst_alpha/255`, clamped to `0..=255`. This reduces
+   algebraically to the current formula when `da == 255` (verified: identical output on
+   the opaque-destination case both planning agents tested) and to a plain copy of the
+   source layer when `da == 0` (verified: PIL and both candidate Rust implementations
+   agree exactly). It does **not** reduce to `alpha_out = max(base_a, layer_a)` in the
+   general partial/partial case, which is why this supersedes rather than extends the
+   existing pin. **No division-by-zero guard is needed or wanted**: the primitive's
+   existing `a == 0 { continue }` early return already guarantees `sa > 0`, hence
+   `out_a > 0`, on every code path that reaches the division; a defensive branch here
+   would be dead code no reviewer could falsify (cookbook rule 6).
+
+   **Explicitly rejected: a narrower `if dst_alpha == 0 { copy the layer }` special
+   case**, raised and rejected independently by both planning agents on the same
+   grounds. It would be fully additive (no frozen test moves, no ratification needed)
+   and fixes the reported symptom, which is exactly why it is tempting and exactly why
+   it is wrong: it leaves `0 < da < 255` still wrong, and that regime is reachable in
+   production — `build_noise_mask` composites multiple regions' padded, faded rims onto
+   one shared canvas in sequence, so two nearby rims overlapping at partial alpha is
+   ordinary, not exotic. It would also leave the function's own doc comment's claim of
+   "source-over" false for exactly the regime that already escaped review once. Rejected.
+
+   **Byte-parity with PIL is not claimed as a general property and must not be pinned as
+   one.** One planning agent measured 68/8400 (0.8%) of randomised partial-over-partial
+   pairs disagree with PIL by ±1 in one channel — PIL uses a different (integer,
+   premultiplied-path) rounding scheme internally. Every literal this entry authorises
+   below was independently obtained by *running* PIL on that exact input, not derived
+   from a general parity claim; a future test must do the same, never assert "matches
+   PIL" as a blanket property.
+
+5. **AUTHORISED: the frozen-test amendment, with exact replacement values, so a fresh
+   reader has something concrete to check rather than trusting either planning agent's
+   arithmetic.** This is cookbook rule 8 exit 2 (a frozen test contradicting the
+   now-ratified formula) — the corrected assertions do not claim less about the system,
+   so this routes through joint planning rather than a unilateral edit, which is what
+   happened. The first two replacement values below were independently obtained by both
+   planning agents running PIL's `Image.alpha_composite` (Pillow 11.3.0) and agree
+   exactly between the two independent runs; the last two were measured, not predicted,
+   by one agent actually applying the candidate fix in a detached probe worktree and
+   running the real suite — see the paragraph below the list for what that changes about
+   their evidentiary weight:
+
+   - `crates/pc-export/tests/composite_value_lock.rs:208`,
+     `alpha_composite_over_partial_alpha_blend_matches_the_hand_derived_result`:
+     `Rgba([60, 150, 100, 180])` → **`Rgba([53, 168, 82, 218])`**
+     (dst `(100,50,200,180)`, layer `(20,250,0,128)`).
+   - `crates/pc-export/tests/composite_value_lock.rs:224`,
+     `alpha_composite_over_partial_alpha_blend_alpha_out_is_the_max_not_just_base_alpha`:
+     `Rgba([60, 150, 100, 128])` → **`Rgba([42, 194, 56, 178])`**
+     (dst `(100,50,200,100)`, layer `(20,250,0,128)`). This test's own stated purpose —
+     distinguishing `alpha_out` from a bug that writes plain `base_a` — survives under
+     the corrected value: `178 ≠ base_a = 100`, so the two readings still diverge. It
+     also gains a second discriminating property worth stating in the amended doc
+     comment rather than leaving implicit: `178` now also separates real source-over
+     from the superseded `max` rule (which would have kept asserting `128` here).
+     **AUTHORISED: this test's own NAME and assertion message must also change, not
+     only its literal and doc comment.** The name
+     (`…alpha_out_is_the_max_not_just_base_alpha`) and the message
+     (`"alpha_out must be max(base_a, layer_a) = 128, not base_a = 100"`) both assert
+     the superseded rule as the property being verified; after this amendment the
+     assertion refutes that rule rather than confirming it, so an unrenamed test would
+     state the old, wrong claim as its own name while its body proves the new one — the
+     "name claims more than the assertion verifies" defect this same paragraph names
+     below, in its sharpest form, inside a frozen file. Rename to
+     `alpha_composite_over_partial_alpha_blend_uses_real_alpha_out_not_the_max_rule`,
+     with the message updated to state what `178` actually demonstrates (real
+     source-over's `alpha_out`, distinct from both `base_a` and the superseded `max`).
+   - `crates/pc-export/tests/l6_inpaint_precedence.rs:280` (measured, not predicted, by
+     actually running the candidate fix — found only because one planning agent applied
+     it rather than reasoning about it — `exported_inpaint_mask_pixel_is_combined_then_noise_then_inpainting`):
+     `[92, 75, 67, 180]` → **`[102, 79, 69, 227]`**.
+   - `crates/pc-export/tests/l6_inpaint_precedence.rs` (measured the same way,
+     `exported_inpaint_mask_omits_noise_when_denoising_is_disabled`):
+     `[17, 83, 52, 180]` → **`[17, 95, 50, 199]`**.
+
+   Each amended test's doc comment must be corrected in the same change to stop
+   asserting the superseded `max(base_a, layer_a)` rule in prose — a value-only edit
+   leaving the comment would be the "name claims more than the assertion verifies"
+   defect in reverse (`docs/COOKBOOK.md`). The same doc-comment correction (never a value
+   change — none of these are frozen assertions) also applies to every OTHER place in the
+   tree that still asserts the superseded rule in prose, enumerated in item 8 below, so
+   the fix does not leave stale claims standing merely because they sit outside the four
+   amended assertions. **This is the complete, measured red list for the fix's blast
+   radius on ASSERTION VALUES specifically** — one planning agent applied the candidate
+   fix in a detached probe worktree and ran `cargo test --workspace --no-fail-fast` to
+   confirm no further frozen test changes; a real implementation must re-confirm this
+   against the actual integration worktree rather than trusting this list as exhaustive
+   by construction.
+
+6. **AUTHORISED: `pc-export`'s mask export needs its own new test, not just a
+   `pc-denoise`-level one.** One planning agent checked this directly against the
+   brief's explicit question and disagreed with treating it as structurally covered: the
+   mask export composites onto a *different* destination (the resized combined mask,
+   transparent outside its footprint) producing a *different* artifact (`_mask.png`),
+   and measured, unfixed, a rim pixel exported as `[50,25,13,64]` where the true noise
+   layer was `[200,100,50,64]` — the same defect, independently occurring. A gate at
+   `pc-denoise`'s own output does not cover it; treating it as covered would be
+   `docs/COOKBOOK.md`'s "gate a copy of the risk, not the risk" failure. New test
+   required at this call site as part of the same implementation task.
+
+7. **SUPERSEDES: §16.10 item 3, §16.11 item 9, §16.42 item 2** — each pinned
+   `alpha_out = max(base_a, layer_a)` as the compositing rule; all three now read real
+   source-over per item 4 above. Markers placed at each target site, back-pointing here,
+   per this project's supersession-marker convention (`docs/COOKBOOK.md` rule 14 /
+   `CLAUDE.md`'s supersession cross-check test). §16.10 item 3's own duplication pin
+   (already superseded in part by §16.42, as to *location*) is untouched by this entry;
+   only the arithmetic clause changes here.
+
+8. **Correction, unprompted, found independently while re-verifying the citation for
+   item 4's replaced formula (bonus finding, not this entry's main subject).**
+   `§16.9 item 15`
+   is cited as the authority for `alpha_out = max(base_a, layer_a)`. **The most direct
+   instance, checked separately from the derivative ones below, is
+   `crates/pc-imageops/src/composite.rs:62`** — `alpha_composite_over`'s own doc comment:
+   `` `alpha_out = max(base_a, layer_a)` (§16.9 item 15) ``, a direct first-hand
+   attribution, not a paraphrase of something else. The other sites cited here are
+   derivative, transitively repeating that attribution rather than independently
+   asserting it: `crates/pc-mask/src/combine.rs:12` reads only "the arithmetic itself is
+   unchanged and still pinned by §16.9 items 13 and 15" — generic, naming no `alpha_out`
+   clause specifically; `composite_value_lock.rs:14`, `:175` and `:193` — three separate
+   doc comments in the same file, only two of which this entry's first draft named — each
+   restate the `alpha_out` claim in their own words; §16.10 item 3 and §16.42 item 2
+   restate it as part of their own pins, now overturned per item 7 below. But §16.9
+   item 15, read at source,
+   is entirely about `mask_overlay`'s constant-alpha RGB blend applied only where the
+   combined mask's alpha is 255, and contains no statement about `alpha_out` or about
+   `alpha_composite_over` at all (`grep -n alpha` over that item's line range returns
+   exactly two hits, both inside the `mask_overlay` text). Item 15's
+   `round(base·(1−a)+colour·a)` legitimately grounds `blend_channel`; the `alpha_out`
+   half was attached to it by paraphrase, not by anything item 15 actually says — the "a
+   claim's scope travels with it" failure class this project has hit before.
+
+   **Two further sites, not previously enumerated (beyond `composite_value_lock.rs`'s own
+   three doc comments above), will still assert the superseded rule in prose after the H3
+   fix lands and are not covered by item 5's per-test obligation** (item 5 amends four
+   tests' comments; these are two *different* files/tests, neither among the four, and
+   neither of their own assertion VALUES move — this is a comment-only obligation, added
+   here so it is not silently missed): `crates/pc-export/tests/e3_run.rs:311`
+   ("…§16.11 items 3 and 9's nearest-everywhere and `alpha_out = max(base_a, layer_a)`
+   rules"); and `crates/pc-pipeline/tests/l4_composite_equivalence.rs:147` ("…must agree,
+   including on `alpha_out = max(base_a, layer_a)` (§16.9 item 15)"). Both are
+   comment-only corrections, batchable with the fix's own doc-comment updates; neither
+   needs a supersession marker (no rule is being cited as still current at these sites
+   once corrected) and neither needs the exit-2 joint-ratification treatment item 5's
+   value changes required, since no assertion these files make is changing. That makes
+   seven comment sites total needing correction in the same change as the fix:
+   `composite.rs:62`, `combine.rs:12`, `composite_value_lock.rs:14/175/193`,
+   `e3_run.rs:311`, and `l4_composite_equivalence.rs:147` — plus the four amended tests'
+   own doc comments per item 5. Re-derive this list with a fresh grep at implementation
+   time rather than trusting it as exhaustive by construction (cookbook rule 14).
+
+9. **Task sequencing, per one planning agent's explicit disagreement with treating this
+   as "simple" — both effectively converged on treating it as multi-staged rather than a
+   single batchable edit.** **H1** (this ratification, no `src/` change). **H2**
+   (**heavy**): land the new additive tests — `composite_value_lock.rs`'s two new
+   fully-transparent-destination cases (including a **non-black** transparent
+   destination, e.g. `(99,99,99,0)`, specifically so the test cannot pass by "blend
+   against black" instead of "copy the layer") and its opaque-destination regression
+   case; a new `pc-denoise` test file gated at the denoise-stage *output* (not only the
+   primitive), asserting a uniform-paper page denoises to itself exactly, with a
+   mandatory anti-vacuity assertion that a faded rim of a minimum size actually exists in
+   the test fixture; a new `pc-export` test per item 6 — **red** against current code,
+   committed on its own. **H3** (**heavy**, own isolated call, not batched): implement
+   the corrected formula in `alpha_composite_over`, apply item 5's four amendments plus
+   their doc-comment corrections and item 8's citation corrections, iterate to green,
+   independent review (§16.13 item 4 — not the implementer), full verification bar.
+   Recommendation only, not authorised for implementation here: harden
+   `pc_mask::combine::build_combined_mask` with an assertion pinning its alpha inputs to
+   `{0, 255}`, converting item 3's "accident of current inputs" into a stated invariant.
 
 ## 16. Summary of what v1 is NOT
 

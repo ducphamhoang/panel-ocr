@@ -337,3 +337,51 @@ fn malformed_toml_is_a_parse_error() {
     let err = ProfileDocument::parse("[general\npreferred_file_type = ").unwrap_err();
     assert_eq!(err.field(), None, "a syntax error has no validated field");
 }
+
+#[test]
+// spec §6 as superseded by §16.38 item 13: the `[inpainter]` block round-trips through both
+// from-scratch serialization and in-place `toml_edit` updates, like every other table. This
+// is what stops `profile edit` from silently dropping the whole new table or resetting
+// `inpainting_enabled` to false on save -- `set_profile` iterates `Profile::TABLES`, so a
+// table absent from that registry is written by nobody.
+//
+// `inpainting_enabled` is the field edited because it is the one whose loss is invisible: a
+// dropped `true` turns the feature off with no error anywhere.
+fn the_inpainter_table_round_trips_through_text_and_set_profile() {
+    let mut original = Profile::default();
+    original.inpainter.inpainting_enabled = true;
+    original.inpainter.min_inpainting_radius = 3;
+    original.inpainter.max_inpainting_radius = 30;
+    let text = ProfileDocument::from_profile(&original).to_toml_string();
+    assert!(
+        text.contains("inpainting_enabled = true"),
+        "the wire value must be a TOML boolean: {text}"
+    );
+    assert_eq!(*ProfileDocument::parse(&text).unwrap().profile(), original);
+
+    let mut doc = ProfileDocument::parse(DEFAULT_PROFILE_TOML).unwrap();
+    assert!(!doc.profile().inpainter.inpainting_enabled);
+    let mut edited = doc.profile().clone();
+    edited.inpainter.inpainting_enabled = true;
+    doc.set_profile(&edited).unwrap();
+
+    // Read through toml_edit rather than depending on column alignment in the shipped file.
+    assert_eq!(
+        doc.document()["inpainter"]["inpainting_enabled"].as_bool(),
+        Some(true),
+        "got: {}",
+        doc.to_toml_string()
+    );
+    let out = doc.to_toml_string();
+    assert!(
+        out.contains("inpainting_isolation_radius"),
+        "neighbouring [inpainter] keys must survive: {out}"
+    );
+    assert!(
+        out.contains("DEVIATION(26)"),
+        "the inert-key comment must survive an in-place edit: {out}"
+    );
+    let reparsed = ProfileDocument::parse(&out).unwrap();
+    assert!(reparsed.profile().inpainter.inpainting_enabled);
+    assert_eq!(reparsed.warnings(), &[]);
+}

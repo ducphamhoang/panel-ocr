@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 #[test]
 fn the_stage_impl_is_wired_to_step_export() {
     assert_eq!(ExportStage::STEP, Step::Export);
-    assert_eq!(Step::Export.prev(), Some(Step::Denoise));
+    assert_eq!(Step::Export.prev(), Some(Step::Inpaint));
     // §2.8: no `Output` variant maps to `Step::Export` -- export writes user-facing
     // files, not cache artifacts. §16.11 item 2 exists precisely because of this.
     assert!(pc_core::Output::ALL
@@ -152,6 +152,7 @@ fn destination_input(
         preferred_file_type: preferred_file_type.map(str::to_string),
         preferred_mask_file_type: preferred_mask_file_type.to_string(),
         denoising_enabled: true,
+        inpainting_enabled: false,
     }
 }
 
@@ -306,8 +307,11 @@ fn a7_the_mask_is_upscaled_with_nearest_neighbour_only() {
 
 #[test]
 fn the_denoise_branch_composites_the_noise_mask_over_the_upscaled_combined_mask() {
-    // §12.3 step 4's second bullet, with §16.11 items 3 and 9's nearest-everywhere and
-    // `alpha_out = max(base_a, layer_a)` rules.
+    // §12.3 step 4's second bullet, with §16.11 item 3's nearest-everywhere rule. §16.11
+    // item 9's compositing half is superseded by §16.45 item 4: real (Porter-Duff)
+    // source-over, `out_a = sa + da*(1 - sa)`, not `alpha_out = max(base_a, layer_a)`.
+    // The layers below are fully opaque (a = 255), the regime both formulas agree on, so
+    // no assertion in this test moves.
     let dir = tempfile::tempdir().expect("a temp dir");
     let original = write_original_png(dir.path());
     let base = dir.path().join("out");

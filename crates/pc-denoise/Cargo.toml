@@ -13,9 +13,18 @@ pc-core     = { path = "../pc-core" }
 # §16.5 item 1: every stage crate depends on pc-config -- the stage's config travels
 # by value inside its Input (§3).
 pc-config   = { path = "../pc-config" }
-# `BinaryMask` (M1). NOTE (§16.10 items 1-3): `nlm`, `gaussian`, `morph` and
-# `composite` live in THIS crate, not in pc-imageops -- pc-imageops was frozen at the
-# end of Stage 3 and none of those modules is used by another stage in v1.
+# `BinaryMask` (M1); `morph` since §16.38 item 16(a) (v1.5, task L1); `gaussian` since
+# task L4; `composite` since §16.42.
+# NOTE (§16.10 item 1): `nlm` still lives in THIS crate, not in pc-imageops --
+# pc-imageops was frozen at the end of Stage 3 and no other stage uses NLM. That ground
+# has expired for three of the four original modules: L1 hoisted
+# `Kernel`/`kernel`/`dilate` (`pc-mask` and `pc-inpaint` need them), L4 hoisted
+# `taps`/`blur` (`pc-inpaint` needs the same Gaussian for `inpainting_fade_radius`,
+# §16.38 item 3(h)), and §16.42 hoisted `composite` (all four of `pc-mask`,
+# `pc-denoise`, `pc-export`, `pc-inpaint` need it), overturning §16.10 item 3's pin of
+# that duplication. All three are re-exported from here, so `pc_denoise::morph::*`,
+# `pc_denoise::gaussian::*` and `pc_denoise::composite::*` still resolve and the frozen
+# tests are untouched. `nlm` still has exactly one consumer and stays.
 pc-imageops = { path = "../pc-imageops" }
 image       = { workspace = true }
 # §11.3: NLM parallelises over output row bands (§16.10 item 10).

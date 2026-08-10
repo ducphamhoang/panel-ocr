@@ -15,12 +15,16 @@ pc-core   = { path = "../pc-core" }
 # error message reuses `pc_config::validate::supported_suffix_list()` so the runtime
 # message and the config-validation message can never drift.
 pc-config = { path = "../pc-config" }
+# §16.42: `blend_channel` / `resize_nearest_rgba` / `alpha_composite_over` are hoisted into
+# `pc_imageops::composite` and re-exported from `composite.rs`. This edge is the one §1's
+# crate dependency graph already lists (`pc-imageops <- pc-detect, pc-mask, pc-denoise,
+# pc-export`), so adding it fills in an authorised edge rather than introducing a new one.
+# It replaces the former NOTE here (§16.11 item 10) asserting there was no `pc-imageops`
+# dependency and that the pixel math was restated locally -- §16.42 supersedes item 10.
+pc-imageops = { path = "../pc-imageops" }
 image     = { workspace = true }
 serde     = { workspace = true }
 tracing   = { workspace = true }
-# NOTE (§16.11 item 10): no `pc-imageops` dependency. The only pixel math this stage
-# needs is nearest resampling + source-over, neither of which `pc-imageops` owns; per
-# §1 rule 2 (and the §16.10 item 3 precedent) they are restated in `composite.rs`.
 # NOTE: no `rayon` -- export is I/O bound and runs inside the pipeline's per-image
 # rayon task already (§4.5).
 

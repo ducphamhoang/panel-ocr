@@ -38,8 +38,10 @@ fn step_ordering_follows_pipeline_order() {
     assert!(Step::Preprocess < Step::Mask);
     assert!(Step::Mask < Step::Denoise);
     assert!(Step::Denoise < Step::Export);
+    assert!(Step::Denoise < Step::Inpaint);
+    assert!(Step::Inpaint < Step::Export);
     assert_eq!(Step::Detect as i32, 1);
-    assert_eq!(Step::Export as i32, 5);
+    assert_eq!(Step::Export as i32, 6);
 }
 
 #[test]
@@ -49,7 +51,8 @@ fn step_prev_walks_backwards_and_bottoms_out() {
     assert_eq!(Step::Preprocess.prev(), Some(Step::Detect));
     assert_eq!(Step::Mask.prev(), Some(Step::Preprocess));
     assert_eq!(Step::Denoise.prev(), Some(Step::Mask));
-    assert_eq!(Step::Export.prev(), Some(Step::Denoise));
+    assert_eq!(Step::Inpaint.prev(), Some(Step::Denoise));
+    assert_eq!(Step::Export.prev(), Some(Step::Inpaint));
 }
 
 #[test]
@@ -140,6 +143,7 @@ fn step_and_output_round_trip() {
         Step::Preprocess,
         Step::Mask,
         Step::Denoise,
+        Step::Inpaint,
         Step::Export,
     ] {
         let json = serde_json::to_string(&s).unwrap();

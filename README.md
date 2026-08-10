@@ -20,8 +20,8 @@ panel-ocr cache ...
 panel-ocr models ...
 ```
 
-1,023 tests passing on the default feature tier (1,040 with the optional `onnx` tier
-enabled), 0 failed; `clippy --all-features -D warnings` and `cargo fmt --check` both clean.
+1,344 tests passing on the default feature tier (1,377 with the optional `onnx` tier
+enabled); 1 known failure (`a4d_claim_sites`, a post-merge line-pin conflict — see `docs/WORKSTATE.md`), 3 and 19 ignored respectively; `clippy --all-features -D warnings` and `cargo fmt --check` both clean.
 
 **The real detector/OCR backend is opt-in, not the default.** `--detector onnx` and
 `panel-ocr ocr` need two things: the binary built with `--features pc-cli/onnx` (the
@@ -99,7 +99,6 @@ only, and the optional `onnx` tier on Windows is still deferred (§16.33).
 - [ ] PSD / layered export
 - [ ] DBNet line-polygon synthesis (highest-risk item in v1.5; forces a second F1
       detector-fixture re-record + re-sign when it lands)
-- [ ] `Mask RefineMode::Annotation`
 
 ### v2
 - [ ] `egui`-based GUI, with incremental/staleness-aware recompute

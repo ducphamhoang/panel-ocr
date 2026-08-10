@@ -9,6 +9,7 @@
 
 pub mod args;
 pub mod detector;
+pub mod inpainter;
 pub mod logging;
 pub mod models;
 pub mod ocr;
@@ -101,12 +102,17 @@ pub fn run_clean(args: CleanArgs) -> Result<i32> {
     } else {
         None
     };
+    let inpainting_enabled = setup::effective_inpainting_enabled(&args, &profile);
+    let inpainter = inpainter::build_provider(inpainting_enabled, None, &cache_root, device);
+    let mut profile = profile;
+    profile.inpainter.inpainting_enabled = inpainting_enabled;
     let options = setup::build_clean_options(&args, profile, images.len(), &cache_root);
     run_pipeline(
         &images,
         options,
         provider.as_ref(),
         ocr_factory.as_deref(),
+        inpainter.as_deref(),
         !args.hide_analytics,
     )
 }
@@ -256,11 +262,21 @@ pub fn run_cache(command: CacheCommand) -> Result<i32> {
 /// spec §13.1's `models download|verify|path`.
 pub fn run_models(command: ModelsCommand) -> Result<i32> {
     match command {
-        ModelsCommand::Download { cache_dir } => {
+        ModelsCommand::Download {
+            cache_dir,
+            include_optional,
+        } => {
             let models_dir = models::resolve_managed_models_dir(cache_dir.as_deref())?;
+            // §16.38 item 19(c): never a silent skip. Every optional model left out is
+            // named, together with the flag that would fetch it. Printed BEFORE the
+            // transfers rather than after, so a run that fails partway through a required
+            // download has still told the user what it was never going to fetch.
+            for spec in pc_models::skipped(include_optional) {
+                println!("{}", models::skipped_optional_notice(spec));
+            }
             let fetcher = pc_models::ReqwestFetcher::new();
             let mut progress = models::progress_sink();
-            for spec in pc_models::ALL {
+            for spec in pc_models::selected(include_optional) {
                 let path = pc_models::ensure_available(
                     spec,
                     &models_dir,
@@ -273,58 +289,21 @@ pub fn run_models(command: ModelsCommand) -> Result<i32> {
             }
             Ok(EXIT_OK)
         }
-        ModelsCommand::Verify { cache_dir } => {
+        ModelsCommand::Verify {
+            cache_dir,
+            include_optional,
+        } => {
             let models_dir = models::resolve_managed_models_dir(cache_dir.as_deref())?;
             let mut all_ok = true;
-            for spec in pc_models::ALL {
-                let resolution = pc_models::resolve(spec, &models_dir, None)?;
-                match resolution {
-                    pc_models::Resolution::Missing(path) => {
-                        all_ok = false;
-                        println!("{}\tMISSING\t{}", spec.name, path.display());
-                    }
-                    pc_models::Resolution::Cached(path) => {
-                        if let Some(expected_size) = models::expected_size(spec) {
-                            let actual_size = std::fs::metadata(&path)
-                                .with_context(|| {
-                                    format!("failed to inspect model `{}`", spec.name)
-                                })?
-                                .len();
-                            if actual_size != expected_size {
-                                all_ok = false;
-                                println!(
-                                    "{}\tSIZE MISMATCH\t{}\tactual={}\texpected={}",
-                                    spec.name,
-                                    path.display(),
-                                    actual_size,
-                                    expected_size
-                                );
-                                continue;
-                            }
-                        }
-                        match pc_models::verify_sha256(&path, spec.sha256) {
-                            Ok(()) => println!("{}\tOK\t{}", spec.name, path.display()),
-                            Err(pc_models::ModelError::HashMismatch {
-                                actual, expected, ..
-                            }) => {
-                                all_ok = false;
-                                println!(
-                                    "{}\tHASH MISMATCH\t{}\tactual={}\texpected={}",
-                                    spec.name,
-                                    path.display(),
-                                    actual,
-                                    expected
-                                );
-                            }
-                            Err(error) => {
-                                all_ok = false;
-                                println!("{}\tERROR\t{}\t{}", spec.name, path.display(), error);
-                            }
-                        }
-                    }
-                    pc_models::Resolution::Override(_) => {
-                        unreachable!("managed model verification never supplies an override")
-                    }
+            for spec in pc_models::selected(include_optional) {
+                // The whole classification is `pc_models::verify`'s, so the policy is
+                // unit-testable without a filesystem walk through `pc-cli` and without any
+                // network path in reach (§16.18 item 3).
+                let verification =
+                    pc_models::verify(spec, &models_dir, models::expected_size(spec));
+                println!("{}", models::verify_row(spec.name, &verification));
+                if verification.status.is_failure() {
+                    all_ok = false;
                 }
             }
             Ok(if all_ok { EXIT_OK } else { EXIT_FATAL })
@@ -359,6 +338,7 @@ fn run_pipeline(
     options: PipelineOptions,
     provider: &dyn pc_pipeline::DetectorProvider,
     ocr: Option<&dyn pc_ocr::OcrEngineFactory>,
+    inpainter: Option<&dyn pc_pipeline::InpainterProvider>,
     show_analytics: bool,
 ) -> Result<i32> {
     if options.checkpointing == Checkpointing::Disk {
@@ -377,6 +357,9 @@ fn run_pipeline(
     let mut ctx = PipelineCtx::new(provider);
     if let Some(ocr) = ocr {
         ctx = ctx.with_ocr(ocr);
+    }
+    if let Some(inpainter) = inpainter {
+        ctx = ctx.with_inpainter(inpainter);
     }
     let summary = pc_pipeline::run_batch(images, &options, &ctx);
     if let Some(bar) = progress {

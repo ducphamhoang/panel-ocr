@@ -1,10 +1,15 @@
-//! Task M2 -- growth kernels and the candidate sequence (spec §10.3 step 6,
+//! Task M2 -- the candidate sequence and its padding policy (spec §10.3 step 6,
 //! §10.7(A)1-3, §16.9 items 5, 6).
 //!
-//! Upstream grows the precise mask with `scipy.signal.convolve2d(mask, kernel) > 0`.
-//! For a non-negative kernel that is **exactly** binary dilation, so the reformulation
-//! here is an exact -- and vastly faster -- restatement, not an approximation (§10.3
-//! step 6 requires this equivalence to be stated at the implementation site).
+//! **The kernel and the dilation no longer live here.** §16.38 item 16(a) (v1.5, task L1)
+//! hoisted `Kernel`, `kernel` and `dilate` into [`pc_imageops::morph`], because
+//! `pc-denoise` held a verbatim second copy (§16.10 item 2) and `pc-inpaint` needs a third
+//! -- and §1 rule 2 forbids the stage-to-stage edge that would let them share. They are
+//! re-exported below, so `pc_mask::grow::{Kernel, kernel, dilate}` still resolves and
+//! `crates/pc-mask/tests/m2_grow.rs` is untouched. What stays here is the part that is
+//! *masking policy*: the `MaskerConfig`-shaped growth helpers, which is also what keeps
+//! `pc-imageops` free of a `pc-config` dependency (§16.9 item 2, reaffirmed by §16.38 item
+//! 16(a)).
 //!
 //! The one subtlety worth reading twice: candidates are produced by dilating a single
 //! **replicate-padded buffer in place**, so border-replication effects accumulate from
@@ -14,6 +19,8 @@
 use pc_config::MaskerConfig;
 use pc_imageops::BinaryMask;
 
+pub use pc_imageops::morph::{dilate, kernel, Kernel};
+
 /// One entry of §10.3 step 7's candidate list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
@@ -21,127 +28,6 @@ pub struct Candidate {
     /// `None` for the box candidate -- it is not grown from the precise mask
     /// (§10.3 step 5).
     pub thickness: Option<u32>,
-}
-
-/// A square, symmetric structuring element of odd `diameter = thickness * 2 + 1`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Kernel {
-    radius: u32,
-    diameter: u32,
-    cells: Vec<u8>,
-}
-
-impl Kernel {
-    pub fn radius(&self) -> u32 {
-        self.radius
-    }
-
-    pub fn diameter(&self) -> u32 {
-        self.diameter
-    }
-
-    /// `(column, row)` indexing, both in `0..diameter`.
-    pub fn get(&self, j: u32, i: u32) -> bool {
-        if j >= self.diameter || i >= self.diameter {
-            return false;
-        }
-        self.cells[(i as usize) * (self.diameter as usize) + (j as usize)] == 1
-    }
-
-    pub fn count(&self) -> usize {
-        self.cells.iter().filter(|cell| **cell == 1).count()
-    }
-
-    /// Row-major cells, each `0` or `1` -- for whole-matrix assertions.
-    pub fn as_cells(&self) -> &[u8] {
-        &self.cells
-    }
-}
-
-/// spec §10.3 step 6.
-///
-/// * `diameter <= 5` (i.e. `thickness <= 2`): a full square of 1s with the four
-///   corners zeroed -- **except** for `diameter == 1`, where the "corners" are the
-///   centre itself, so the kernel is the single centre pixel and dilation is the
-///   identity (§16.9 item 5).
-/// * otherwise: OpenCV's `MORPH_ELLIPSE`, reproduced from `getStructuringElement`'s own
-///   code path: `dx = round(c * sqrt((r*r - dy*dy) / (r*r)))`, row `i` set on
-///   `[max(c-dx,0), min(c+dx+1, diameter))`. `saturate_cast<int>` rounds to nearest;
-///   `f64::round` (half away from zero) matches -- exact ties do not occur for these
-///   square-root values.
-pub fn kernel(thickness: u32) -> Kernel {
-    let radius = thickness;
-    let diameter = thickness * 2 + 1;
-    let size = (diameter as usize) * (diameter as usize);
-    let mut cells = vec![0_u8; size];
-
-    if diameter <= 5 {
-        cells.fill(1);
-        if diameter >= 3 {
-            let last = diameter - 1;
-            for (j, i) in [(0, 0), (last, 0), (0, last), (last, last)] {
-                cells[(i as usize) * (diameter as usize) + (j as usize)] = 0;
-            }
-        }
-        return Kernel {
-            radius,
-            diameter,
-            cells,
-        };
-    }
-
-    let r = i64::from(radius);
-    let c = i64::from(radius);
-    for i in 0..i64::from(diameter) {
-        let dy = i - r;
-        let inverse_r2 = 1.0 / ((r * r) as f64);
-        let dx = ((c as f64) * (((r * r - dy * dy) as f64) * inverse_r2).sqrt()).round() as i64;
-        let j1 = (c - dx).max(0);
-        let j2 = (c + dx + 1).min(i64::from(diameter));
-        for j in j1..j2 {
-            cells[(i as usize) * (diameter as usize) + (j as usize)] = 1;
-        }
-    }
-
-    Kernel {
-        radius,
-        diameter,
-        cells,
-    }
-}
-
-/// Binary dilation, stamp formulation (§16.9 item 6): every set input pixel stamps the
-/// whole kernel footprint centred on it, writes outside the canvas being dropped (zero
-/// border). Kernels here are symmetric, so this equals the reflect-then-max definition.
-pub fn dilate(mask: &BinaryMask, kernel: &Kernel) -> BinaryMask {
-    let (width, height) = mask.dimensions();
-    let mut out = BinaryMask::new(width, height);
-    let radius = i64::from(kernel.radius());
-    for y in 0..height {
-        for x in 0..width {
-            if !mask.get(x, y) {
-                continue;
-            }
-            for i in 0..kernel.diameter() {
-                for j in 0..kernel.diameter() {
-                    if !kernel.get(j, i) {
-                        continue;
-                    }
-                    let target_x = i64::from(x) + i64::from(j) - radius;
-                    let target_y = i64::from(y) + i64::from(i) - radius;
-                    if target_x < 0
-                        || target_y < 0
-                        || target_x >= i64::from(width)
-                        || target_y >= i64::from(height)
-                    {
-                        continue;
-                    }
-                    out.set(target_x as u32, target_y as u32, true);
-                }
-            }
-        }
-    }
-    out
 }
 
 /// `np.pad(mode="edge")`: `pad` pixels on all four sides, each copied from the nearest

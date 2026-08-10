@@ -1049,6 +1049,7 @@ dependencies = [
  "pc-core",
  "pc-detect",
  "pc-export",
+ "pc-inpaint",
  "pc-models",
  "pc-ocr",
  "pc-pipeline",
@@ -1127,6 +1128,7 @@ dependencies = [
  "image",
  "pc-config",
  "pc-core",
+ "pc-imageops",
  "pc-testkit",
  "serde",
  "serde_json",
@@ -1142,6 +1144,21 @@ dependencies = [
  "image",
  "pc-core",
  "pc-testkit",
+]
+
+[[package]]
+name = "pc-inpaint"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "ort",
+ "pc-config",
+ "pc-core",
+ "pc-imageops",
+ "pc-inpaint",
+ "serde",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -1197,6 +1214,7 @@ dependencies = [
  "pc-detect",
  "pc-export",
  "pc-imageops",
+ "pc-inpaint",
  "pc-mask",
  "pc-ocr",
  "pc-preprocess",
@@ -2397,13 +2415,16 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
+ "pc-cli",
  "pc-config",
  "pc-core",
  "pc-denoise",
  "pc-detect",
  "pc-imageops",
+ "pc-inpaint",
  "pc-mask",
  "pc-models",
+ "pc-pipeline",
  "pc-preprocess",
  "pc-testkit",
  "serde",

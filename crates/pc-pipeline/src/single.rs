@@ -18,6 +18,7 @@ use pc_core::{ImageHandle, OcrAnalytic, Output, Stage, StageError, Step};
 use pc_denoise::{DenoiseDests, DenoiseInput, DenoiseOutput, DenoiseStage};
 use pc_detect::{DetectInput, DetectStage};
 use pc_export::{ExportInput, ExportSources, ExportStage};
+use pc_inpaint::{inpaint_page, PageInput};
 use pc_mask::{MaskDests, MaskInput, MaskOutput, MaskStage};
 use pc_preprocess::{PreprocessInput, PreprocessStage};
 use std::path::{Path, PathBuf};
@@ -67,14 +68,130 @@ pub fn denoise_dests(cache: Option<&CachePaths>, denoising_enabled: bool) -> Den
     }
 }
 
-/// spec §12.3 step 2 — **availability**, which is the pipeline's half of the export
+/// L6-owned cache destinations for the two inpainting artifacts.
+pub const INPAINTING_SUFFIX: &str = "_inpainting.png";
+pub const CLEAN_INPAINT_SUFFIX: &str = "_clean_inpaint.png";
+
+#[derive(Debug, Clone, Default)]
+pub struct InpaintDests {
+    pub inpainting: Option<PathBuf>,
+    pub clean_inpaint: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InpaintOutput {
+    pub inpainting: ImageHandle,
+    pub clean_inpaint: ImageHandle,
+    pub growths: Vec<u32>,
+    pub tiles_inferred: usize,
+}
+
+pub fn inpaint_dests(cache: Option<&CachePaths>) -> InpaintDests {
+    cache.map_or_else(InpaintDests::default, |cache| InpaintDests {
+        inpainting: Some(cache.for_suffix(INPAINTING_SUFFIX)),
+        clean_inpaint: Some(cache.for_suffix(CLEAN_INPAINT_SUFFIX)),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn run_inpaint(
+    original: &ImageHandle,
+    raw_mask: &ImageHandle,
+    mask_data: &pc_core::MaskData,
+    noise_mask: Option<&ImageHandle>,
+    min_mask_thickness: u32,
+    config: &pc_config::InpainterConfig,
+    dests: InpaintDests,
+    provider: Option<&dyn crate::InpainterProvider>,
+) -> Result<Option<InpaintOutput>, PipelineError> {
+    let eligible = pc_inpaint::select_regions(&mask_data.regions, config);
+    if !config.inpainting_enabled || eligible.is_empty() {
+        return Ok(None);
+    }
+    let provider = provider.ok_or_else(|| {
+        PipelineError::Stage(StageError::InvalidInput(
+            "inpainting is eligible but no inpainter provider was injected".into(),
+        ))
+    })?;
+    let inpainter = provider.inpainter().map_err(|error| {
+        if provider.failures_are_run_fatal() {
+            PipelineError::RunFatal(error)
+        } else {
+            PipelineError::Stage(error)
+        }
+    })?;
+    let original = original.load().map_err(PipelineError::Stage)?.to_rgb8();
+    let raw_mask = raw_mask.load().map_err(PipelineError::Stage)?.to_luma8();
+    let combined_mask = mask_data
+        .combined_mask
+        .load()
+        .map_err(PipelineError::Stage)?
+        .to_rgba8();
+    let noise = noise_mask
+        .map(|handle| handle.load().map(|image| image.to_rgba8()))
+        .transpose()
+        .map_err(PipelineError::Stage)?;
+    let output = inpaint_page(
+        PageInput {
+            original: &original,
+            raw_mask: &raw_mask,
+            combined_mask: &combined_mask,
+            noise_mask: noise.as_ref(),
+            regions: &mask_data.regions,
+            min_mask_thickness,
+            config,
+        },
+        inpainter.as_ref(),
+    )
+    .map_err(PipelineError::Stage)?;
+    let write =
+        |image: &image::RgbaImage, path: Option<PathBuf>| -> Result<ImageHandle, PipelineError> {
+            match path {
+                Some(path) => {
+                    if let Some(parent) = path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|source| {
+                            PipelineError::Stage(StageError::Io {
+                                path: parent.to_path_buf(),
+                                source,
+                            })
+                        })?;
+                    }
+                    image
+                        .save_with_format(&path, image::ImageFormat::Png)
+                        .map_err(|error| {
+                            PipelineError::Stage(StageError::Io {
+                                path: path.clone(),
+                                source: std::io::Error::other(error),
+                            })
+                        })?;
+                    Ok(ImageHandle::from_path(path))
+                }
+                None => Ok(ImageHandle::from_memory(image::DynamicImage::ImageRgba8(
+                    image.clone(),
+                ))),
+            }
+        };
+    Ok(Some(InpaintOutput {
+        inpainting: write(&output.inpainting, dests.inpainting)?,
+        clean_inpaint: write(&output.clean_inpaint, dests.clean_inpaint)?,
+        growths: output.growths,
+        tiles_inferred: output.tiles_inferred,
+    }))
+}
+
 /// contract (`pc-export` owns precedence). A `None` stage output contributes nothing.
-pub fn export_sources(mask: Option<&MaskOutput>, denoise: Option<&DenoiseOutput>) -> ExportSources {
+pub fn export_sources(
+    mask: Option<&MaskOutput>,
+    denoise: Option<&DenoiseOutput>,
+    inpaint: Option<&InpaintOutput>,
+) -> ExportSources {
     ExportSources {
         masked: mask.map(|output| output.cleaned.clone()),
         denoised: denoise.map(|output| output.denoised.clone()),
+        inpainted: inpaint.map(|output| output.clean_inpaint.clone()),
         final_mask: mask.map(|output| output.combined_mask.clone()),
         denoise_mask: denoise.map(|output| output.noise_mask.clone()),
+        inpainted_mask: inpaint.map(|output| output.inpainting.clone()),
         isolated_text: mask.and_then(|output| output.text_layer.clone()),
     }
 }
@@ -247,6 +364,11 @@ pub fn run_stages(
         analytics.ocr.as_ref(),
     );
 
+    // Preserve the detector's raw mask before moving the page into masking. In Memory mode
+    // this is the page's cached, path-less image; in Disk mode it remains the cached
+    // `_raw_mask.png` handle. The inpaint stage must not substitute MaskData::base_image.
+    let raw_mask = page.raw_mask.clone();
+
     // §13.1: `panel-ocr ocr`'s job is "run OCR over the detected boxes and write a
     // CSV/TXT report" — stages 1–2 plus a report, and it has no `--output-dir` to write
     // images to. Stop here so an `ocr` run never masks, denoises or exports.
@@ -311,8 +433,24 @@ pub fn run_stages(
         None
     };
 
+    let inpaint = if options.profile.inpainter.inpainting_enabled {
+        run_inpaint(
+            &source,
+            &raw_mask,
+            &mask.mask_data,
+            denoise.as_ref().map(|value| &value.noise_mask),
+            options.profile.masker.min_mask_thickness,
+            &options.profile.inpainter,
+            inpaint_dests(cache),
+            ctx.inpainter,
+        )
+        .map_err(|error| (Step::Inpaint, error))?
+    } else {
+        None
+    };
+
     Ok(ChainOutputs {
-        sources: export_sources(Some(&mask), denoise.as_ref()),
+        sources: export_sources(Some(&mask), denoise.as_ref(), inpaint.as_ref()),
         analytics,
         no_text,
     })
@@ -457,13 +595,47 @@ pub fn process_image_with_splitting(
     let mut segment_sources = Vec::with_capacity(manifest.segments.len());
     let mut analytics = ImageAnalytics::default();
     let mut no_text = true;
+    let mut any_eligible = false;
     for segment in &manifest.segments {
-        let segment_cache = CachePaths::new(segment, &options.cache_dir);
+        let segment_cache = CachePaths::discover(&options.cache_dir, segment)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| CachePaths::new(segment, &options.cache_dir));
         match run_stages(segment, Some(&segment_cache), options, ctx) {
             Ok(chain) => {
                 no_text &= chain.no_text;
                 merge_analytics(&mut analytics, chain.analytics, &original_buf);
-                segment_sources.push(chain.sources);
+                let mut sources = chain.sources;
+                if sources.inpainted.is_some() {
+                    any_eligible = true;
+                }
+                if sources.inpainted.is_none()
+                    && options.profile.inpainter.inpainting_enabled
+                    && general.merge_after_split
+                {
+                    // An ineligible segment still occupies its stitched cleaned span, but
+                    // must not receive a synthetic L6 cache artifact.
+                    sources.inpainted = sources.denoised.clone().or_else(|| sources.masked.clone());
+                    let dimensions = image::image_dimensions(segment).map_err(|error| {
+                        failed(
+                            original_buf.clone(),
+                            Step::Export,
+                            StageError::Io {
+                                path: segment.clone(),
+                                source: std::io::Error::other(error),
+                            },
+                        )
+                    });
+                    let dimensions = match dimensions {
+                        Ok(dimensions) => dimensions,
+                        Err(outcome) => return outcome,
+                    };
+                    sources.inpainted_mask =
+                        Some(ImageHandle::from_memory(image::DynamicImage::ImageRgba8(
+                            image::RgbaImage::new(dimensions.0, dimensions.1),
+                        )));
+                }
+                segment_sources.push(sources);
             }
             Err((step, PipelineError::Stage(error))) => return failed(original_buf, step, error),
             Err((step, PipelineError::RunFatal(error))) => {
@@ -472,7 +644,20 @@ pub fn process_image_with_splitting(
         }
     }
 
-    match crate::strip::merged_strip_export(&manifest, &segment_sources, options) {
+    let export_options = if any_eligible {
+        options.clone()
+    } else {
+        // Do not manufacture original-strip L6 artifacts when every segment was
+        // ineligible; remove the temporary fallback sources before stitching.
+        for sources in &mut segment_sources {
+            sources.inpainted = None;
+            sources.inpainted_mask = None;
+        }
+        let mut options = options.clone();
+        options.profile.inpainter.inpainting_enabled = false;
+        options
+    };
+    match crate::strip::merged_strip_export(&manifest, &segment_sources, &export_options) {
         Ok(output) => outcome_for(original_buf, no_text, output.files_written, analytics),
         Err(error) => failed(original_buf, Step::Export, error),
     }
@@ -524,6 +709,7 @@ fn export_once(
             preferred_file_type: options.profile.general.cleaned_suffix(),
             preferred_mask_file_type: options.profile.general.preferred_mask_file_type.clone(),
             denoising_enabled: options.denoising_enabled(),
+            inpainting_enabled: options.profile.inpainter.inpainting_enabled,
         },
         (),
     )
