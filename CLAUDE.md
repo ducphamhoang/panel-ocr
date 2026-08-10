@@ -1,5 +1,56 @@
 # Working Pipeline
 
+## Durable orchestrator work state — read and update this first
+
+`docs/WORKSTATE.md` is the canonical live continuation index for the multi-worktree
+orchestrator. At the start of every session, read it before choosing a task. Then verify
+its dated observations against the actual worktrees (`git status --short --branch`,
+`git rev-parse HEAD`, changed-file mtimes/diffs), the ratified sections of
+`docs/PIPELINE_SPEC_V1.md`, and the frozen tests. A task status or agent self-report is
+not evidence of progress.
+
+After every meaningful transition — task start, test freeze, implementation commit,
+review result, verification result, blocker, or merge — update `docs/WORKSTATE.md` with
+the observed HEAD and actual command results. Re-read it before updating so a newer
+state is not silently overwritten. Keep `docs/HANDOVER.md` as temporary historical
+scaffolding only; do not use its stale branch/task descriptions as the current plan.
+
+**Unified-spec rule for feature worktrees:** `docs/PIPELINE_SPEC_V1.md` is maintained as
+one canonical document on the main/integration line. Do not add ratification sections,
+supersession claims, or other normative-spec edits only to an independent feature
+worktree. Feature worktrees may carry implementation and test changes plus
+`docs/WORKSTATE.md` evidence, but spec transcription and reconciliation happen on the
+clean integration branch after the ordered merges. When a feature branch has a
+ratified documentation decision, record the decision and blocker in `WORKSTATE.md` and
+carry the transcription to the unified integration spec.
+
+The Orchestrator must trace the ordered queue in `docs/WORKSTATE.md`: complete A4-d and
+branch verification, complete LaMa L6-4 then L6-5 and branch verification, create a clean
+integration branch, merge mask-parity before lama-inpaint, reconcile the shared spec and
+supersession gate, verify the integrated tree, and only then run the Simple/Annotation/LaMa
+benchmark. Do not reorder or merge early unless the user explicitly changes that decision.
+
+## Model routing
+
+Pipeline roles use native Claude model tiers, pinned in each agent's frontmatter under
+`.claude/agents/`: `model: opus` for the architect/rust-engineer/fresh-reader roles,
+`model: fable` for `fable-adjudicator`. Pass the tier alias through the Agent tool's
+`model` param the same way (`opus`, `sonnet`, `haiku`, `fable`); nothing else is a valid
+value here — `crates/pc-testkit/tests/agent_definitions.rs` gates the allowed set.
+
+**Retired: the `codex-vbg/gpt-5.6-sol` / `codex-vbg/gpt-5.6-luna` proxy routing.** For a
+stretch this project addressed a local Anthropic-compatible proxy (`codex-vbg/<model>`,
+see `setup-ccx-proxy.ps1`, listening on `127.0.0.1:8080`) directly by model string
+instead of using the tier aliases above, with Sol standing in for the former
+Opus/Fable tiers and Luna for the former Sonnet tier. That routing depended on the
+proxy process being up; when it wasn't (confirmed 2026-08-09: nothing listening on
+`127.0.0.1:8080`, every agent spawn failing with "model may not exist or you may not
+have access"), the entire pipeline stalled with no visible task-level cause. Reverted
+back to the native tiers above for reliability. If a future session wants to re-route
+through a local proxy, verify the proxy is actually listening before repointing agent
+frontmatter at it, and don't assume a `model:` string that isn't one of `opus`/`sonnet`/
+`haiku`/`fable` will resolve — check the Agent tool's own accepted values first.
+
 This project follows a fixed multi-agent pipeline. Follow it for every feature/spec
 unless the user explicitly overrides it for a given task.
 
@@ -126,6 +177,47 @@ report a brief that names nothing concrete rather than reviewing generically.
   re-message a previous `fresh-reader`**, because resuming destroys the freshness the
   gate depends on, and never assign it to whoever produced the artifact.
 
+## Agent dispatch briefs
+
+**Every subagent dispatch — the four named roles above, `codex:codex-rescue`, `cmdc`,
+or any other external agent call — gets its full task context written to a markdown
+brief file first, and the dispatch prompt tells the agent to read that file rather
+than inlining the context in the prompt itself.** (Decided 2026-08-09, prompted by the
+`codex-rescue` model-routing incident: iterating on a subagent's instructions mid-task
+meant re-typing the whole brief into a fresh prompt each retry, with no single place
+recording what the *current* instructions actually are.)
+
+Why a file instead of a prompt string:
+
+- **The brief can be revised in place and the agent told to re-read it**, instead of
+  re-explaining from scratch on every retry. If an agent misunderstands a step, comes
+  back with a wrong assumption, or needs a correction mid-task, edit the brief file and
+  send a follow-up telling it to re-read the file — this works whether the agent is
+  paused/resumed (Agent tool) or a fresh dispatch (`codex-rescue`/`cmdc`, which don't
+  preserve conversation state the same way).
+- **One artifact, not scattered prompt text**, to point a reviewer at when checking
+  whether an implementation actually followed its brief — "did it do what the brief
+  said" is a diffable question when the brief is a file.
+- Applies uniformly across dispatch mechanisms that don't share a common prompt
+  interface: an `Agent` tool subagent gets `Read <path>` naturally (all four roles
+  already carry the `Read` tool); `codex:codex-rescue` is a thin forwarder, so the
+  forwarded task text itself becomes "read the brief at `<path>` and follow it exactly"
+  — the underlying Codex CLI task reads the file with its own tools; `cmdc -p` works
+  the same way.
+
+Placement: write the brief under the **target worktree's own path** when the task is
+scoped to one worktree (so a worktree-relative mention inside the brief resolves
+correctly and the brief travels if the worktree is inspected later), otherwise under
+the session scratchpad. Either way, pass the **absolute path** in the dispatch prompt.
+Keep the dispatch prompt itself short: point at the brief, state anything that changed
+since the brief was written (if this is a retry), and nothing else duplicated from the
+brief's own content — duplicating defeats the point of having a single revisable place.
+
+This does not relax any other rule in this file — a brief-file dispatch to
+`rust-engineer` still needs an independent reviewer per §16.13 item 4, a ratification
+transcription still needs `fresh-reader`, and an implementer's own self-report is still
+not verification (re-run the actual checks).
+
 ## Pipeline
 
 1. **Plan**: Orchestrator spawns the Opus Technical Architecture and Opus Senior
@@ -159,7 +251,7 @@ report a brief that names nothing concrete rather than reviewing generically.
    markers asserted in a new entry while the old sites stayed unqualified.
    **Rulings got two architects; the transcription of them got none.**
 
-   Two binding consequences:
+   Three binding consequences:
 
    - **A fresh reader is called for a ratification, not only for a dispute.** Cost
      is reading one section. This is closer to Fable's proper role than waiting for
@@ -170,9 +262,21 @@ report a brief that names nothing concrete rather than reviewing generically.
      one residual form was restated in wider terms than its evidence allowed. If
      the source says "confidence", the transcription says "confidence" and not
      "the field"; widening is a separate, argued step.
+   - **A provenance claim is part of the transcription and is checked like one.** No
+     section may attribute itself to a ruling, session, or reviewer that did not
+     occur. The header's provenance (who ruled, when, in what mode) is a factual
+     claim the fresh reader verifies against what actually happened, not framing.
+     An implementation agent that believes a ratification is needed stops and
+     reports that to the Orchestrator; it never writes the section itself, and never
+     invents or back-dates a session to satisfy a gate — whatever the merit of the
+     section's content. Real instance: the original §16.41 (2026-08-09), whose
+     six items were substantively accurate and whose claimed joint ruling never
+     happened; accuracy of content does not launder fabricated provenance.
 
-   The mechanical half of this is a test rather than a habit — see the supersession
-   cross-check gate under Notes.
+   The scope-quoting bullet's mechanical half is a test rather than a habit — see the
+   supersession cross-check gate under Notes. The fresh-reader and provenance bullets
+   above have no equivalent automated gate; they are checked by the fresh reader
+   actually doing the check, not by a test that would fail if they didn't.
 
 2. **TDD implementation loop**, per task (or batch of related simple tasks):
    - Before Codex writes any implementation code, the Orchestrator checks the
@@ -213,6 +317,12 @@ report a brief that names nothing concrete rather than reviewing generically.
      mtime plus a build-error or test count — so check an artifact that changes, not
      a field that claims. A fresh task is also more reliable than a resume: resumes
      are what collided.
+
+### Work-state maintenance
+
+- `docs/WORKSTATE.md` is the canonical live continuation index; update it after each meaningful transition and record observed HEADs plus actual command results.
+- The work-state file is a control document, not the normative source: reconcile it against git, frozen tests, and the ratified spec before acting.
+- Do not silently merge stale `HANDOVER.md` state into the current plan; preserve stale-state corrections in the work-state update log.
 
 ## Notes
 
@@ -257,3 +367,58 @@ report a brief that names nothing concrete rather than reviewing generically.
   reviewer/date/method. That review needs a human reviewer independent of whoever
   produced the snapshot — the same self-reference rule as §16.13 item 4. Derive and
   present the expected values; do not self-attest them.
+
+## Handover — 2026-08-07
+
+This section mirrors the temporary `docs/HANDOVER.md`; use it as the continuation point.
+
+### Blocking issue
+
+Codex cannot currently write to either active feature worktree:
+
+- `D:\Duc\panel-ocr-mask-parity`
+- `D:\Duc\panel-ocr-lama-inpaint`
+
+The main repo has session-specific `Modify` ACL entries, while those worktrees only have
+the generic `CodexSandboxUsers` entry. A completed companion job confirmed the failure
+before any edit. `--cwd` scopes jobs correctly but does not repair the ACL. Do not retry
+implementation work until the worktrees are onboarded: run Codex interactively once
+inside each worktree, check the `/codex:setup` onboarding path, or have a human provision
+matching session-SID ACL entries.
+
+Once writable, dispatch directly with the worktree scoped on both task and status:
+
+```text
+node "<codex plugin path>/scripts/codex-companion.mjs" task --background --write --fresh \
+  --cwd "<worktree-path>" --prompt-file "<path-to-prompt-file>"
+node ".../codex-companion.mjs" status <job-id> --cwd "<worktree-path>"
+```
+
+### Worktree state and next tasks
+
+- Main: `D:\Duc\panel-ocr`, branch `claude/codex-plugin-install-jxirxa`, HEAD `78fecb7`, clean.
+- `mask-parity`: HEAD `aa6f3c7`, clean; A1–A4 ratification is landed (§16.39). Next is
+  **A4-a** (heavy), wiring `Annotation` into `pc_detect::run` with the drafted tests,
+  then **A4-b** for the coverage-operand implementation. The open §16.39 back-pointer
+  question needs Opus architect confirmation but does not block implementation.
+- `lama-inpaint`: HEAD `66cf7e4`, clean; L1–L6 ratification is landed (§16.38). Next:
+  **L6-1 + L6-2** batched (simple), **L6-3** (heavy export precedence), **L6-4** (heavy
+  pipeline wiring with eligibility-first model creation), and **L6-5** (simple CLI
+  `--skip-inpaint` and provider handoff). Remove the stale `#[ignore]` from the resolved
+  precedence test before L6-3.
+
+Last verified `cargo test --workspace`: mask-parity 1194 passed / 0 failed / 3 ignored;
+lama-inpaint 1218 passed / 0 failed / 3 ignored. Re-run before trusting those counts;
+ONNX, clippy, and fmt have not been rerun after ratification. After A4 and L6 land,
+run the real-page benchmark, then reconcile the independently diverged
+`PIPELINE_SPEC_V1.md` files before merging.
+
+### Not started / process reminders
+
+- Task #22: consolidate the four duplicated image-operation helpers into `pc_imageops`.
+- Task #16/#6: Simple vs Annotation vs LaMa benchmark, blocked on A4 and L6.
+- Watch file mtimes/diffs, not only background-job status; completed jobs can write nothing.
+  Use a fresh task for retries rather than a colliding resume. Keep fresh-reader review and
+  scope-quoted transcriptions.
+- Read `docs/COOKBOOK.md` before audits, deviations, or trusting green tests. If `cargo`
+  is missing in Bash, export `/c/Users/ducph/.cargo/bin` into `PATH`.
