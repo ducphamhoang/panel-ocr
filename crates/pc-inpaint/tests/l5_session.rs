@@ -122,14 +122,29 @@ fn a_device_this_build_cannot_provide_is_refused_by_pc_core_policy_before_the_mo
             );
         }
         Ok(_) => {
-            // A build that CAN provide CUDA must fall through to the model pre-flight, so
-            // the same call fails on the absent file instead. Asserted rather than skipped,
-            // so this test is never vacuous in either build.
+            // §16.47 item 4 (re-ratified with G2-B): a build that CAN provide CUDA now
+            // refuses at the stage-scoped seam (`ensure_stage_supports`) instead of
+            // falling through to the model pre-flight, because LaMa has no ratified CUDA
+            // path. The refusal must arrive before the file pre-flight, and it must be
+            // the stage-scoped one, not the GPU-1 NotCompiledIn message. Asserted rather
+            // than skipped, so this test is never vacuous in either build.
             let error = OnnxInpainter::from_path_for_device(&absent, Device::Cuda)
-                .expect_err("the absent model is still refused");
+                .expect_err("the stage-scoped refusal is still an error");
+            let expected = pc_core::device::DeviceRefusal::NoRatifiedStagePath {
+                requested: Device::Cuda,
+                stage: pc_core::device::Stage::Inpaint,
+            };
+            let StageError::Model(message) = &error else {
+                panic!("a stage-scoped refusal is run-fatal `Model`; got {error:?}");
+            };
+            assert_eq!(
+                message,
+                &expected.message(),
+                "a CUDA-resolvable build must refuse LaMa with the stage-scoped refusal"
+            );
             assert!(
-                error.to_string().contains(&absent.display().to_string()),
-                "got {error}"
+                !message.contains(&absent.display().to_string()),
+                "the stage refusal must precede the model pre-flight; got {message}"
             );
         }
     }

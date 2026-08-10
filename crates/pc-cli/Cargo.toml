@@ -21,6 +21,7 @@ default = []
 # Keep the whole pipeline runnable with mocks and replay fixtures without model files or
 # ONNX Runtime; the real backend is opt-in because the spec requires this no-onnx default.
 onnx = ["pc-detect/onnx", "pc-ocr/onnx", "pc-inpaint/onnx"]
+cuda = ["onnx", "pc-detect/cuda"]
 
 [dependencies]
 pc-core     = { path = "../pc-core" }

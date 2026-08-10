@@ -14,6 +14,7 @@ repository.workspace   = true
 # replay fixtures and no model files at all.
 default = []
 onnx    = ["dep:ort"]
+cuda    = ["onnx", "ort/cuda", "pc-core/cuda"]
 # Exposes MockDetector / ReplayDetector to other crates' tests (§7.2).
 testkit = []
 # Exposes session knobs only to maintainer benchmarks and opt-in real-model tests.

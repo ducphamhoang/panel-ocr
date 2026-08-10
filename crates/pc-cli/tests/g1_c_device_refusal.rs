@@ -62,6 +62,10 @@ fn cuda_refusal() -> DeviceRefusal {
         .expect_err("the explicit CPU-only capability must refuse cuda")
 }
 
+// GPU-2 (§16.47 item 10): used only by the three `#[cfg(not(feature = "cuda"))]`-gated
+// tests below it; the sixth, ungated test doesn't call it. Gated identically so
+// `cargo clippy --all-features` doesn't see it as dead code once `cuda` exists.
+#[cfg(not(feature = "cuda"))]
 fn assert_exact_cli_refusal(output: &Output) {
     let expected = format!("error: model error: {}\n", cuda_refusal().message());
     assert_eq!(

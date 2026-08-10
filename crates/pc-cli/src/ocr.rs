@@ -32,7 +32,12 @@ pub fn build_factory_for_device(
     }
     #[cfg(feature = "onnx")]
     {
-        pc_core::device::resolve(device, pc_core::device::DeviceSupport::compiled())
+        let policy = pc_core::device::resolve(device, pc_core::device::DeviceSupport::compiled())
+            .map_err(|refusal| StageError::Model(refusal.message()))?;
+        // §16.47 item 4: the OCR stage has no ratified CUDA path, so even a build that
+        // CAN register CUDA refuses here — AFTER resolve, so the GPU-1 NotCompiledIn
+        // refusal (and its frozen message) keeps precedence in a non-cuda build.
+        pc_core::device::ensure_stage_supports(&policy, pc_core::device::Stage::Ocr)
             .map_err(|refusal| StageError::Model(refusal.message()))?;
 
         let models_dir = crate::paths::models_dir(cache_root);

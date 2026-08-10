@@ -20,6 +20,7 @@ onnx    = [
     "pc-inpaint/onnx",
     "pc-cli/onnx",
 ]
+cuda    = ["pc-cli/cuda"]
 
 [dependencies]
 # §16.13 item 3: xtask is the ONE place `pc-testkit` is a normal (non-dev) dependency.

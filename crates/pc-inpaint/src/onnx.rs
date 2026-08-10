@@ -270,7 +270,13 @@ mod session {
         ///
         /// Every failure here is [`StageError::Model`], i.e. run-fatal (§16.38 item 9).
         pub fn from_path_for_device(model: &Path, device: Device) -> Result<Self, StageError> {
-            pc_core::device::resolve(device, DeviceSupport::compiled())
+            let policy = pc_core::device::resolve(device, DeviceSupport::compiled())
+                .map_err(|refusal| StageError::Model(refusal.message()))?;
+            // §16.47 item 4: the LaMa stage has no ratified CUDA path, so even a build
+            // that CAN register CUDA refuses here — AFTER resolve, so the GPU-1
+            // NotCompiledIn refusal (and its frozen message) keeps precedence in a
+            // non-cuda build.
+            pc_core::device::ensure_stage_supports(&policy, pc_core::device::Stage::Inpaint)
                 .map_err(|refusal| StageError::Model(refusal.message()))?;
 
             // Before any ort call, so a missing file reports its own path rather than an
