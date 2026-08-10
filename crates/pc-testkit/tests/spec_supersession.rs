@@ -29,7 +29,10 @@ const MARKER: &str = "**SUPERSEDES:";
 // §16.46 raises it from 54 to 64: ten new markers, listed and reasoned at the end of
 // RATIFIED_SUPERSESSIONS below. Counted by reading that block, not by arithmetic on this
 // line — the rows are the record and this number is derived from them.
-const EXPECTED_PARSED_CLAIMS: usize = 64;
+// §16.47 raises it from 64 to 65: one new marker (GPU-2's detector registration
+// falsifies §16.43 item 6's detector-mechanism sentence; the inpainter sentence is
+// unaffected and carries no marker).
+const EXPECTED_PARSED_CLAIMS: usize = 65;
 
 /// Claims whose declared sub-item identity must scope the target-side back-pointer independently.
 /// Most historical lettered claims retain §16.26 item 3(a)'s parent-item span. These two are pinned
@@ -394,6 +397,12 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.46", "16.38 item 13(a)"),
     ("16.46", "16.38 item 15(e)"),
     ("16.46", "16.39 item 2"),
+    // §16.47's one marker: GPU-2's real detector CUDA registration falsifies §16.43
+    // item 6's detector-mechanism sentence (the graft's first half only — the
+    // inpainter sentence, the process-wide-statement ruling, and the per-stage-row
+    // shape are unaffected and carry no marker). Raises EXPECTED_PARSED_CLAIMS from
+    // 64 to 65.
+    ("16.47", "16.43 item 6"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.

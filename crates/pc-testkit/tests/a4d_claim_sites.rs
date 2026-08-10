@@ -592,8 +592,15 @@ const PRESENT: &[Site] = &[
         // many times this one site has moved, ALWAYS re-verify with `grep -n
         // "Upstream .refine_mask" docs/PIPELINE_SPEC_V1.md` before trusting this
         // number if this test ever fails again — do not just add/subtract a delta.
+        //   → 9376 (2026-08-11, §16.47 GPU-2 ratification inserted above this point;
+        //     re-derived by content, single occurrence confirmed).
+        //   → 9387 (2026-08-11, same task, fresh-reader fix round added 11 net lines
+        //     above this point; re-derived by content, single occurrence confirmed).
+        //   → 9393 (2026-08-11, same task, second fresh-reader fix round added 6 more
+        //     net lines above this point; re-derived by content, single occurrence
+        //     confirmed).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 9280,
+        line: 9393,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {
