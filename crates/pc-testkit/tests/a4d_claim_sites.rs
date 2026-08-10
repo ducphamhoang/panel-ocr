@@ -600,9 +600,14 @@ const PRESENT: &[Site] = &[
         // Re-pinned 103->173 (2026-08-10, README rewritten as end-user guide for the
         // v1.2.0 release; the v2 heading is unchanged content, just moved further down).
         //   → 188 (2026-08-10, D4, §16.46 item 15's README reframing around opting OUT:
-        //     +15 net lines above this point). Re-derived by content: exactly one hit.
+        //     +15 net lines above this point).
+        //   → 190 (2026-08-11, GPU-1 checklist correction: the README's v1.5 section
+        //     falsely claimed "not started" while GPU-1/§16.36 had actually merged
+        //     2026-08-05, verified against git — checking the box and adding the
+        //     shipped-date note added one net line above this point). Re-derived by
+        //     content: exactly one hit.
         path: "README.md",
-        line: 189,
+        line: 190,
         text: "### v2",
     },
     Site {

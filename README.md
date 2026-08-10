@@ -176,8 +176,9 @@ Windows it builds but is not yet CI-verified (§16.33 item 10).
 - [x] `cargo xtask mode-bench` — a pinned, non-gating Simple/Annotation/LaMa comparison
       tool, with a real committed report in `docs/MODE_COMPARISON.md`
 
-### v1.5 — not started
-- [ ] GPU-1: device config, policy resolver, fatal-refusal wiring (no CUDA linkage yet)
+### v1.5 — in progress
+- [x] GPU-1: device config, policy resolver, fatal-refusal wiring (no CUDA linkage yet) —
+      shipped 2026-08-05 (§16.36), ahead of this README's previous "not started" claim
 - [ ] GPU-2: the `cuda` feature itself, opt-in and quarantined from every gate/fixture/
       recording (§16.22) — CPU stays the only execution provider covered by
       determinism guarantees
