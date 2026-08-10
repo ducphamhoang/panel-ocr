@@ -58,6 +58,45 @@ frontmatter at it, and don't assume a `model:` string that isn't one of `opus`/`
 This project follows a fixed multi-agent pipeline. Follow it for every feature/spec
 unless the user explicitly overrides it for a given task.
 
+**Mechanical verification does not need the pinned tier.** Re-deriving a byte count,
+checking a citation/line number against source, counting occurrences, confirming a
+test's real output matches a claimed number — none of this is judgment work. Route it
+to a fast/cheap tier (`haiku`) instead of spinning up an Opus-tier `architect`/
+`rust-engineer` call for it. Reserve the pinned tiers for the things that actually need
+that reasoning: design, disagreement, and the specific correctness judgment a
+step exists to provide. (Cost lesson from the 2026-08-10 defaults-flip task: verifying
+a Fable-quoted byte count or a spec section number does not need the same tier that
+adjudicated the underlying disagreement.)
+
+## Right-sizing the pipeline
+
+**Not every task needs everything below.** Classify before invoking anything, and
+default to the lightest tier that fits — escalate only when a step's own output
+surfaces a real disagreement or spec conflict, never pre-emptively "to be safe":
+
+- **Direct.** No ratified deviation being reversed, no frozen-fixture-producing path
+  touched, no cross-cutting effect, the approach isn't contestable (doc fixes, log/CLI
+  wording, a config default with nothing ratified attached, a one-file bugfix). The
+  Orchestrator implements directly, runs the relevant tests, reports. No architect, no
+  `rust-engineer`, no Fable, no ratification.
+- **Simple, one review.** Touches real code but the approach isn't contested and the
+  blast radius is contained. One `rust-engineer` implementation pass, one independent
+  review pass. No dual plan, no Fable, no multi-round review — if the first review
+  finds something, fix it and re-run tests; only spin a second review round if that fix
+  itself is contestable, not to re-confirm a mechanical correction.
+- **Spec-sensitive.** Reverses or creates a ratified deviation (`DEVIATION(n)`), touches
+  fixture/provenance-producing machinery, or two reasonable people could actually
+  disagree on the approach. This is the only tier where the full pipeline below (joint
+  plan, Fable on disagreement, ratification + fresh-reader, task-by-task review) is
+  worth its cost — and even here, prefer one thorough, explicitly-adversarial review
+  pass over open-ended review→fix→review loops (see step 3).
+
+If genuinely unsure which tier a task needs, say so to the user and ask, rather than
+defaulting to the heaviest tier "to be safe" — that default is itself the expensive
+mistake (see the 2026-08-10 defaults-flip task, ~5.5M subagent tokens for what turned
+out to be two contested points and a handful of mechanical bugs a single careful pass
+would have caught).
+
 ## Roles
 
 Four of these roles have definitions in `.claude/agents/`. The *intent* is that a role's
@@ -222,6 +261,20 @@ This does not relax any other rule in this file — a brief-file dispatch to
 transcription still needs `fresh-reader`, and an implementer's own self-report is still
 not verification (re-run the actual checks).
 
+**Keep briefs surgical, not exhaustive.** A brief should state what changed and what's
+needed for *this* step — pointing at an existing artifact (a prior brief, a spec
+section, a committed file) is cheaper and just as effective as re-deriving or
+re-including context that step already established. Every extra paragraph is input
+tokens on every subsequent read of that brief, including every resume.
+
+**Cap resume chains.** Resuming the same agent (`SendMessage` to an existing agent)
+re-sends its *entire* accumulated transcript every time — a long fix→review→fix loop on
+one instance compounds cost turn over turn, not linearly. Resuming is fine for a short,
+continuous chain (implement → fix one review's findings). Once a task has gone through
+more than ~2-3 resume rounds, prefer a fresh spawn with a distilled brief (state the
+current file state and what's left, not the history of how it got there) over continuing
+to grow the same instance's context indefinitely.
+
 ## Pipeline
 
 1. **Plan**: Orchestrator spawns the Opus Technical Architecture and Opus Senior
@@ -295,10 +348,24 @@ not verification (re-run the actual checks).
    - Escalation rule: if a task/bug isn't resolved within ~5 iterations, stop
      iterating blindly and consult Fable for advice (diagnosis/approach only, no
      code from Fable). Apply Fable's advice via Codex as usual.
+   - **Targeted runs during iteration, full bar only at the gate.** While actively
+     iterating on one crate/test, run the scoped command (`cargo test -p <crate>
+     --test <name>`), not `cargo test --workspace`. The full workspace run, the `onnx`
+     feature tier, clippy, and fmt are the *final* verification gate for a task/batch —
+     run them once when the task is believed done, not after every intermediate edit.
+     A full-workspace run's output is large; reading it into context repeatedly for
+     work that hasn't converged yet is pure waste.
 
 3. **Review**: once Codex reports a task/batch done and all tests are green, the
    Orchestrator spawns the Opus Senior Rust Engineer subagent again to review the
-   implementation against the original spec (not just "tests pass").
+   implementation against the original spec (not just "tests pass"). **Ask for one
+   thorough, explicitly-adversarial pass, not an open-ended loop.** Tell the reviewer
+   this is likely its only pass — falsify claims, re-derive numbers, check the whole
+   diff, not just the parts flagged as risky. Batch every finding from that one pass
+   into a single fix round. Only spin a second review round if a fix itself introduces
+   something contestable (a design call, a spec-text change) — never merely to
+   re-confirm a mechanical correction (a typo, a wrong citation, a stale comment) that
+   the fix report already demonstrates was applied and re-verified.
 
 4. **Progress watch**: the Orchestrator checks in on any long-running subagent
    roughly every 5 minutes (via scheduled wake-ups, not busy polling) to confirm
