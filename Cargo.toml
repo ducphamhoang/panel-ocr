@@ -81,3 +81,7 @@ opt-level = 1        # the pixel-math tests are slow at opt-level 0
 
 [profile.bench]
 lto = "thin"
+
+[profile.release]
+strip = true         # smaller shipped binary; no effect on test/dev profiles
+lto = "thin"         # matches [profile.bench]; verify against the test gate before shipping
