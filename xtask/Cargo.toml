@@ -12,7 +12,14 @@ repository.workspace   = true
 
 [features]
 default = []
-onnx    = ["pc-detect/onnx", "pc-detect/bench-tuning"]
+onnx    = [
+    "pc-detect/onnx",
+    "pc-detect/bench-tuning",
+    # §16.43 item 5 (D3): mode-bench's LaMa cells reuse `pc_cli::inpainter`'s provider, so
+    # xtask's own `onnx` tier must turn on the same backend the provider builds against.
+    "pc-inpaint/onnx",
+    "pc-cli/onnx",
+]
 
 [dependencies]
 # §16.13 item 3: xtask is the ONE place `pc-testkit` is a normal (non-dev) dependency.
@@ -28,6 +35,13 @@ pc-imageops = { path = "../crates/pc-imageops" }
 pc-preprocess = { path = "../crates/pc-preprocess" }
 pc-mask    = { path = "../crates/pc-mask" }
 pc-models  = { path = "../crates/pc-models" }
+# §16.43 item 5 (D3, Fable's ruling): mode-bench's LaMa cells reuse
+# `pc_cli::inpainter::build_provider` rather than hand-rolling a second model-acquisition
+# mechanism, and call `pc_pipeline::run_inpaint` directly (item 8's stage sequence).
+# `pc-inpaint` additionally removes the local eligibility mirror task 2 had to carry.
+pc-inpaint = { path = "../crates/pc-inpaint" }
+pc-pipeline = { path = "../crates/pc-pipeline" }
+pc-cli     = { path = "../crates/pc-cli" }
 
 anyhow     = { workspace = true }
 clap       = { workspace = true }
@@ -40,6 +54,10 @@ sha2       = { workspace = true }
 # Falsifying `provenance_is_current`'s four conditions needs a throwaway workspace tree; the
 # alternative is mutating `tests/fixtures/recorded/`, which is the corruption those gates detect.
 tempfile = { workspace = true }
+# §16.38 item 16(c)'s test double, so mode-bench's LaMa tests exercise a REAL `run_inpaint`
+# call in the default no-`onnx` tier — the tier cookbook rule 6 records as the one that
+# actually executes. Without it every LaMa assertion here would be `onnx`-gated and skipped.
+pc-inpaint = { path = "../crates/pc-inpaint", features = ["testkit"] }
 
 [lints.clippy]
 # The frozen G1-D test deliberately mutates one config instance after `default()` so it can prove

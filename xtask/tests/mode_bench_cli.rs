@@ -1,14 +1,18 @@
 //! Process-level contract for `cargo xtask mode-bench` (spec §16.43). FROZEN.
 //!
-//! §16.43 item 10 places these tests **first, before either heavy task starts**, as
-//! ordinary red-first TDD. `replay_mode_writes_a_report_with_the_ratified_structure` is
-//! therefore RED BY DESIGN right now: the pure layer (types, CLI parsing, device
-//! disclosure, renderer) exists, but the Simple/Annotation measurement driver that fills
-//! the table does not, so every cell currently renders BLOCKED. That test is
-//! `#[ignore]`d only so the workspace suite stays readable; the measurement-driver task
-//! (§16.43 item 9, heavy task 2) un-ignores it and must make it pass unchanged.
+//! §16.43 item 10 placed these tests **first, before either heavy task started**, as
+//! ordinary red-first TDD. `replay_mode_writes_a_report_with_the_ratified_structure` was
+//! red by design at that point — the pure layer (types, CLI parsing, device disclosure,
+//! renderer) existed, but the Simple/Annotation measurement driver that fills the table did
+//! not, so every cell rendered BLOCKED — and it was `#[ignore]`d only so the workspace
+//! suite stayed readable. The measurement-driver task (§16.43 item 9, heavy task 2)
+//! un-ignored it and made it pass unchanged; as of that task's `a3d8d24` all 7 tests here
+//! pass and none is ignored.
 //!
-//! The other tests here exercise the pure layer only and are green as of this task.
+//! This header correction is transcribed from §16.44 item 1's last converged-on bullet,
+//! which both joint rulings verified by running the suite. **No assertion in this file has
+//! been touched, and §16.44 item 1 records that the LaMa task needs zero assertion changes
+//! here.**
 
 use std::process::Command;
 

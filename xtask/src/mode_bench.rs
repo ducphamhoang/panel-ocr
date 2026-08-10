@@ -5,17 +5,29 @@
 //! and the report renderer) came from §16.43 item 9's "simple" task. [`measure`] and the
 //! per-`(page, cell)` driver below are item 9's **first heavy** task: the three input
 //! sources and the `pc_detect::run` → `pc_preprocess::run` → `pc_mask::run` sequence per
-//! cell. The **LaMa integration is still the second heavy task** — nothing here calls an
-//! inpainting function or depends on `pc-inpaint`, and every cell is therefore recorded
-//! with `inpainting_ran: false` / `tiles_inferred: None`, which is what actually happened.
+//! cell. Item 9's **second heavy** task adds the LaMa stage, under §16.44's ruling:
+//!
+//!   * on `--replay`, a LaMa cell **never seeks the model at all** — mode-bench's own
+//!     source policy, not an unavailability (§16.44 item 2). Its row is a real mask-stage
+//!     measurement carrying [`INPAINT_NOT_ATTEMPTED`];
+//!   * on `--demo-bubbles`/`--pages`, a LaMa cell calls `pc_pipeline::run_inpaint`
+//!     for real, through `pc_cli::inpainter::build_provider`'s provider;
+//!   * a cell that could not inpaint **keeps its mask-stage measurement** rather than
+//!     collapsing to a bare `**BLOCKED**` row (§16.44 item 1), and the three "did not
+//!     inpaint" states are textually distinct (§16.44 item 3);
+//!   * a LaMa cell that inpainted on **zero** pages contributes no mean to the
+//!     eligibility-restricted segment 4.3 (§16.44 item 4).
 
 use crate::paths;
 use anyhow::{anyhow, bail, Context, Result};
+use pc_cli::inpainter::build_provider;
 use pc_config::{
     InpainterConfig, MaskRefineMode, MaskerConfig, PreprocessorConfig, TextDetectorConfig,
 };
 use pc_core::device::{resolve, Device, DevicePolicy, DeviceSupport};
-use pc_core::{ImageHandle, MaskRegionStats};
+use pc_core::ImageHandle;
+use pc_pipeline::single::{run_inpaint, InpaintDests};
+use pc_pipeline::{InpainterProvider, PipelineError};
 use pc_testkit::golden::GoldenReport;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -191,6 +203,85 @@ fn accepted() -> String {
 // Measurements (§16.43 item 2(a))
 // ---------------------------------------------------------------------------
 
+/// §16.44 item 3, binding: the `--replay` "not attempted — source policy" state must be
+/// **textually distinct** from "eligible regions = 0, nothing to inpaint" and from a real
+/// failed acquisition on `--demo-bubbles`/`--pages`. Fable's ruling, quoted: *"Don't
+/// collapse all three into one bare 'no'."*
+///
+/// Its wording deliberately repeats `Source::Replay.describe()`'s shipped phrase *"no
+/// model is loaded"* (§16.44 item 3: *"under this ruling it becomes load-bearing and the
+/// per-row note should agree with it"*), so the two sentences cannot drift into
+/// contradicting each other.
+pub(crate) const INPAINT_NOT_ATTEMPTED: &str = "inpainting not attempted — `--replay` does \
+not exercise LaMa on any cell, so no model is loaded and no acquisition is tried (§16.44 \
+item 2)";
+
+/// The second of §16.44 item 3's three states: acquisition was reachable, but
+/// `pc_pipeline::run_inpaint` short-circuited on its own empty eligible set.
+pub(crate) const INPAINT_NOTHING_ELIGIBLE: &str = "inpainting was reachable but nothing was \
+eligible on this page — `pc_pipeline::run_inpaint` returned `Ok(None)` before any model was \
+sought";
+
+/// The third of §16.44 item 3's three states: the model was genuinely sought and the
+/// attempt failed. Whole-cell, because the provider declares its failures run-fatal.
+pub(crate) const INPAINT_ACQUISITION_FAILED: &str =
+    "inpainting model acquisition was attempted for this cell and failed — ";
+
+/// Not one of item 3's three states: the model was acquired and inference failed on this
+/// one page. Per-page, so the cell's other pages still inpaint.
+pub(crate) const INPAINT_INFERENCE_FAILED: &str =
+    "the inpainting model was acquired, but inference failed on this page — ";
+
+/// Why a row's `Inpainting ran` column says what it says (§16.44 item 3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InpaintStatus {
+    /// A non-LaMa cell. Inpainting is not a factor of this cell at all, so there is no
+    /// "did not run" to explain and the row carries no note.
+    NotRequested,
+    /// `--replay` (§16.44 item 2): mode-bench's own source policy, not an unavailability.
+    NotAttempted,
+    /// `run_inpaint` returned `Ok(None)`.
+    NothingEligible,
+    /// The provider declared its failure run-fatal (`PipelineError::RunFatal`), which is
+    /// how `run_inpaint` reports a failed *acquisition* — cookbook rule 4: the fatality is
+    /// **declared** by `InpainterProvider::failures_are_run_fatal`, never inferred here.
+    AcquisitionFailed(String),
+    /// `PipelineError::Stage` out of `run_inpaint` after the provider handed over an
+    /// inpainter — a per-page inference failure.
+    InferenceFailed(String),
+    /// `run_inpaint` returned `Ok(Some(..))`: inpainting genuinely executed on this page.
+    Ran { tiles_inferred: usize },
+}
+
+impl InpaintStatus {
+    /// Did inpainting genuinely execute? The **only** predicate §16.44 item 4's
+    /// eligibility-restricted exclusion may key on.
+    pub(crate) const fn ran(&self) -> bool {
+        matches!(self, Self::Ran { .. })
+    }
+
+    pub(crate) const fn tiles_inferred(&self) -> Option<usize> {
+        match self {
+            Self::Ran { tiles_inferred } => Some(*tiles_inferred),
+            _ => None,
+        }
+    }
+
+    /// The row's note, or `None` when there is nothing to explain (a non-LaMa cell, or a
+    /// cell that did inpaint).
+    pub(crate) fn note(&self) -> Option<String> {
+        match self {
+            Self::NotRequested | Self::Ran { .. } => None,
+            Self::NotAttempted => Some(INPAINT_NOT_ATTEMPTED.to_owned()),
+            Self::NothingEligible => Some(INPAINT_NOTHING_ELIGIBLE.to_owned()),
+            Self::AcquisitionFailed(reason) => {
+                Some(format!("{INPAINT_ACQUISITION_FAILED}{reason}"))
+            }
+            Self::InferenceFailed(reason) => Some(format!("{INPAINT_INFERENCE_FAILED}{reason}")),
+        }
+    }
+}
+
 /// Everything one cell measured on one page.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Measured {
@@ -202,9 +293,9 @@ pub(crate) struct Measured {
     /// `pc_inpaint::select_regions`' output size — computed for **every** cell, LaMa or
     /// not (§16.43 item 8), since that function reads only `MaskRegionStats`.
     pub(crate) eligible_regions: usize,
-    pub(crate) inpainting_ran: bool,
-    /// `None` when this cell did not inpaint at all.
-    pub(crate) tiles_inferred: Option<usize>,
+    /// What the inpainting stage did, and — when it did nothing — which of §16.44 item 3's
+    /// three distinct states applies.
+    pub(crate) inpaint: InpaintStatus,
     /// `None` for sources with no reference (`--replay`, `--pages`).
     pub(crate) reference: Option<GoldenReport>,
 }
@@ -248,6 +339,25 @@ impl Source {
 
     pub(crate) const fn has_reference(self) -> bool {
         matches!(self, Self::DemoBubbles)
+    }
+
+    /// §16.44 item 2, the disputed question Fable resolved: **`--replay` never attempts
+    /// LaMa acquisition for any cell**, by mode-bench's own deliberate source policy —
+    /// *"not because the model is unavailable, but because that source does not exercise
+    /// LaMa at all"*. Fable's decisive ground, quoted: *"Under the architect's ruling,
+    /// item 8's antecedent ('whose model is unavailable') simply never fires on
+    /// `--replay`, because unavailability is only meaningful relative to a need; both the
+    /// ratified sentence and the frozen test hold as written, on every source."*
+    ///
+    /// This is the predicate that makes §16.43 item 8's ratified clause *"`--pages` … the
+    /// only source that reaches multi-tile LaMa"* true **by construction** rather than
+    /// contingent on the replay fixture's eligible-region geometry (item 2's second
+    /// ground).
+    pub(crate) const fn attempts_inpainting(self) -> bool {
+        match self {
+            Self::Replay => false,
+            Self::DemoBubbles | Self::Pages => true,
+        }
     }
 
     pub(crate) const fn describe(self) -> &'static str {
@@ -340,22 +450,33 @@ impl Benchmark {
 
     /// Mark a whole cell unavailable. Every other cell in the run still reports
     /// (§16.43 item 8).
-    // Exercised by this module's tests; the *production* caller is the LaMa integration
-    // (§16.43 item 9's second heavy task), which blocks a LaMa cell whose model is
-    // absent. The Simple/Annotation driver blocks no cell — a LaMa cell's masking-stage
-    // numbers are real measurements here, only `inpainting_ran` is false.
+    //
+    // **§16.44 item 1 removed this function's production caller, deliberately.** Both joint
+    // rulings converged, quoted: a LaMa cell that cannot inpaint "must **keep its own real
+    // mask-stage measurement** (detected boxes, masking regions, succeeded/failed/dropped/
+    // eligible counts) — never erase it to render a bare `**BLOCKED**` row with no other
+    // data." So the LaMa driver records an acquisition failure as a NOTE on a `Measured`
+    // row (`InpaintStatus::AcquisitionFailed`), not as a blocked cell. The mechanism stays
+    // for a future whole-cell condition that genuinely precedes measurement, and this
+    // module's tests still exercise the rendering path.
     #[allow(dead_code)]
     pub(crate) fn block_cell(&mut self, cell: CellId, reason: impl Into<String>) {
         self.blocked_cells.insert(cell, reason.into());
     }
 
+    /// A recorded row **wins over** a blocked cell (§16.44 item 1): once a page has a real
+    /// measurement, no cell-level condition may erase it. A blocked cell with no recorded
+    /// row still renders `**BLOCKED**`, which is what keeps §16.43 item 8's rule intact for
+    /// a condition that really did precede measurement.
     pub(crate) fn outcome(&self, page: &str, cell: CellId) -> Option<Outcome> {
-        if let Some(reason) = self.blocked_cells.get(&cell) {
-            return Some(Outcome::Blocked {
-                reason: reason.clone(),
-            });
+        if let Some(recorded) = self.rows.get(&(page.to_owned(), cell)) {
+            return Some(recorded.clone());
         }
-        self.rows.get(&(page.to_owned(), cell)).cloned()
+        self.blocked_cells
+            .get(&cell)
+            .map(|reason| Outcome::Blocked {
+                reason: reason.clone(),
+            })
     }
 
     /// Segment 2: this cell's own `{page : eligible_regions > 0}`.
@@ -377,25 +498,58 @@ impl Benchmark {
         self.pages.iter().cloned().collect()
     }
 
+    /// Did this cell produce at least one real measurement anywhere?
+    ///
+    /// §16.44 item 1, binding and converged on by both joint rulings: the "actually run"
+    /// predicate *"must stop keying on absence from the blocked-cells map, and key it on
+    /// **having produced at least one `Measured` row** instead"*.
+    fn has_measured_row(&self, cell: CellId) -> bool {
+        self.pages.iter().any(|page| {
+            self.outcome(page, cell)
+                .as_ref()
+                .and_then(Outcome::measured)
+                .is_some()
+        })
+    }
+
+    /// Did inpainting genuinely execute for this cell on **any** page?
+    ///
+    /// §16.44 item 4's predicate, quoted: a LaMa cell must have *"genuinely run inpainting
+    /// on at least one page (i.e. `run_inpaint` returned `Ok(Some(...))` somewhere in that
+    /// cell's pages, not merely `Ok(None)` or a `Measured` row with `inpainting_ran: false`
+    /// everywhere)"*.
+    fn inpainting_ran_on_any_page(&self, cell: CellId) -> bool {
+        self.pages.iter().any(|page| {
+            self.outcome(page, cell)
+                .as_ref()
+                .and_then(Outcome::measured)
+                .is_some_and(|measured| measured.inpaint.ran())
+        })
+    }
+
     /// Segment 3: the intersection of the eligible sets over the cells actually run.
     ///
-    /// **Design decision (post-review, §16.43 item 4): "actually run" excludes
-    /// BLOCKED cells, not just unrequested ones.** A requested-but-blocked cell (e.g.
-    /// the LaMa cell when the model artifact is absent) never produced a real
-    /// measurement, so it contributes no genuine eligible set to intersect against —
-    /// treating its absence as an empty set would silently collapse this segment to
-    /// empty on the single most common real-world run shape (LaMa unavailable in CI),
-    /// which is exactly the "silent re-segmentation" failure item 4's caption
-    /// requirement exists to surface, not hide behind an always-empty table. A run
-    /// requesting only blocked cells (nothing actually ran) still correctly yields an
-    /// empty intersection via `contributing.is_empty()` below, not through blocked
-    /// cells poisoning an otherwise-real intersection.
+    /// **§16.44 item 1** replaced this predicate's original "not in `blocked_cells`" form
+    /// with "produced at least one `Measured` row". The two existing unit tests below
+    /// (`a_blocked_cell_does_not_poison_the_intersection_even_though_it_was_requested`,
+    /// `an_intersection_over_only_blocked_cells_is_empty_not_a_false_full_match`) pass
+    /// unchanged under it, which is what both rulings independently verified before
+    /// ratifying it. The original ground is unchanged and still applies: a cell that never
+    /// produced a measurement contributes no genuine eligible set to intersect against, so
+    /// treating its absence as an empty set would silently collapse this segment to empty
+    /// on the most common real-world run shape.
+    ///
+    /// **This is the eligible-page-set intersection, not the mean.** §16.44 item 4's
+    /// exclusion of a never-inpainted LaMa cell is applied to the *mean* — see
+    /// [`Self::contributes_to_eligibility_restricted_mean`] — because Fable's ruling scoped
+    /// item 4 to *"the eligibility-restricted cross-cell mean"* and closed with *"I decide
+    /// nothing further about section 4.3's captions beyond D2's existing requirements."*
     pub(crate) fn common_eligible(&self) -> BTreeSet<String> {
         let mut contributing = self
             .cells
             .iter()
             .copied()
-            .filter(|cell| !self.blocked_cells.contains_key(cell));
+            .filter(|cell| self.has_measured_row(*cell));
         let Some(first) = contributing.next() else {
             return BTreeSet::new();
         };
@@ -407,15 +561,36 @@ impl Benchmark {
         common
     }
 
-    /// The cells this intersection was actually computed over — i.e. requested minus
-    /// blocked — for the segment-3 caption to name (item 4's "the caption must name
-    /// the cell set the intersection was computed over").
+    /// The cells this intersection was actually computed over, for the segment-3 caption
+    /// to name (§16.43 item 4's "the caption must name the cell set the intersection was
+    /// computed over").
     pub(crate) fn common_eligible_contributing_cells(&self) -> Vec<CellId> {
         self.cells
             .iter()
             .copied()
-            .filter(|cell| !self.blocked_cells.contains_key(cell))
+            .filter(|cell| self.has_measured_row(*cell))
             .collect()
+    }
+
+    /// §16.44 item 4, the hazard Fable found by combining two of the converged-on points
+    /// and the binding condition that closes it, quoted: *"a cell whose inpainting factor
+    /// was requested but ran on zero pages must not contribute to the eligibility-
+    /// restricted cross-cell mean (disclosure alone is not enough;
+    /// disclosure-instead-of-exclusion is what D2 already rejected)."*
+    ///
+    /// Without this, a LaMa cell that kept its mask-stage measurement (item 1) but never
+    /// inpainted would re-enter segment 4.3's mean, putting *"'inpainted' output [that] is
+    /// actually the bare masking output … inside a segment whose caption claims
+    /// comparability"* — the different-populations bug, hidden.
+    ///
+    /// A **non-LaMa** cell's predicate is explicitly unaffected: *"it is still 'produced at
+    /// least one `Measured` row,' since it has no inpainting factor to have run or not."*
+    pub(crate) fn contributes_to_eligibility_restricted_mean(&self, cell: CellId) -> bool {
+        if cell.inpainting() {
+            self.inpainting_ran_on_any_page(cell)
+        } else {
+            self.has_measured_row(cell)
+        }
     }
 
     /// Mean of `metric` for `cell` over `pages`. `None` when no row contributes a value —
@@ -501,13 +676,13 @@ pub(crate) fn inpainter_disclosure(
 /// The stage rows this invocation needs: always the detector, plus the inpainter when any
 /// requested cell inpaints.
 ///
-/// **Placeholder detector facts** (`None, false, false`) — used by the pure-layer tests,
-/// which never run a real detector. [`run`] uses [`stage_disclosures_with_detector_facts`]
-/// instead, which carries what [`measure`] actually observed. Test-only: since the fix
-/// for F2, no non-test code needs the placeholder.
+/// **Placeholder facts** (`None, false, false`) — used by the pure-layer tests, which never
+/// run a real detector or a real inpainter. [`run`] uses [`stage_disclosures_with_facts`]
+/// instead, which carries what [`measure`] actually observed. Test-only: since the fix for
+/// F2 (detector) and this task (inpainter), no non-test code needs the placeholder.
 #[cfg(test)]
 fn stage_disclosures(cells: &[CellId]) -> Vec<StageDisclosure> {
-    stage_disclosures_with_detector_facts(cells, DetectorFacts::default())
+    stage_disclosures_with_facts(cells, &RunFacts::default())
 }
 
 /// What the detector stage actually did in this invocation, so the report's per-stage
@@ -521,17 +696,56 @@ struct DetectorFacts {
     session_constructed: bool,
 }
 
-fn stage_disclosures_with_detector_facts(
-    cells: &[CellId],
+/// The same real-facts treatment extended to the inpainter row (brief point 5).
+///
+/// `digest_verified` and `session_constructed` are set **only** from an acquisition that
+/// actually succeeded: `OnnxInpainterProvider::initialize` verifies the artifact's sha256
+/// (§16.38 item 19(b)) and then builds the session, in that order, so a successful
+/// `run_inpaint` is evidence of both and nothing else is. A run that never sought the model
+/// — every `--replay` run (§16.44 item 2), and any run where no cell had an eligible region
+/// — reports `attempted: false` and leaves the other three at their honest defaults.
+#[derive(Debug, Clone, Default)]
+struct InpainterFacts {
+    /// The path the provider was pointed at, stated only once a session was really built
+    /// from it.
+    model_path: Option<String>,
+    digest_verified: bool,
+    session_constructed: bool,
+    /// Was acquisition sought at all in this invocation?
+    attempted: bool,
+}
+
+/// What both model-backed stages actually did, carried from [`measure`] to the renderer.
+#[derive(Debug, Clone, Default)]
+struct RunFacts {
     detector: DetectorFacts,
-) -> Vec<StageDisclosure> {
+    inpainter: InpainterFacts,
+}
+
+/// The inpainter row's model-path cell: the honest three-way distinction §16.44 item 3
+/// asks the *report* to preserve, carried into the disclosure table too.
+fn inpainter_model_path_cell(facts: &InpainterFacts) -> String {
+    match (&facts.model_path, facts.attempted) {
+        (Some(path), _) => path.clone(),
+        (None, true) => "(acquisition attempted; no session was built from it)".to_owned(),
+        (None, false) => "(not attempted in this run)".to_owned(),
+    }
+}
+
+fn stage_disclosures_with_facts(cells: &[CellId], facts: &RunFacts) -> Vec<StageDisclosure> {
     let mut stages = vec![detector_disclosure(
-        detector.model_path.as_deref(),
-        detector.digest_verified,
-        detector.session_constructed,
+        facts.detector.model_path.as_deref(),
+        facts.detector.digest_verified,
+        facts.detector.session_constructed,
     )];
     if cells.iter().any(|cell| cell.inpainting()) {
-        stages.push(inpainter_disclosure(None, false, false));
+        let mut row = inpainter_disclosure(
+            None,
+            facts.inpainter.digest_verified,
+            facts.inpainter.session_constructed,
+        );
+        row.model_path = inpainter_model_path_cell(&facts.inpainter);
+        stages.push(row);
     }
     stages
 }
@@ -650,21 +864,30 @@ fn measurement_row(benchmark: &Benchmark, page: &str, cell: CellId) -> String {
     );
     match benchmark.outcome(page, cell) {
         Some(Outcome::Measured(measured)) => format!(
-            "{head} {} | {} | {} | {} | {} | {} | {} | {} | {} | measured |",
+            "{head} {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             measured.detected_boxes,
             measured.masking_regions,
             measured.succeeded_regions,
             measured.failed_regions,
             measured.dropped_regions,
             measured.eligible_regions,
-            yes_no(measured.inpainting_ran),
+            yes_no(measured.inpaint.ran()),
             measured
-                .tiles_inferred
+                .inpaint
+                .tiles_inferred()
                 .map_or_else(|| "—".to_owned(), |tiles| tiles.to_string()),
             measured
                 .reference
                 .as_ref()
                 .map_or_else(|| "—".to_owned(), render_agreement),
+            // §16.44 item 1: a cell that could not inpaint keeps this row's real
+            // mask-stage numbers; the reason rides in the outcome column as a note
+            // rather than replacing them. §16.44 item 3: the three "did not inpaint"
+            // states each get their own sentence here.
+            measured.inpaint.note().map_or_else(
+                || "measured".to_owned(),
+                |note| format!("measured; {}", escape_cell(&note))
+            ),
         ),
         Some(Outcome::Blocked { reason }) => format!(
             "{head} — | — | — | — | — | — | — | — | — | **BLOCKED** — {} |",
@@ -695,7 +918,11 @@ fn render_segments(benchmark: &Benchmark) -> String {
          permitted** here: every cell reports on every page, whether or not that page was \
          eligible for that cell.\n\n",
     );
-    body.push_str(&segment_table(benchmark, |_| benchmark.full_population()));
+    body.push_str(&segment_table(
+        benchmark,
+        |_| benchmark.full_population(),
+        &BTreeSet::new(),
+    ));
 
     // Segment 2 — each cell's own eligible set. Explicitly NOT comparable across cells.
     body.push_str("### 4.2 Per-cell eligible subsets\n\n");
@@ -706,9 +933,11 @@ fn render_segments(benchmark: &Benchmark) -> String {
          rows here describe different populations and averaging across them would compare \
          inpainted output against bare masking output under a caption claiming comparability.\n"
     );
-    body.push_str(&segment_table(benchmark, |cell| {
-        benchmark.eligible_pages(cell)
-    }));
+    body.push_str(&segment_table(
+        benchmark,
+        |cell| benchmark.eligible_pages(cell),
+        &BTreeSet::new(),
+    ));
 
     // Segment 3 — the only eligibility-restricted segment a cross-cell mean may use.
     // The heading names the cells the intersection actually ran over (requested minus
@@ -738,6 +967,16 @@ fn render_segments(benchmark: &Benchmark) -> String {
          a cross-cell mean may be computed over. A later run with a different cell set \
          re-segments this table visibly, because the cell set is named in the heading above.\n"
     );
+    // §16.44 item 4: a LaMa cell that inpainted on zero pages is excluded from THIS
+    // segment's mean — the only eligibility-restricted one — because including it would
+    // compare bare masking output against genuinely inpainted output under a caption
+    // claiming comparability.
+    let excluded: BTreeSet<CellId> = benchmark
+        .cells()
+        .iter()
+        .copied()
+        .filter(|cell| !benchmark.contributes_to_eligibility_restricted_mean(*cell))
+        .collect();
     if common.is_empty() {
         body.push_str(
             "The common-eligible intersection is **empty**; no mean is printed for this \
@@ -749,12 +988,39 @@ fn render_segments(benchmark: &Benchmark) -> String {
             "Pages in the intersection: {}\n",
             common.iter().cloned().collect::<Vec<_>>().join(", ")
         );
-        body.push_str(&segment_table(benchmark, |_| common.clone()));
+        body.push_str(&segment_table(benchmark, |_| common.clone(), &excluded));
+        if !excluded.is_empty() {
+            let names = excluded
+                .iter()
+                .map(|cell| cell.name())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(
+                body,
+                "{EXCLUDED_FROM_MEAN_HEAD} {names}. {EXCLUDED_FROM_MEAN_WHY}\n"
+            );
+        }
     }
     body
 }
 
-fn segment_table(benchmark: &Benchmark, pages_for: impl Fn(CellId) -> BTreeSet<String>) -> String {
+/// §16.44 item 4's exclusion, stated in the report so the omission is legible rather than
+/// silent. The exclusion itself is the requirement — this sentence accompanies it, it does
+/// not replace it (*"disclosure alone is not enough"*).
+const EXCLUDED_FROM_MEAN_HEAD: &str = "**No mean is computed in this segment for:**";
+const EXCLUDED_FROM_MEAN_WHY: &str = "Inpainting ran on zero pages for that cell, so its \
+rows here are bare masking output. Averaging them alongside a genuinely inpainted cell's \
+rows, inside a segment whose caption claims comparability, would compare different \
+populations under one heading (§16.44 item 4).";
+
+/// What an excluded cell's metric columns render instead of a number.
+const EXCLUDED_CELL: &str = "excluded";
+
+fn segment_table(
+    benchmark: &Benchmark,
+    pages_for: impl Fn(CellId) -> BTreeSet<String>,
+    excluded: &BTreeSet<CellId>,
+) -> String {
     let mut body = String::from("| Cell | Pages in segment |");
     for metric in Metric::ALL {
         let _ = write!(body, " {} |", metric.label());
@@ -764,13 +1030,14 @@ fn segment_table(benchmark: &Benchmark, pages_for: impl Fn(CellId) -> BTreeSet<S
         let pages = pages_for(*cell);
         let _ = write!(body, "| {} | {} |", cell.name(), pages.len());
         for metric in Metric::ALL {
-            let _ = write!(
-                body,
-                " {} |",
+            let rendered = if excluded.contains(cell) {
+                EXCLUDED_CELL.to_owned()
+            } else {
                 benchmark
                     .mean(*cell, &pages, *metric)
                     .map_or_else(|| "—".to_owned(), |value| format!("{value:.6}"))
-            );
+            };
+            let _ = write!(body, " {rendered} |");
         }
         body.push('\n');
     }
@@ -873,13 +1140,14 @@ pub(crate) fn run(args: Args) -> Result<()> {
         .out
         .unwrap_or_else(|| paths::docs_root().join("MODE_COMPARISON.md"));
 
-    let (benchmark, detector_facts) = measure(
+    let (benchmark, facts) = measure(
         source,
         &args.cells.0,
         args.pages.as_deref(),
         args.detector.as_deref(),
+        args.device,
     )?;
-    let stages = stage_disclosures_with_detector_facts(benchmark.cells(), detector_facts);
+    let stages = stage_disclosures_with_facts(benchmark.cells(), &facts);
     let document = render_document(&benchmark, &policy, &stages);
 
     std::fs::write(&target, &document).with_context(|| format!("writing {}", target.display()))?;
@@ -906,47 +1174,111 @@ struct PageJob {
     reference: Option<PathBuf>,
 }
 
-/// **Mirror of `pc_inpaint::eligible::select_regions`**
-/// (`crates/pc-inpaint/src/eligible.rs:64-97`), duplicated deliberately.
+/// The inpainter config every LaMa cell runs under: the shipped defaults with **only**
+/// `inpainting_enabled` turned on, the mirror of [`detector_config`]'s one-field move.
+fn inpainter_config() -> InpainterConfig {
+    InpainterConfig {
+        inpainting_enabled: true,
+        ..InpainterConfig::default()
+    }
+}
+
+/// The LaMa stage for one invocation: the source policy, the shared provider, and the
+/// per-cell acquisition latch.
 ///
-/// §16.43 item 8 requires `eligible_regions` for **every** cell, LaMa or not, since that
-/// function reads only `MaskRegionStats`. §16.43 item 9 reserves the `xtask/Cargo.toml`
-/// edit — and therefore any new dependency, including `pc-inpaint` — for the LaMa task.
-/// So this counts the same two-set union over types xtask already depends on.
-///
-/// The predicate, quoted verbatim from `select_regions`' two loops:
-///
-/// ```text
-/// if region.failed { out.push(...) }                       // set 1: failed
-///
-/// let poorly_fitted = !region.failed
-///     && region.std_deviation >= config.inpainting_min_std_dev
-///     && region
-///         .thickness
-///         .is_some_and(|thickness| thickness <= config.min_inpainting_radius);
-/// ```
-///
-/// Both comparisons are inclusive, matching upstream's `>=` and `<=`; `thickness.is_some()`
-/// carries upstream's own comment *"For box masks, this is none. We don't need to inpaint
-/// those, they are always good."* The two sets are disjoint by construction (`failed` vs
-/// `!failed`) and `select_regions` pushes one entry per member, so this count is exactly
-/// `select_regions(regions, config).len()`.
-///
-/// **Accepted risk, named rather than solved:** this is a second independent copy of one
-/// predicate, and no cross-crate equivalence test can be written without the dependency
-/// this task must not add. `eligibility_mirror_*` below is a hand-derived-oracle drift
-/// guard local to this copy only.
-fn eligible_region_count(regions: &[MaskRegionStats], config: &InpainterConfig) -> usize {
-    regions
-        .iter()
-        .filter(|region| {
-            region.failed
-                || (region.std_deviation >= config.inpainting_min_std_dev
-                    && region
-                        .thickness
-                        .is_some_and(|thickness| thickness <= config.min_inpainting_radius))
-        })
-        .count()
+/// **Acquisition is a whole-cell condition; inference is a per-page one.** The
+/// discriminator is `PipelineError`'s own variant, which `run_inpaint` derives from
+/// `InpainterProvider::failures_are_run_fatal()` — cookbook rule 4's "fatality is declared,
+/// not inferred": `RunFatal` is only ever produced by a provider that declared its
+/// acquisition failures fatal, and every failure after the provider handed over an
+/// inpainter is a `Stage` error. So this needs no string matching and no heuristic.
+struct InpaintRunner<'a> {
+    source: Source,
+    provider: Option<&'a dyn InpainterProvider>,
+    /// Where the provider was told to look, for the disclosure row.
+    model_path: Option<String>,
+    /// Cells whose acquisition already failed. §16.38 item 8(d)'s `OnceLock` latch inside
+    /// the provider already prevents a second *attempt*; this map is what makes the
+    /// failure show up on every one of the cell's pages rather than only the first.
+    acquisition_failures: BTreeMap<CellId, String>,
+    /// Whether any cell genuinely inpainted, and whether acquisition was sought at all.
+    any_ran: bool,
+    attempted: bool,
+}
+
+impl InpaintRunner<'_> {
+    fn inpaint(
+        &mut self,
+        cell: CellId,
+        original: &ImageHandle,
+        raw_mask: &ImageHandle,
+        mask_data: &pc_core::MaskData,
+    ) -> InpaintStatus {
+        if !cell.inpainting() {
+            return InpaintStatus::NotRequested;
+        }
+        // §16.44 item 2: `--replay` never seeks the model, for any cell.
+        if !self.source.attempts_inpainting() {
+            return InpaintStatus::NotAttempted;
+        }
+        if let Some(message) = self.acquisition_failures.get(&cell) {
+            return InpaintStatus::AcquisitionFailed(message.clone());
+        }
+        // Handled here rather than left to `run_inpaint`, which reports a missing provider
+        // as a `Stage` error and so would land in the *inference*-failure bucket — a
+        // misclassification of exactly the distinction §16.44 item 3 asks this enum to keep.
+        if self.provider.is_none() {
+            return InpaintStatus::AcquisitionFailed(
+                "no inpainter provider was built for this invocation".to_owned(),
+            );
+        }
+        match run_inpaint(
+            original,
+            raw_mask,
+            mask_data,
+            // mode-bench runs no denoise stage, so there is no noise mask to isolate against.
+            None,
+            MaskerConfig::default().min_mask_thickness,
+            &inpainter_config(),
+            // Nothing is persisted: mode-bench reports numbers, not images.
+            InpaintDests::default(),
+            self.provider,
+        ) {
+            Ok(Some(output)) => {
+                self.any_ran = true;
+                self.attempted = true;
+                InpaintStatus::Ran {
+                    tiles_inferred: output.tiles_inferred,
+                }
+            }
+            // `run_inpaint`'s own short-circuit: zero eligible regions, so no model is
+            // sought even here. Accurate on these sources, and distinct from `--replay`'s
+            // source policy (§16.44 item 3).
+            Ok(None) => InpaintStatus::NothingEligible,
+            Err(PipelineError::RunFatal(error)) => {
+                self.attempted = true;
+                let message = error.to_string();
+                self.acquisition_failures.insert(cell, message.clone());
+                InpaintStatus::AcquisitionFailed(message)
+            }
+            Err(PipelineError::Stage(error)) => {
+                self.attempted = true;
+                InpaintStatus::InferenceFailed(error.to_string())
+            }
+        }
+    }
+
+    fn facts(&self) -> InpainterFacts {
+        InpainterFacts {
+            // Stated only when a session was really built from it: the provider verifies
+            // the sha256 and then constructs, in that order, so a successful inpaint is
+            // evidence of both and nothing weaker is.
+            model_path: self.any_ran.then(|| self.model_path.clone()).flatten(),
+            digest_verified: self.any_ran,
+            session_constructed: self.any_ran,
+            attempted: self.attempted,
+        }
+    }
 }
 
 /// mode-bench needs only the in-memory `MaskOutput`, never a persisted per-page image, so
@@ -970,8 +1302,13 @@ fn mask_dests(_cell: CellId, _page: &str) -> pc_mask::MaskDests {
 /// project's per-image classification rule): it becomes [`Outcome::Failed`] for this one
 /// row and the caller continues with the next page and the next cell. Nothing here is
 /// run-fatal.
-fn measure_cell(job: &PageJob, cell: CellId, detector: &dyn pc_detect::TextDetector) -> Outcome {
-    match measure_cell_inner(job, cell, detector) {
+fn measure_cell(
+    job: &PageJob,
+    cell: CellId,
+    detector: &dyn pc_detect::TextDetector,
+    runner: &mut InpaintRunner<'_>,
+) -> Outcome {
+    match measure_cell_inner(job, cell, detector, runner) {
         Ok(measured) => Outcome::Measured(Box::new(measured)),
         Err(error) => Outcome::Failed {
             reason: format!("{error:#}"),
@@ -1022,9 +1359,13 @@ fn measure_cell_inner(
     job: &PageJob,
     cell: CellId,
     detector: &dyn pc_detect::TextDetector,
+    runner: &mut InpaintRunner<'_>,
 ) -> Result<Measured> {
     let detect_output = detect_page(job, cell, detector)?;
     let detected_boxes = detect_output.analytics.blocks_detected;
+    // The same `_raw_mask` the production call site passes (`pc-pipeline`'s
+    // `single.rs:436-447`), captured before `page` moves into preprocessing.
+    let raw_mask = detect_output.page.raw_mask.clone();
 
     let preprocess_output = pc_preprocess::run(
         pc_preprocess::PreprocessInput {
@@ -1057,7 +1398,17 @@ fn measure_cell_inner(
     // A region whose precise mask was blank never reaches `regions` at all (§2.6, and
     // `MaskData::regions`' own doc comment) — the same computation `mask_sweep.rs` makes.
     let dropped_regions = masking_regions.saturating_sub(regions.len());
-    let eligible_regions = eligible_region_count(regions, &InpainterConfig::default());
+    // §16.43 item 8: computed for EVERY cell, LaMa or not, by calling the real function —
+    // task 2's local mirror of it is gone, so there is no second copy to drift.
+    let eligible_regions =
+        pc_inpaint::eligible::select_regions(regions, &InpainterConfig::default()).len();
+
+    let inpaint = runner.inpaint(
+        cell,
+        &ImageHandle::from_path(&job.image),
+        &raw_mask,
+        &mask_output.mask_data,
+    );
 
     let reference = match &job.reference {
         Some(clean_path) => Some(compare_against_reference(
@@ -1076,10 +1427,7 @@ fn measure_cell_inner(
         failed_regions,
         dropped_regions,
         eligible_regions,
-        // §16.43 item 9: the LaMa integration is the *second* heavy task. Nothing in this
-        // module calls an inpainting function, so "did not inpaint" is the measured fact.
-        inpainting_ran: false,
-        tiles_inferred: None,
+        inpaint,
         reference,
     })
 }
@@ -1135,11 +1483,12 @@ fn measure_jobs(
     jobs: &[PageJob],
     cells: &[CellId],
     detector: &dyn pc_detect::TextDetector,
+    runner: &mut InpaintRunner<'_>,
 ) {
     for job in jobs {
         benchmark.register_page(&job.name);
         for cell in cells {
-            benchmark.record(&job.name, *cell, measure_cell(job, *cell, detector));
+            benchmark.record(&job.name, *cell, measure_cell(job, *cell, detector, runner));
         }
     }
 }
@@ -1166,9 +1515,36 @@ fn measure(
     cells: &[CellId],
     pages: Option<&Path>,
     detector: Option<&str>,
-) -> Result<(Benchmark, DetectorFacts)> {
+    device: Device,
+) -> Result<(Benchmark, RunFacts)> {
     let mut benchmark = Benchmark::new(source, cells);
-    let facts = match source {
+
+    // §16.43 item 5 (D3): reuse `pc_cli::inpainter::build_provider` rather than hand-rolling
+    // a second acquisition mechanism. `build_provider` itself loads nothing — the 207 MB
+    // artifact is only touched by the provider's own lazy latch, and `run_inpaint` only
+    // reaches that latch on a page with a non-empty eligible set, so a run where no cell has
+    // an eligible region pays nothing. The `enabled` flag carries mode-bench's own source
+    // policy (§16.44 item 2): on `--replay` no provider is built at all, so there is nothing
+    // for a stray call to acquire through.
+    let wants_inpainting =
+        source.attempts_inpainting() && cells.iter().any(|cell| cell.inpainting());
+    let cache_root = pc_cli::paths::default_cache_dir();
+    let provider = build_provider(wants_inpainting, None, &cache_root, device);
+    let mut runner = InpaintRunner {
+        source,
+        provider: provider.as_deref(),
+        model_path: wants_inpainting.then(|| {
+            pc_cli::paths::models_dir(&cache_root)
+                .join(pc_models::LAMA_MANGA_INPAINTER.file_name)
+                .display()
+                .to_string()
+        }),
+        acquisition_failures: BTreeMap::new(),
+        any_ran: false,
+        attempted: false,
+    };
+
+    let detector_facts = match source {
         Source::Replay => {
             let fixture_dir = paths::recorded_root().join("detector");
             let jobs = vec![PageJob {
@@ -1177,7 +1553,7 @@ fn measure(
                 reference: None,
             }];
             let detector = pc_detect::ReplayDetector::new(&fixture_dir, REPLAY_STEM);
-            measure_jobs(&mut benchmark, &jobs, cells, &detector);
+            measure_jobs(&mut benchmark, &jobs, cells, &detector, &mut runner);
             // No real model is ever resolved for `--replay` — `ReplayDetector` replays a
             // committed fixture, so the placeholder facts are the honest ones here, not a
             // stand-in for something unimplemented.
@@ -1187,7 +1563,13 @@ fn measure(
             let spec = detector.ok_or_else(|| {
                 anyhow!("--demo-bubbles requires --detector onnx:<path> (clap enforces this)")
             })?;
-            measure_with_real_detector(&mut benchmark, &demo_bubble_jobs(), cells, spec)?
+            measure_with_real_detector(
+                &mut benchmark,
+                &demo_bubble_jobs(),
+                cells,
+                spec,
+                &mut runner,
+            )?
         }
         Source::Pages => {
             let dir = pages.ok_or_else(|| anyhow!("--pages is required for this source"))?;
@@ -1195,8 +1577,12 @@ fn measure(
                 anyhow!("--pages requires --detector onnx:<path> (clap enforces this)")
             })?;
             let jobs = local_page_jobs(dir)?;
-            measure_with_real_detector(&mut benchmark, &jobs, cells, spec)?
+            measure_with_real_detector(&mut benchmark, &jobs, cells, spec, &mut runner)?
         }
+    };
+    let facts = RunFacts {
+        detector: detector_facts,
+        inpainter: runner.facts(),
     };
     Ok((benchmark, facts))
 }
@@ -1248,6 +1634,7 @@ fn measure_with_real_detector(
     jobs: &[PageJob],
     cells: &[CellId],
     detector_spec: &str,
+    runner: &mut InpaintRunner<'_>,
 ) -> Result<DetectorFacts> {
     let model = crate::env::parse_detector_spec(detector_spec)?;
     let model = if model.is_relative() {
@@ -1264,7 +1651,7 @@ fn measure_with_real_detector(
     )
     .map_err(|error| anyhow!(error.to_string()))
     .with_context(|| "constructing the ONNX detector")?;
-    measure_jobs(benchmark, jobs, cells, &detector);
+    measure_jobs(benchmark, jobs, cells, &detector, runner);
     // Reached only after verify_sha256 and from_path_with_config both succeeded above, so
     // both facts are genuinely true here — not asserted ahead of the work that earns them.
     Ok(DetectorFacts {
@@ -1280,6 +1667,7 @@ fn measure_with_real_detector(
     _jobs: &[PageJob],
     _cells: &[CellId],
     detector_spec: &str,
+    _runner: &mut InpaintRunner<'_>,
 ) -> Result<DetectorFacts> {
     let _ = crate::env::parse_detector_spec(detector_spec)?;
     bail!(
@@ -1301,10 +1689,19 @@ mod tests {
             failed_regions: failed,
             dropped_regions: 1,
             eligible_regions: eligible,
-            inpainting_ran: false,
-            tiles_inferred: None,
+            inpaint: InpaintStatus::NotRequested,
             reference: None,
         }))
+    }
+
+    /// The same fabricated measurement, with an explicit inpainting outcome — for the
+    /// §16.44 item 3 and item 4 tests, which are entirely about that field.
+    fn measured_with(failed: usize, eligible: usize, inpaint: InpaintStatus) -> Outcome {
+        let mut outcome = measured(failed, eligible);
+        if let Outcome::Measured(inner) = &mut outcome {
+            inner.inpaint = inpaint;
+        }
+        outcome
     }
 
     fn with_reference(mean_abs_diff: f64) -> Outcome {
@@ -1322,6 +1719,150 @@ mod tests {
             });
         }
         outcome
+    }
+
+    use pc_core::StageError;
+    use pc_inpaint::stub::{StubInpainter, StubMode};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// A runner with no provider at all — the shape `--replay` uses (§16.44 item 2: no
+    /// provider is built for that source at all).
+    fn no_inpaint_runner(source: Source) -> InpaintRunner<'static> {
+        runner_with(source, None)
+    }
+
+    fn runner_with(source: Source, provider: Option<&dyn InpainterProvider>) -> InpaintRunner<'_> {
+        InpaintRunner {
+            source,
+            provider,
+            model_path: Some("/models/lama-manga.onnx".to_owned()),
+            acquisition_failures: BTreeMap::new(),
+            any_ran: false,
+            attempted: false,
+        }
+    }
+
+    /// A provider whose acquisition always fails and which **declares** that failure
+    /// run-fatal — the same declaration `pc_cli::inpainter::OnnxInpainterProvider` makes.
+    /// The counter is the assertion: a whole-cell condition must be sought once, not once
+    /// per page.
+    struct FailingAcquisition {
+        attempts: AtomicUsize,
+    }
+
+    impl InpainterProvider for FailingAcquisition {
+        fn inpainter(&self) -> Result<Arc<dyn pc_inpaint::Inpainter>, StageError> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Err(StageError::Model(
+                "the optional LaMa inpainting model is missing".to_owned(),
+            ))
+        }
+
+        fn failures_are_run_fatal(&self) -> bool {
+            true
+        }
+    }
+
+    /// An inpainter that fails on its **first** tile and succeeds on every later one, so a
+    /// two-page run has exactly one failing page. Wrapping the `testkit` stub keeps the
+    /// success path a real `inpaint_page` composite rather than a second hand-rolled one.
+    struct FailFirstTile {
+        calls: AtomicUsize,
+        inner: StubInpainter,
+    }
+
+    impl pc_inpaint::Inpainter for FailFirstTile {
+        fn inpaint_tile(
+            &self,
+            tile: &image::RgbImage,
+            mask: &pc_imageops::BinaryMask,
+        ) -> Result<image::RgbImage, StageError> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(StageError::Inference("tile 0 refused by the test".into()));
+            }
+            self.inner.inpaint_tile(tile, mask)
+        }
+    }
+
+    /// A provider that hands over an already-built inpainter. Acquisition never fails here,
+    /// so anything that does fail is unambiguously an inference failure.
+    struct WorkingProvider {
+        inpainter: Arc<dyn pc_inpaint::Inpainter>,
+        attempts: AtomicUsize,
+    }
+
+    impl WorkingProvider {
+        fn new(inpainter: Arc<dyn pc_inpaint::Inpainter>) -> Self {
+            Self {
+                inpainter,
+                attempts: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl InpainterProvider for WorkingProvider {
+        fn inpainter(&self) -> Result<Arc<dyn pc_inpaint::Inpainter>, StageError> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Ok(Arc::clone(&self.inpainter))
+        }
+
+        fn failures_are_run_fatal(&self) -> bool {
+            true
+        }
+    }
+
+    /// A synthetic page whose one detected block is surrounded by **noise**, so the masker
+    /// cannot fit a clean mask and records the region `failed` — which is
+    /// `select_regions`' first eligibility set. `eligible = false` uses a flat background,
+    /// which fits cleanly and yields zero eligible regions.
+    ///
+    /// Both facts are asserted, not assumed, by
+    /// `the_two_synthetic_pages_really_do_differ_in_eligibility` below — without that, every
+    /// test using these pages could pass for the wrong reason.
+    fn synthetic_page(dir: &Path, name: &str, eligible: bool) -> PageJob {
+        let path = dir.join(format!("{name}.png"));
+        image::GrayImage::from_fn(240, 1000, |x, y| {
+            let inside = (20..200).contains(&x) && (20..400).contains(&y);
+            if inside {
+                image::Luma([20])
+            } else if eligible {
+                image::Luma([((x * 37 + y * 91) % 256) as u8])
+            } else {
+                image::Luma([235])
+            }
+        })
+        .save(&path)
+        .expect("writing the synthetic page");
+        PageJob {
+            name: name.to_owned(),
+            image: path,
+            reference: None,
+        }
+    }
+
+    fn synthetic_detector() -> pc_detect::MockDetector {
+        pc_detect::MockDetector::new()
+            .with_blocks(vec![pc_detect::RawBlock {
+                rect: pc_core::Rect::new(20, 20, 200, 400),
+                class_index: 0,
+                confidence: 0.9,
+            }])
+            .with_block_fill(255)
+    }
+
+    fn status_of(benchmark: &Benchmark, page: &str, cell: CellId) -> InpaintStatus {
+        match benchmark.outcome(page, cell) {
+            Some(Outcome::Measured(measured)) => measured.inpaint.clone(),
+            other => panic!("{page}/{} is not a Measured row: {other:?}", cell.name()),
+        }
+    }
+
+    fn eligible_of(benchmark: &Benchmark, page: &str, cell: CellId) -> usize {
+        match benchmark.outcome(page, cell) {
+            Some(Outcome::Measured(measured)) => measured.eligible_regions,
+            other => panic!("{page}/{} is not a Measured row: {other:?}", cell.name()),
+        }
     }
 
     fn cpu_policy() -> DevicePolicy {
@@ -1886,10 +2427,14 @@ mod tests {
         assert!(document.contains("gates no CI job and\nblocks no merge"));
     }
 
-    // --- §16.43 item 8: the mirrored eligibility predicate ---------------------
+    // --- §16.43 item 8: the eligibility predicate ------------------------------
 
-    fn region(failed: bool, std_deviation: f64, thickness: Option<u32>) -> MaskRegionStats {
-        MaskRegionStats {
+    fn region(
+        failed: bool,
+        std_deviation: f64,
+        thickness: Option<u32>,
+    ) -> pc_core::MaskRegionStats {
+        pc_core::MaskRegionStats {
             rect: pc_core::Rect::new(0, 0, 4, 4),
             std_deviation,
             failed,
@@ -1897,26 +2442,28 @@ mod tests {
         }
     }
 
-    /// Hand-derived oracle for [`eligible_region_count`], the local mirror of
-    /// `pc_inpaint::eligible::select_regions` (`crates/pc-inpaint/src/eligible.rs:64-97`).
+    /// Hand-derived oracle for **`pc_inpaint::eligible::select_regions` itself**
+    /// (`crates/pc-inpaint/src/eligible.rs:64-97`).
     ///
-    /// Every expectation below is derived from that function's *text* plus
-    /// `InpainterConfig::default()`'s two literals, never from running the mirror. The
-    /// two boundary rows are the ones that catch a `>=`→`>` or `<=`→`<` drift, and the
-    /// last row is the `thickness.is_some()` clause upstream comments as *"For box masks,
-    /// this is none. We don't need to inpaint those, they are always good."*
+    /// Task 2 could only assert this table against xtask's own local mirror of that
+    /// function, because §16.43 item 9 reserved the `pc-inpaint` dependency for this task.
+    /// The mirror is now deleted and the dependency exists, so the same hand-derived table
+    /// is asserted against the real function — a genuine equivalence check instead of a
+    /// check of a duplicate against itself.
     ///
-    /// **This cannot catch cross-crate drift** — asserting the two copies agree needs a
-    /// `pc-inpaint` dependency, which §16.43 item 9 reserves for the LaMa task. It is a
-    /// guard on this copy only, and that limitation is real, not solved.
+    /// Every expectation below is derived from `select_regions`' *text* plus
+    /// `InpainterConfig::default()`'s two literals, never from running it. The two boundary
+    /// rows catch a `>=`→`>` or `<=`→`<` drift, and the last row is the
+    /// `thickness.is_some()` clause upstream comments as *"For box masks, this is none. We
+    /// don't need to inpaint those, they are always good."*
     #[test]
-    fn the_mirrored_eligibility_predicate_matches_the_hand_derived_upstream_cases() {
+    fn the_eligibility_predicate_matches_the_hand_derived_upstream_cases() {
         let config = InpainterConfig::default();
         // The boundary rows below mean what their names say only at these two values.
         assert_eq!(config.inpainting_min_std_dev, 15.0);
         assert_eq!(config.min_inpainting_radius, 7);
 
-        let cases: [(&str, MaskRegionStats, bool); 5] = [
+        let cases: [(&str, pc_core::MaskRegionStats, bool); 5] = [
             (
                 "a failed region is eligible whatever its std dev or thickness",
                 region(true, 0.0, None),
@@ -1946,7 +2493,7 @@ mod tests {
 
         for (why, stats, expected) in &cases {
             assert_eq!(
-                eligible_region_count(std::slice::from_ref(stats), &config),
+                pc_inpaint::eligible::select_regions(std::slice::from_ref(stats), &config).len(),
                 usize::from(*expected),
                 "{why}"
             );
@@ -1954,8 +2501,20 @@ mod tests {
 
         // Anti-vacuity literal: the whole table counted at once is 2 — a number a
         // predicate that answered all-true (5) or all-false (0) cannot produce.
-        let all: Vec<MaskRegionStats> = cases.iter().map(|(_, stats, _)| stats.clone()).collect();
-        assert_eq!(eligible_region_count(&all, &config), 2);
+        let all: Vec<pc_core::MaskRegionStats> =
+            cases.iter().map(|(_, stats, _)| stats.clone()).collect();
+        assert_eq!(pc_inpaint::eligible::select_regions(&all, &config).len(), 2);
+        // Identity, not cardinality: the two selected rows are case 0 (the failed region)
+        // and case 1 (both bounds met inclusively), in `select_regions`' own documented
+        // order — failed first, then poorly-fitted. A predicate that selected cases 2 and 3
+        // instead would still count 2 and pass the assertion above.
+        assert_eq!(
+            pc_inpaint::eligible::select_regions(&all, &config)
+                .iter()
+                .map(|region| region.index)
+                .collect::<Vec<_>>(),
+            vec![0, 1],
+        );
     }
 
     // --- §16.43 item 9: per-cell mask-mode selection ---------------------------
@@ -2110,7 +2669,16 @@ mod tests {
             },
         ];
         let mut benchmark = Benchmark::new(Source::Pages, &cells);
-        measure_jobs(&mut benchmark, &jobs, &cells, &detector);
+        // A working provider, so nothing here can be mistaken for an inpainting problem:
+        // this test is about the mask-stage failure path only.
+        let provider = WorkingProvider::new(Arc::new(StubInpainter::flat(200, 200, 200)));
+        measure_jobs(
+            &mut benchmark,
+            &jobs,
+            &cells,
+            &detector,
+            &mut runner_with(Source::Pages, Some(&provider)),
+        );
 
         for cell in cells {
             match benchmark.outcome("bad", cell) {
@@ -2171,20 +2739,21 @@ mod tests {
         };
         let spec = format!("onnx:{}", model.display());
         let cells = [CellId::Simple];
-        let (benchmark, facts) = measure(Source::DemoBubbles, &cells, None, Some(&spec))
-            .expect("--demo-bubbles is a complete run");
+        let (benchmark, facts) =
+            measure(Source::DemoBubbles, &cells, None, Some(&spec), Device::Cpu)
+                .expect("--demo-bubbles is a complete run");
         // Post-review fix (F2): the real detector's facts must reach the disclosure row —
         // confirm this run actually observed them, not the `--replay` placeholder.
         assert!(
-            facts.model_path.is_some(),
+            facts.detector.model_path.is_some(),
             "no model path recorded for a real detector run"
         );
         assert!(
-            facts.digest_verified,
+            facts.detector.digest_verified,
             "digest verification was not observed"
         );
         assert!(
-            facts.session_constructed,
+            facts.detector.session_constructed,
             "session construction was not observed"
         );
 
@@ -2217,6 +2786,477 @@ mod tests {
                 other => panic!("`{name}` did not measure: {other:?}"),
             }
         }
+    }
+
+    // --- §16.44: the LaMa stage --------------------------------------------------
+
+    /// Falsification control for every test below that uses [`synthetic_page`]. Those
+    /// tests mean what their names say only if the "eligible" page really has an eligible
+    /// region and the other really has none — otherwise "inpainting did not run" would be
+    /// true for a reason none of them are about.
+    #[test]
+    fn the_two_synthetic_pages_really_do_differ_in_eligibility() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let detector = synthetic_detector();
+        let cells = [CellId::SimpleLama];
+        let jobs = vec![
+            synthetic_page(temp.path(), "eligible", true),
+            synthetic_page(temp.path(), "barren", false),
+        ];
+        let mut benchmark = Benchmark::new(Source::Replay, &cells);
+        measure_jobs(
+            &mut benchmark,
+            &jobs,
+            &cells,
+            &detector,
+            &mut no_inpaint_runner(Source::Replay),
+        );
+        // Hard-coded, from `select_regions`' first set: the noisy page's single region is
+        // `failed`, so exactly one region is eligible; the flat page's fits, so none is.
+        assert_eq!(eligible_of(&benchmark, "eligible", CellId::SimpleLama), 1);
+        assert_eq!(eligible_of(&benchmark, "barren", CellId::SimpleLama), 0);
+    }
+
+    /// §16.44 item 2, the ruling's core: *"`--replay` never attempts LaMa acquisition for
+    /// any cell, by mode-bench's own deliberate source policy — not because the model is
+    /// unavailable."*
+    ///
+    /// The assertion is a **side-effect count on the provider**, not a status string: the
+    /// page fed in is the genuinely-eligible one, so under any implementation that reaches
+    /// `run_inpaint` the provider would be asked at least once. The second half is the
+    /// falsification control — the identical page and provider on `Source::Pages` DO ask —
+    /// without which a provider that was simply never reachable would pass the first half.
+    #[test]
+    fn replay_never_asks_the_provider_for_a_model_while_pages_with_the_same_input_does() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let detector = synthetic_detector();
+        let cells = [CellId::SimpleLama];
+        let jobs = vec![synthetic_page(temp.path(), "eligible", true)];
+
+        let attempts_under = |source: Source| {
+            let provider = FailingAcquisition {
+                attempts: AtomicUsize::new(0),
+            };
+            let mut benchmark = Benchmark::new(source, &cells);
+            measure_jobs(
+                &mut benchmark,
+                &jobs,
+                &cells,
+                &detector,
+                &mut runner_with(source, Some(&provider)),
+            );
+            (
+                provider.attempts.load(Ordering::SeqCst),
+                status_of(&benchmark, "eligible", CellId::SimpleLama),
+            )
+        };
+
+        let (replay_attempts, replay_status) = attempts_under(Source::Replay);
+        assert_eq!(
+            replay_attempts, 0,
+            "`--replay` sought the inpainting model; §16.44 item 2 says it never does"
+        );
+        assert_eq!(replay_status, InpaintStatus::NotAttempted);
+
+        let (pages_attempts, pages_status) = attempts_under(Source::Pages);
+        assert_eq!(
+            pages_attempts, 1,
+            "`--pages` did not seek the model on a genuinely eligible page, so the \
+             assertion above passes for the wrong reason"
+        );
+        assert!(matches!(pages_status, InpaintStatus::AcquisitionFailed(_)));
+    }
+
+    /// §16.44 item 2 again, from the report's side rather than the provider's: a
+    /// `--replay` invocation's inpainter facts must say **not attempted**, on a source
+    /// whose one page genuinely has an eligible region (the false premise that produced
+    /// §16.44 was the belief that it has none — the hard-coded `1` here is the corrected
+    /// fact, re-derived by `cargo xtask mask-sweep --replay`'s own `failed = 1` row).
+    #[test]
+    fn a_replay_invocation_reports_the_inpainter_as_not_attempted_over_an_eligible_page() {
+        let cells = [CellId::Simple, CellId::SimpleLama];
+        let (benchmark, facts) =
+            measure(Source::Replay, &cells, None, None, Device::Cpu).expect("--replay runs");
+        assert_eq!(eligible_of(&benchmark, REPLAY_STEM, CellId::SimpleLama), 1);
+        assert_eq!(
+            status_of(&benchmark, REPLAY_STEM, CellId::SimpleLama),
+            InpaintStatus::NotAttempted
+        );
+        assert!(
+            !facts.inpainter.attempted,
+            "the disclosure claims acquisition was attempted on --replay"
+        );
+        assert!(!facts.inpainter.digest_verified);
+        assert!(!facts.inpainter.session_constructed);
+        assert_eq!(facts.inpainter.model_path, None);
+        assert_eq!(
+            inpainter_model_path_cell(&facts.inpainter),
+            "(not attempted in this run)"
+        );
+    }
+
+    /// The brief's first requested test, under §16.44 item 1's correction: a failed
+    /// acquisition is a **whole-cell** condition — both pages carry it — but it **does not
+    /// erase either page's mask-stage measurement**.
+    ///
+    /// Both halves matter, and each can fail on its own: a per-page retry design fails the
+    /// `attempts == 1` assertion, and a §16.43-item-8-as-written design (render
+    /// `**BLOCKED**`) fails the "still Measured, still carries its real numbers"
+    /// assertions.
+    #[test]
+    fn a_failed_acquisition_marks_every_page_of_the_cell_once_and_erases_no_measurement() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let detector = synthetic_detector();
+        let cells = [CellId::Simple, CellId::SimpleLama];
+        let jobs = vec![
+            synthetic_page(temp.path(), "page-a", true),
+            synthetic_page(temp.path(), "page-b", true),
+        ];
+        let provider = FailingAcquisition {
+            attempts: AtomicUsize::new(0),
+        };
+        let mut benchmark = Benchmark::new(Source::Pages, &cells);
+        measure_jobs(
+            &mut benchmark,
+            &jobs,
+            &cells,
+            &detector,
+            &mut runner_with(Source::Pages, Some(&provider)),
+        );
+
+        assert_eq!(
+            provider.attempts.load(Ordering::SeqCst),
+            1,
+            "acquisition was retried per page instead of latching for the whole cell"
+        );
+        for page in ["page-a", "page-b"] {
+            assert!(
+                matches!(
+                    status_of(&benchmark, page, CellId::SimpleLama),
+                    InpaintStatus::AcquisitionFailed(_)
+                ),
+                "{page} does not carry the whole-cell acquisition failure"
+            );
+            // §16.44 item 1: the row keeps its own real mask-stage measurement.
+            assert_eq!(eligible_of(&benchmark, page, CellId::SimpleLama), 1);
+            // ...and the non-LaMa cell is untouched by the LaMa cell's failure.
+            assert_eq!(
+                status_of(&benchmark, page, CellId::Simple),
+                InpaintStatus::NotRequested
+            );
+        }
+
+        let document = render_document(
+            &benchmark,
+            &cpu_policy(),
+            &stage_disclosures(benchmark.cells()),
+        );
+        let table = section(&document, "## 3. Per-page, per-cell measurements");
+        assert!(
+            !table.contains("**BLOCKED**"),
+            "a failed acquisition erased the cell's measurements: {table}"
+        );
+        assert_eq!(
+            table.matches(INPAINT_ACQUISITION_FAILED).count(),
+            2,
+            "the acquisition failure is not stated on both of the cell's rows: {table}"
+        );
+    }
+
+    /// The brief's second requested test: a per-page **inference** failure blocks only that
+    /// page. The inpainter refuses its first tile and serves every later one, so page-a
+    /// fails and page-b genuinely inpaints — under one acquisition.
+    #[test]
+    fn a_per_page_inference_failure_leaves_the_cells_other_page_genuinely_inpainted() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let detector = synthetic_detector();
+        let cells = [CellId::SimpleLama];
+        let jobs = vec![
+            synthetic_page(temp.path(), "page-a", true),
+            synthetic_page(temp.path(), "page-b", true),
+        ];
+        let provider = WorkingProvider::new(Arc::new(FailFirstTile {
+            calls: AtomicUsize::new(0),
+            inner: StubInpainter::new(StubMode::Flat(image::Rgb([200, 30, 30]))),
+        }));
+        let mut benchmark = Benchmark::new(Source::Pages, &cells);
+        measure_jobs(
+            &mut benchmark,
+            &jobs,
+            &cells,
+            &detector,
+            &mut runner_with(Source::Pages, Some(&provider)),
+        );
+
+        assert!(
+            matches!(
+                status_of(&benchmark, "page-a", CellId::SimpleLama),
+                InpaintStatus::InferenceFailed(_)
+            ),
+            "page-a: {:?}",
+            status_of(&benchmark, "page-a", CellId::SimpleLama)
+        );
+        match status_of(&benchmark, "page-b", CellId::SimpleLama) {
+            InpaintStatus::Ran { tiles_inferred } => assert!(
+                tiles_inferred > 0,
+                "page-b reports Ran with zero tiles inferred"
+            ),
+            other => panic!("page-b did not inpaint: {other:?}"),
+        }
+        // Both rows keep their mask-stage numbers either way (§16.44 item 1).
+        assert_eq!(eligible_of(&benchmark, "page-a", CellId::SimpleLama), 1);
+        assert_eq!(eligible_of(&benchmark, "page-b", CellId::SimpleLama), 1);
+        // The provider is consulted once per page — cheap, because the real provider's
+        // `OnceLock` latch (§16.38 item 8(d)) makes every call after the first free. What
+        // this number pins is that page-a's failure did **not** latch the cell out: page-b
+        // still reached the provider, which is exactly what an *acquisition* failure
+        // prevents (contrast the `1` asserted in the acquisition test above).
+        assert_eq!(
+            provider.attempts.load(Ordering::SeqCst),
+            2,
+            "an inference failure on page-a latched the whole cell out"
+        );
+    }
+
+    /// §16.44 item 3, binding graft from the losing position: the three "inpainting did not
+    /// run" states must be **textually distinct** in the report — Fable: *"don't collapse
+    /// all three into one bare 'no'."*
+    ///
+    /// Pairwise distinctness is asserted directly, so two notes that were accidentally made
+    /// equal cannot pass. The last assertion is item 3's other half: the `--replay` note
+    /// must **agree with** `Source::Replay.describe()`'s shipped "no model is loaded".
+    #[test]
+    fn the_three_reasons_inpainting_did_not_run_render_as_three_distinct_sentences() {
+        let mut benchmark = Benchmark::new(Source::Pages, &[CellId::SimpleLama]);
+        benchmark.record(
+            "not-attempted",
+            CellId::SimpleLama,
+            measured_with(1, 1, InpaintStatus::NotAttempted),
+        );
+        benchmark.record(
+            "nothing-eligible",
+            CellId::SimpleLama,
+            measured_with(0, 0, InpaintStatus::NothingEligible),
+        );
+        benchmark.record(
+            "acquisition-failed",
+            CellId::SimpleLama,
+            measured_with(
+                1,
+                1,
+                InpaintStatus::AcquisitionFailed("lama-manga.onnx is missing".to_owned()),
+            ),
+        );
+        let document = render_document(
+            &benchmark,
+            &cpu_policy(),
+            &stage_disclosures(benchmark.cells()),
+        );
+        let table = section(&document, "## 3. Per-page, per-cell measurements");
+
+        let row = |page: &str| {
+            table
+                .lines()
+                .find(|line| line.starts_with(&format!("| {page} | simple+lama |")))
+                .unwrap_or_else(|| panic!("no row for {page}: {table}"))
+                .to_owned()
+        };
+        let not_attempted = row("not-attempted");
+        let nothing_eligible = row("nothing-eligible");
+        let acquisition_failed = row("acquisition-failed");
+
+        assert!(
+            not_attempted.contains(INPAINT_NOT_ATTEMPTED),
+            "{not_attempted}"
+        );
+        assert!(
+            nothing_eligible.contains(INPAINT_NOTHING_ELIGIBLE),
+            "{nothing_eligible}"
+        );
+        assert!(
+            acquisition_failed.contains("lama-manga.onnx is missing")
+                && acquisition_failed.contains(INPAINT_ACQUISITION_FAILED),
+            "{acquisition_failed}"
+        );
+
+        // Pairwise distinct — the property item 3 actually asks for. Each note is also
+        // checked NOT to appear on the other two rows, so a renderer that concatenated all
+        // three onto every row fails.
+        let notes = [
+            INPAINT_NOT_ATTEMPTED,
+            INPAINT_NOTHING_ELIGIBLE,
+            INPAINT_ACQUISITION_FAILED,
+        ];
+        for (index, note) in notes.iter().enumerate() {
+            assert_eq!(
+                table.matches(note).count(),
+                1,
+                "note {index} appears on more than one row: {table}"
+            );
+        }
+
+        // §16.44 item 3's other half: the per-row note agrees with the shipped source
+        // description instead of contradicting it.
+        assert!(Source::Replay.describe().contains("no model is loaded"));
+        assert!(INPAINT_NOT_ATTEMPTED.contains("no model is loaded"));
+    }
+
+    /// §16.44 item 4, the hidden hazard: a LaMa cell with `Measured` rows but **zero**
+    /// genuine inpaint executions must not contribute to segment 4.3's mean, while a
+    /// non-LaMa cell in the identical shape must.
+    ///
+    /// "Identical shape" is what gives this teeth: `simple` and `simple+lama` here carry
+    /// the same numbers and the same `Measured` status, and differ only in whether their
+    /// cell has an inpainting factor that ran. A predicate that keyed on `Measured` alone —
+    /// §16.44 item 1's own wording, which item 4 corrects — includes both and fails here.
+    #[test]
+    fn a_lama_cell_that_inpainted_nowhere_is_excluded_from_the_eligibility_restricted_mean() {
+        let cells = [CellId::Simple, CellId::SimpleLama, CellId::AnnotationLama];
+        let mut benchmark = Benchmark::new(Source::Pages, &cells);
+        for page in ["p1", "p2"] {
+            benchmark.record(
+                page,
+                CellId::Simple,
+                measured_with(1, 2, InpaintStatus::NotRequested),
+            );
+            benchmark.record(
+                page,
+                CellId::SimpleLama,
+                measured_with(1, 2, InpaintStatus::NothingEligible),
+            );
+        }
+        // The one cell that genuinely inpainted, and only on one of its two pages.
+        benchmark.record(
+            "p1",
+            CellId::AnnotationLama,
+            measured_with(1, 2, InpaintStatus::Ran { tiles_inferred: 3 }),
+        );
+        benchmark.record(
+            "p2",
+            CellId::AnnotationLama,
+            measured_with(1, 2, InpaintStatus::NothingEligible),
+        );
+
+        assert!(
+            benchmark.contributes_to_eligibility_restricted_mean(CellId::Simple),
+            "a non-LaMa cell with Measured rows must still contribute (§16.44 item 4's \
+             explicit carve-out)"
+        );
+        assert!(
+            !benchmark.contributes_to_eligibility_restricted_mean(CellId::SimpleLama),
+            "a LaMa cell that inpainted on zero pages contributed to the mean"
+        );
+        assert!(
+            benchmark.contributes_to_eligibility_restricted_mean(CellId::AnnotationLama),
+            "one genuine inpaint on one page is enough to contribute"
+        );
+
+        let document = render_document(
+            &benchmark,
+            &cpu_policy(),
+            &stage_disclosures(benchmark.cells()),
+        );
+        let segments = section(&document, "## 4. Eligibility segments");
+        let intersection = &segments[segments.find("### 4.3").expect("4.3 subsection")..];
+        // Exclusion, not disclosure-instead-of-exclusion: the excluded cell prints no
+        // number at all in this segment.
+        assert!(
+            intersection.contains("| simple+lama | 2 | excluded | excluded | excluded |"),
+            "the excluded LaMa cell still printed a mean: {intersection}"
+        );
+        // The two cells that DO contribute print real means — hand-computed: every row
+        // above has failed_regions = 1 and eligible_regions = 2.
+        assert!(
+            intersection.contains("| simple | 2 | 1.000000 | 2.000000 | — |"),
+            "the non-LaMa cell was excluded too: {intersection}"
+        );
+        assert!(
+            intersection.contains("| annotation+lama | 2 | 1.000000 | 2.000000 | — |"),
+            "the genuinely-inpainting cell was excluded: {intersection}"
+        );
+        assert!(intersection.contains(EXCLUDED_FROM_MEAN_HEAD));
+        assert!(intersection.contains("simple+lama"));
+    }
+
+    /// §16.44 item 1's other half, at the `Benchmark` level: once a page has a real
+    /// measurement, a cell-level block may not erase it. The pre-§16.44 `outcome` returned
+    /// `Blocked` unconditionally and fails this.
+    #[test]
+    fn a_recorded_measurement_wins_over_a_cell_level_block() {
+        let mut benchmark = Benchmark::new(Source::Pages, &[CellId::SimpleLama]);
+        benchmark.record("p1", CellId::SimpleLama, measured(2, 3));
+        benchmark.register_page("p2");
+        benchmark.block_cell(CellId::SimpleLama, "the LaMa model is not available");
+
+        assert!(
+            matches!(
+                benchmark.outcome("p1", CellId::SimpleLama),
+                Some(Outcome::Measured(_))
+            ),
+            "a cell-level block erased a real measurement (§16.44 item 1)"
+        );
+        // The page that never measured still renders BLOCKED, so §16.43 item 8's rule
+        // survives for a condition that really did precede measurement.
+        assert!(matches!(
+            benchmark.outcome("p2", CellId::SimpleLama),
+            Some(Outcome::Blocked { .. })
+        ));
+    }
+
+    /// A real LaMa session, real tiles, real `tiles_inferred` — the only test here that
+    /// proves the wiring reaches ONNX at all. Skips with an actionable message when the
+    /// optional 207 MB artifact is absent, exactly as the detector tests do.
+    ///
+    /// It drives `measure_jobs` with `pc_cli::inpainter::build_provider`'s own provider —
+    /// the production acquisition path (§16.43 item 5/D3) — over a synthetic page whose
+    /// eligibility is independently asserted by
+    /// `the_two_synthetic_pages_really_do_differ_in_eligibility`.
+    #[cfg(feature = "onnx")]
+    #[test]
+    fn a_real_lama_session_inpaints_an_eligible_page_and_reports_the_tiles_it_inferred() {
+        let cache_root = pc_cli::paths::default_cache_dir();
+        let model =
+            pc_cli::paths::models_dir(&cache_root).join(pc_models::LAMA_MANGA_INPAINTER.file_name);
+        if !model.is_file() {
+            println!(
+                "SKIPPED: the optional LaMa model is absent at {}; run \
+                 `panel-ocr models download --include-optional`",
+                model.display()
+            );
+            return;
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let detector = synthetic_detector();
+        let cells = [CellId::SimpleLama];
+        let jobs = vec![synthetic_page(temp.path(), "eligible", true)];
+        let provider = build_provider(true, None, &cache_root, Device::Cpu)
+            .expect("build_provider returns a provider when inpainting is enabled");
+        let mut runner = runner_with(Source::Pages, Some(provider.as_ref()));
+        // The same path `measure` records: where the provider was pointed.
+        runner.model_path = Some(model.display().to_string());
+        let mut benchmark = Benchmark::new(Source::Pages, &cells);
+        measure_jobs(&mut benchmark, &jobs, &cells, &detector, &mut runner);
+
+        match status_of(&benchmark, "eligible", CellId::SimpleLama) {
+            InpaintStatus::Ran { tiles_inferred } => assert!(
+                tiles_inferred >= 1,
+                "a real session ran but inferred no tiles"
+            ),
+            other => panic!("real LaMa did not run: {other:?}"),
+        }
+        let facts = runner.facts();
+        assert!(facts.attempted && facts.digest_verified && facts.session_constructed);
+        assert_eq!(
+            facts.model_path.as_deref(),
+            Some(
+                pc_cli::paths::models_dir(&cache_root)
+                    .join(pc_models::LAMA_MANGA_INPAINTER.file_name)
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
+        );
     }
 
     #[test]

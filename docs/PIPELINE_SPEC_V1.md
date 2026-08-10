@@ -8764,13 +8764,21 @@ paraphrasing it.
    condition, quoted:** *"a cell whose inpainting factor was requested but ran on zero
    pages must not contribute to the eligibility-restricted cross-cell mean (disclosure
    alone is not enough; disclosure-instead-of-exclusion is what D2 already
-   rejected)."* This refines item 1's "produced at least one `Measured` row" predicate
-   for LaMa cells specifically: a LaMa cell must have **genuinely run inpainting on at
-   least one page** (i.e. `run_inpaint` returned `Ok(Some(...))` somewhere in that
-   cell's pages, not merely `Ok(None)` or a `Measured` row with `inpainting_ran:
-   false` everywhere) to count as "actually run" for the common-eligible intersection.
-   A non-LaMa cell's "actually run" predicate is unaffected — it is still "produced at
-   least one `Measured` row," since it has no inpainting factor to have run or not.
+   rejected)."* **This is narrower than a redefinition of "actually run" for
+   intersection membership — corrected during step-1a review, since the original
+   transcription's connective sentence here overstated its own scope.** Item 1's
+   "produced at least one `Measured` row" predicate still decides which cells
+   contribute to the intersection's *page set* and its heading (item 1's "zero
+   assertion changes" requirement depends on this staying unchanged — see item 4's
+   binding condition above, which is a mean-computation rule, not a membership rule).
+   What this item adds is narrower: a LaMa cell must have **genuinely run inpainting
+   on at least one page** (i.e. `run_inpaint` returned `Ok(Some(...))` somewhere in
+   that cell's pages, not merely `Ok(None)` or a `Measured` row with
+   `inpainting_ran: false` everywhere) to have its numbers **averaged into the
+   common-eligible mean** — a cell that fails this still appears in the intersection's
+   page set and heading, rendered as an explicit non-contributing row, per the binding
+   condition above. A non-LaMa cell needs no such distinction — it is still "produced
+   at least one `Measured` row," since it has no inpainting factor to have run or not.
    Fable explicitly scoped this: *"On `--replay` under Ruling 1 this hazard does not
    arise in hidden form — the LaMa cell is a disclosed duplicate of its mask-mode
    sibling, not a silently degraded comparand — and I decide nothing further about

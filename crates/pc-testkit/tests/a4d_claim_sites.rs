@@ -357,17 +357,17 @@ const PRESENT: &[Site] = &[
         //     ruling, unanimous — shifts during §16.42's own step-1a review cycle)
         //   → 8608 (2026-08-09, Orchestrator, mechanical — the §16.43 mode-bench
         //     ratification inserted directly above "## 16. Summary of what v1 is NOT")
-        //   → 8638, 8667, 8803, now 8815 (2026-08-09/10, Orchestrator, mechanical —
-        //     §16.43's own step-1a review fix-up passes, then the §16.44 Fable
-        //     tie-break ratification (2026-08-10) and its own step-1a review fix-up
-        //     pass, each inserted/edited directly above "## 16. Summary of what v1 is
-        //     NOT", each adding more lines above this point)
+        //   → 8638, 8667, 8803, 8815, now 8823 (2026-08-09/10, Orchestrator,
+        //     mechanical — §16.43's own step-1a review fix-up passes, then the §16.44
+        //     Fable tie-break ratification (2026-08-10) and its own step-1a review
+        //     fix-up passes, each inserted/edited directly above "## 16. Summary of
+        //     what v1 is NOT", each adding more lines above this point)
         // Content unchanged, single occurrence verified each time. Given how many
         // times this one site has moved, ALWAYS re-verify with `grep -n
         // "Upstream .refine_mask" docs/PIPELINE_SPEC_V1.md` before trusting this
         // number if this test ever fails again — do not just add/subtract a delta.
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 8815,
+        line: 8823,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {
