@@ -34,6 +34,15 @@ pub fn options(cache_dir: &Path, output_dir: &Path) -> PipelineOptions {
     let mut profile = Profile::default();
     // These helpers do not construct an OCR engine, so `ctx.ocr` remains `None` in these tests.
     profile.preprocessor.ocr_enabled = false;
+    // §16.46 item 13(b) INPUT PINS -- no assertion, name or expected value changes with them.
+    // Every `pc-pipeline` integration test builds its options here, and item 1 flips both of
+    // these defaults. Left inherited, the whole suite would silently start exercising
+    // Annotation masking and an enabled inpainter it never injects a provider for -- green,
+    // because nothing on these synthetic pages is eligible, while testing something other
+    // than what each test was written for. Pinning keeps the subject fixed; a test that
+    // WANTS the shipped defaults sets them itself.
+    profile.text_detector.mask_refine_mode = pc_config::MaskRefineMode::Simple;
+    profile.inpainter.inpainting_enabled = false;
     PipelineOptions {
         profile,
         cache_dir: cache_dir.to_path_buf(),

@@ -11,7 +11,7 @@ use crate::record::{self, INTER_AREA_REFERENCE, INTER_AREA_TARGET, NLM_BUBBLES};
 use anyhow::{anyhow, Context, Result};
 use image::{DynamicImage, GrayImage, RgbImage};
 #[cfg(feature = "onnx")]
-use pc_config::{MaskerConfig, PreprocessorConfig, TextDetectorConfig};
+use pc_config::{MaskerConfig, PreprocessorConfig};
 #[cfg(feature = "onnx")]
 use pc_core::ImageHandle;
 use pc_core::PageDataRaw;
@@ -788,7 +788,7 @@ fn section_demo_bubbles_with_resolution(
 const DEMO_BUBBLES_DOWNGRADE_WARNING: &str = "this run could not reproduce a previously measured Section 4. Writing this document will replace those maintainer measurements with a BLOCKED row. Re-run `cargo xtask calibrate-goldens --features onnx --detector onnx:<path>` to restore real measurements.";
 
 fn section_demo_bubbles_blocked(reason: &str, prior_demo_bubbles_measurements: bool) -> Section {
-    let mut body = demo_bubbles_prose();
+    let mut body = demo_bubbles_prose(calibration_mode());
     if prior_demo_bubbles_measurements {
         body.push_str(&format!(
             "**WARNING:** {DEMO_BUBBLES_DOWNGRADE_WARNING}\n\n"
@@ -816,9 +816,27 @@ fn missing_model_reason(model_path: Option<&Path>, model_source: Option<&str>) -
     )
 }
 
-fn demo_bubbles_prose() -> String {
-    "Input: each `<name>_bubble_raw.png` in `pc_testkit::paths::DEMO_BUBBLES`; reference: the matching vendored `<name>_bubble_clean.png`. Detector and mask artifacts are scratch-only under `target/xtask-scratch/` (§16.24 item 12); only the cleaned PNG is written for human inspection.\n\nThis is a non-gating calibration report (§15.2). A shortfall against reference values (IoU ≥ 0.99, ≥99.5% exact, max Δ ≤ 2, SSIM ≥ 0.995) may reflect the `MaskRefineMode::Simple` vs upstream's full refinement difference and/or §10.7(A)9 border-uniformity failures that leave a region untouched. The per-crop counts distinguish succeeded, failed, and dropped regions; fitting statistics describe only regions that reached fitting, and this report does not isolate causal contributions. This is evidence, not a build failure.\n\n"
-        .into()
+/// The mode this command's measurements are produced under.
+///
+/// **The mechanism, stated accurately.** This is a SECOND call to
+/// `recording_detector_config()`, not a read of the config value `measure_demo_bubble`
+/// happens to hold. The two agree because that constructor is deterministic and both call
+/// it, which is agreement by construction rather than by plumbing -- an earlier version of
+/// this comment claimed the prose was read from the very config the run consumed, and that
+/// overstated it. What keeps the two from drifting is
+/// `the_calibration_prose_names_the_mode_the_run_actually_uses`, which asserts the rendered
+/// section names the mode this function resolves to.
+fn calibration_mode() -> pc_config::MaskRefineMode {
+    crate::recording_config::recording_detector_config().mask_refine_mode
+}
+
+/// §16.46 item 8(a): the mode is RENDERED from this function's argument, not spelled out as
+/// a literal. The two mode mentions in the prose below used to hard-code
+/// `MaskRefineMode::Simple`, so the report described every future run as Simple whatever it
+/// did -- a prose claim nothing could falsify.
+fn demo_bubbles_prose(mode: pc_config::MaskRefineMode) -> String {
+    "Input: each `<name>_bubble_raw.png` in `pc_testkit::paths::DEMO_BUBBLES`; reference: the matching vendored `<name>_bubble_clean.png`. Detector and mask artifacts are scratch-only under `target/xtask-scratch/` (§16.24 item 12); only the cleaned PNG is written for human inspection.\n\nThis is a non-gating calibration report (§15.2). A shortfall against reference values (IoU ≥ 0.99, ≥99.5% exact, max Δ ≤ 2, SSIM ≥ 0.995) may reflect the `{mode_name}` vs upstream's full refinement difference and/or §10.7(A)9 border-uniformity failures that leave a region untouched. The per-crop counts distinguish succeeded, failed, and dropped regions; fitting statistics describe only regions that reached fitting, and this report does not isolate causal contributions. This is evidence, not a build failure.\n\n"
+        .replace("{mode_name}", crate::recording_config::mode_display(mode))
 }
 
 fn previous_demo_bubbles_has_real_measurements_at(path: &Path) -> bool {
@@ -848,7 +866,7 @@ fn dropped_masking_regions(total: usize, succeeded: usize, failed: usize) -> usi
 
 #[cfg(any(feature = "onnx", test))]
 fn section_demo_bubbles_from_measurements(measurements: &[DemoBubbleMeasurement]) -> Section {
-    let mut body = demo_bubbles_prose();
+    let mut body = demo_bubbles_prose(calibration_mode());
     body.push_str(&GoldenReport::markdown_header());
     body.push('\n');
     for measurement in measurements {
@@ -870,6 +888,12 @@ fn section_demo_bubbles_from_measurements(measurements: &[DemoBubbleMeasurement]
                 region_std_deviations,
                 output_changed,
             } => {
+                // Hoisted out of the `writeln!` below: rendering it inline created a
+                // temporary that the `if` arm then borrowed past its lifetime.
+                let shortfall_note = format!(
+                    " Shortfall may reflect the `{}` vs upstream's full refinement difference; this report does not isolate that causal contribution.",
+                    crate::recording_config::mode_display(calibration_mode())
+                );
                 let std_deviations = if region_std_deviations.is_empty() {
                     "—".into()
                 } else {
@@ -889,7 +913,7 @@ fn section_demo_bubbles_from_measurements(measurements: &[DemoBubbleMeasurement]
                     succeeded_regions + failed_regions,
                     if *output_changed { "present" } else { "none" }
                     , if *succeeded_regions > 0 {
-                        " Shortfall may reflect the `MaskRefineMode::Simple` vs upstream's full refinement difference; this report does not isolate that causal contribution."
+                        shortfall_note.as_str()
                     } else {
                         ""
                     }
@@ -934,7 +958,9 @@ fn measure_demo_bubbles(
 
     #[cfg(feature = "onnx")]
     {
-        let config = TextDetectorConfig::default();
+        // Session pins only: `from_path_with_config` reads the thread and path fields and
+        // never `mask_refine_mode`, so §16.46 item 8(c) leaves this site unpinned on purpose.
+        let config = pc_config::TextDetectorConfig::default();
         crate::device::ensure_recording_policy(
             device_policy,
             crate::device::RecordingSession::CalibrateGoldens,
@@ -981,7 +1007,9 @@ fn measure_demo_bubble(
                 base_image_dest: destinations.base_image_dest.clone(),
                 raw_mask_dest: destinations.raw_mask_dest.clone(),
                 min_mask_coverage: pc_detect::DEFAULT_MIN_MASK_COVERAGE,
-                config: TextDetectorConfig::default(),
+                // §16.46 item 8: pinned; this drives `pc_detect::run`, whose output feeds
+                // the committed `docs/GOLDEN_CALIBRATION.md`.
+                config: crate::recording_config::recording_detector_config(),
             },
             detector,
         )
@@ -1418,6 +1446,54 @@ fn provenance(body: &mut String, path: &std::path::Path) {
 mod tests {
     use super::*;
     use pc_detect::oracle::{self, Mechanism, UnmatchedEntry};
+
+    /// §16.46 item 8(a). B4 of D1's independent review: this test is named by
+    /// `calibration_mode`'s doc comment as the gate, and until now it did not exist — the
+    /// only coverage was `demo_bubbles_section_explains_expected_shortfall_without_gating`,
+    /// which passes today because the rendered value happens to equal the literal it checks,
+    /// i.e. by construction rather than by design.
+    ///
+    /// **Two legs, because either alone is satisfiable by a bug.**
+    ///
+    /// Leg 1 drives `demo_bubbles_prose` with BOTH modes and requires each rendering to name
+    /// its own argument and NOT the other. That is what proves the function renders its
+    /// parameter instead of a constant; the expected strings are literals, so this is not the
+    /// code under test compared against itself.
+    ///
+    /// Leg 2 asserts the assembled section names `MaskRefineMode::Simple` — the PIN, written
+    /// as a literal rather than as `mode_display(calibration_mode())`, which would be
+    /// `f(x) == f(x)` (cookbook rule 1). Once §16.46 item 1(a) makes `Annotation` the shipped
+    /// default, this literal is precisely what distinguishes "the report follows the pin" from
+    /// "the report follows the default".
+    #[test]
+    fn the_calibration_prose_names_the_mode_the_run_actually_uses() {
+        let simple = demo_bubbles_prose(pc_config::MaskRefineMode::Simple);
+        assert!(simple.contains("`MaskRefineMode::Simple`"), "{simple}");
+        assert!(!simple.contains("MaskRefineMode::Annotation"), "{simple}");
+
+        let annotation = demo_bubbles_prose(pc_config::MaskRefineMode::Annotation);
+        assert!(
+            annotation.contains("`MaskRefineMode::Annotation`"),
+            "{annotation}"
+        );
+        assert!(
+            !annotation.contains("MaskRefineMode::Simple"),
+            "{annotation}"
+        );
+
+        // Leg 2: the assembled section, i.e. what actually reaches the committed document.
+        let section = section_demo_bubbles_blocked("no model in this test", false);
+        assert!(
+            section.body.contains("`MaskRefineMode::Simple`"),
+            "the calibration section must name the pinned mode: {}",
+            section.body
+        );
+        assert!(
+            !section.body.contains("MaskRefineMode::Annotation"),
+            "and must name only that one: {}",
+            section.body
+        );
+    }
 
     #[test]
     fn demo_bubbles_calibration_plans_the_exact_seven_crops() {

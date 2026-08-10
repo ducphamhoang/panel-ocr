@@ -13,14 +13,18 @@ pub enum FillSource {
     /// `_raw_mask.png`, cropped to the box and grown by `masker.min_mask_thickness`
     /// (upstream `:93-97`). Chosen for **failed** regions.
     ///
-    /// **DEVIATION(12) propagates into this consumer** (§16.38 item 10). Upstream's
-    /// `_raw_mask.png` is `refine_mask`'s output (`ctd_interface.py:182`); v1 ships
-    /// `MaskRefineMode::Simple` instead (§14 item 12, §15 item 2), and cookbook rule 7
-    /// records the measured agreement of the two artifacts as **IoU 0.258**. So for every
-    /// `failed` region the filled area differs from upstream's *before any tiling happens*,
-    /// and it would differ even if `DEVIATION(24)` did not exist. This gets no new register
-    /// number — it is an existing deviation reaching a new reader — but a future parity
-    /// investigation must not attribute the whole difference to tiling.
+    /// **What `_raw_mask.png` holds decides this fill, so the refine mode reaches here**
+    /// (§16.38 item 10). Upstream's `_raw_mask.png` is `refine_mask`'s output
+    /// (`ctd_interface.py:182`). This was `DEVIATION(12) propagates into this consumer`
+    /// while v1 shipped `MaskRefineMode::Simple` by default (§14 item 12, §15 item 2), with
+    /// cookbook rule 7's measured agreement of the two artifacts at **IoU 0.258**, so every
+    /// `failed` region's filled area differed from upstream's *before any tiling happened*.
+    /// **§16.46 item 1(a) made `Annotation` the shipped default and item 2 retired
+    /// `DEVIATION(12)`**, so a default run now feeds this consumer upstream's own refinement
+    /// and that particular difference is gone. It returns in full for anyone who opts back
+    /// out with `mask_refine_mode = "simple"`, which is why the IoU figure stays recorded
+    /// here: a future parity investigation on such a run must not attribute the whole
+    /// difference to tiling or to `DEVIATION(24)`.
     RawMask,
     /// The combined fill mask, cropped to the box (upstream `:99-101`). Chosen for
     /// **poorly-fitted** regions.

@@ -169,8 +169,11 @@ pub fn rasterize_union(rects: &[Rect], size: (u32, u32)) -> GrayImage {
 ///
 /// With no blocks the refined mask is all-zero.
 ///
-/// `Simple` is koharu's refinement algorithm; the default-value divergence from
-/// upstream is recorded by `DEVIATION(12)` on `MaskRefineMode::Simple`.
+/// `Simple` is koharu's refinement algorithm and a deliberate v1 addition upstream has no
+/// equivalent of. While it was the shipped default, the default-value divergence from
+/// upstream was recorded by `DEVIATION(12)` on `MaskRefineMode::Simple`; §16.46 item 1(a)
+/// made `Annotation` the shipped default and item 2 retired that entry in place, so
+/// `Simple` is now the opt-out and this refinement is no longer what a default page takes.
 pub fn refine_simple(
     mask: &GrayImage,
     geometry: &LetterboxGeometry,

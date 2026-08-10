@@ -166,8 +166,10 @@ fn text_detector_defaults() {
     assert_eq!(t.concurrent_models, 1);
     assert_eq!(t.intra_threads, 0);
     assert_eq!(t.inter_threads, 0);
-    // §8.3 step 5 / §15.2: v1 ships Simple.
-    assert_eq!(t.mask_refine_mode, MaskRefineMode::Simple);
+    // §16.46 item 1(a), superseding §8.3 step 5 / §15.2's "v1 ships Simple": the shipped
+    // default is `Annotation`, which is upstream's own unconditional refinement. `Simple`
+    // stays selectable and is what `mask_refine_mode = "simple"` gets you.
+    assert_eq!(t.mask_refine_mode, MaskRefineMode::Annotation);
 }
 
 // ------------------------------------------------------------- [preprocessor]
@@ -365,6 +367,97 @@ fn annotation_refine_mode_loads_successfully() {
     );
 }
 
+// -------------------------------------------- §16.46 the flipped shipped defaults
+
+#[test]
+// §16.46 item 13(d): the opt-out profile. With both features on by default, `simple` and
+// `false` are what a user writes to get the pre-§16.46 behaviour, and nothing gated that
+// direction before this entry -- the two keys previously EQUALLED the defaults, so a test
+// like this could not have failed. Both keys are set in ONE document because that is the
+// shape of a real opt-out profile, and because two single-key documents would not catch a
+// `#[serde(default)]` on the wrong struct re-filling the sibling table.
+//
+// Turns red if either key is ignored, aliased, dropped, or overridden by the new default.
+fn a_profile_can_opt_back_out_to_simple_and_no_inpainting() {
+    // Premise, and the anti-vacuity anchor: these two values must DIFFER from the shipped
+    // defaults, or every assertion below is satisfied by a document that changed nothing.
+    let shipped = Profile::default();
+    assert_ne!(
+        shipped.text_detector.mask_refine_mode,
+        MaskRefineMode::Simple
+    );
+    assert!(shipped.inpainter.inpainting_enabled);
+
+    let doc = ProfileDocument::parse(concat!(
+        "[text_detector]
+mask_refine_mode = \"simple\"
+",
+        "[inpainter]
+inpainting_enabled = false
+",
+    ))
+    .expect("the documented opt-out profile must load and validate");
+    let p = doc.profile();
+    assert_eq!(p.text_detector.mask_refine_mode, MaskRefineMode::Simple);
+    assert!(!p.inpainter.inpainting_enabled);
+    assert_eq!(doc.warnings(), &[]);
+    p.validate()
+        .expect("the opt-out profile is valid in every build");
+
+    // The two keys above must be the ONLY things this document moved. Without this, a bug
+    // that reset the whole profile to some other constant satisfies both assertions.
+    // `Profile` derives `PartialEq` over plain data fields, so this is not one of cookbook
+    // rule 1's near-empty `PartialEq`s.
+    let mut expected = Profile::default();
+    expected.text_detector.mask_refine_mode = MaskRefineMode::Simple;
+    expected.inpainter.inpainting_enabled = false;
+    assert_eq!(*p, expected);
+}
+
+#[test]
+// §16.46 item 13(d): the shipped default document's mode line must not carry a comment that
+// contradicts the value beside it.
+//
+// Measured 2026-08-10 on a throwaway worktree: flipping the VALUE alone left both
+// `crates/pc-testkit/tests/a4d_claim_sites.rs` and every document test in this file green
+// while `default_profile.toml` read `mask_refine_mode = "annotation"  # ... Simple remains
+// the default`. `a4d_claim_sites.rs` pins the prose at a line; the tests above pin the
+// value; nothing joined the two.
+//
+// HONEST SCOPE: the negative list is a TRIPWIRE, not a validator. Its accept-set is not
+// enumerable and it will not catch a contradiction worded in a way nobody anticipated
+// (cookbook rule 14c). The durable gate for the wording is the a4d PRESENT row; this catches
+// the three sentences that exist in the tree today.
+//
+// Turns red if the shipped value stops being "annotation", or if any pre-§16.46 default
+// sentence survives beside it.
+fn the_shipped_mask_mode_comment_does_not_contradict_the_value_beside_it() {
+    let line = DEFAULT_PROFILE_TOML
+        .lines()
+        .find(|line| line.trim_start().starts_with("mask_refine_mode"))
+        .expect("the shipped profile must set mask_refine_mode");
+    let (value, comment) = line
+        .split_once('#')
+        .expect("the shipped mode line carries an inline comment");
+    assert!(value.contains("\"annotation\""), "value half: {value}");
+
+    let lowered = comment.to_ascii_lowercase();
+    for stale in [
+        "simple remains the default",
+        "simple is the default",
+        "annotation is opt-in",
+    ] {
+        assert!(
+            !lowered.contains(stale),
+            "the comment still carries the pre-§16.46 claim `{stale}`: {comment}"
+        );
+    }
+    assert!(
+        lowered.contains("annotation"),
+        "the comment must name the shipped mode: {comment}"
+    );
+}
+
 // ---------------------------------------------------------------- [inpainter]
 
 #[test]
@@ -375,8 +468,12 @@ fn annotation_refine_mode_loads_successfully() {
 // the wrong file's values would move the eligibility filter's threshold.
 fn inpainter_defaults() {
     let i = Profile::default().inpainter;
-    // §16.38 item 15(e): the default-off flag is what makes LaMa imply no fixture re-record.
-    assert!(!i.inpainting_enabled);
+    // §16.46 items 1(b) and 7, superseding §16.38 item 15(e)'s "the default-off flag is what
+    // makes LaMa imply no fixture re-record": the flag ships ON. Item 15(e)'s conclusion
+    // survives on a different ground -- the recorders never construct an `InpainterConfig` at
+    // all. DEVIATION(30): this is the one value in this block that is NOT upstream's
+    // `config.py:817` dataclass default.
+    assert!(i.inpainting_enabled);
     assert_eq!(i.inpainting_min_std_dev, 15.0);
     assert_eq!(i.inpainting_max_mask_radius, 6);
     assert_eq!(i.min_inpainting_radius, 7);
@@ -426,8 +523,8 @@ fn the_inpainter_keys_are_registered_and_ship_the_documented_values() {
     let table = &doc.document()["inpainter"];
     assert_eq!(
         table["inpainting_enabled"].as_bool(),
-        Some(false),
-        "the shipped flag must be a TOML boolean set to false"
+        Some(true),
+        "§16.46 item 1(b): the shipped flag must be a TOML boolean set to true"
     );
     assert_eq!(table["inpainting_min_std_dev"].as_float(), Some(15.0));
     assert_eq!(table["inpainting_max_mask_radius"].as_integer(), Some(6));

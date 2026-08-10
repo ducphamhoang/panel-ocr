@@ -41,9 +41,13 @@ is not yet verified in CI (§16.33) — the default (non-`onnx`) tier is fully s
 Fetch the model weights once (into a per-user cache directory, not the repo):
 
 ```
-panel-ocr models download            # required detector + OCR models (~90 MB)
-panel-ocr models download --include-optional   # + LaMa inpainting weights (~207 MB)
+panel-ocr models download            # every required model: detector, OCR encoder and
+                                     # decoder, and the LaMa inpainter (~763 MB in total)
 ```
+
+All of them are required models, the LaMa inpainter included, because inpainting is on by
+default. There is nothing optional left to add: `--include-optional` still exists and
+currently selects no extra artifact.
 
 Clean a folder of pages, writing output next to each input under `cleaned/`:
 
@@ -57,7 +61,7 @@ Useful flags for `clean` (run `panel-ocr clean --help` for the full list):
 |---|---|
 | `--output-dir <DIR>` | Where cleaned images go (default: `cleaned`, next to each input) |
 | `--extract-text` | Also write the isolated text layer (`_text.png`) |
-| `--skip-inpaint` | Disable inpainting even if the profile has it enabled |
+| `--skip-inpaint` | Turn inpainting off for this run (it is on by default) |
 | `--skip-denoise` | Disable denoising entirely |
 | `--profile <NAME>` / `--profile-path <FILE>` | Use a specific profile instead of the default |
 | `--threads <N>` | Worker thread count |
@@ -69,20 +73,31 @@ Run OCR and write a report:
 panel-ocr ocr my-manga-folder/ --format csv --output report.csv
 ```
 
-### Getting the best cleaning quality
+### Opting out of the default refinement and inpainting
 
-The shipped defaults are deliberately conservative (a documented divergence from
-upstream PanelCleaner, DEVIATION(12)). For the highest-accuracy bubble cleaning, opt into
-both of the following in your profile (`panel-ocr profile new my-profile.toml` to get a
-starting file, then edit it and pass `--profile-path`):
+Out of the box you get upstream PanelCleaner's own mask refinement and LaMa inpainting —
+both are **on by default**, so nothing needs configuring to get them. The LaMa model is 207 MB of
+that download — fetched whether or not you use it, since it is a required model — and
+inpainting is what runs it over every eligible region.
+
+To turn either off, opt **out** in your profile (`panel-ocr profile new my-profile.toml` to
+get a starting file, then edit it and pass `--profile-path`):
 
 ```toml
 [text_detector]
-mask_refine_mode = "annotation"   # default is "simple"; annotation matches upstream's mask refinement
+mask_refine_mode = "simple"       # opt out of the default "annotation"; koharu-style
+                                  # refinement, a v1 addition upstream has no equivalent of
 
 [inpainter]
-inpainting_enabled = true         # default is false; fills bubbles instead of flat-color masking
+inpainting_enabled = false        # opt out of the default LaMa inpainting; masked regions get
+                                  # a flat fill instead of generated content
 ```
+
+This project publishes no measurement ranking the four combinations; `cargo xtask mode-bench`
+and [`docs/MODE_COMPARISON.md`](docs/MODE_COMPARISON.md) record what each one produced on the
+same inputs and deliberately declare no winner.
+
+`--skip-inpaint` does the second of those for a single run without editing a profile.
 
 `panel-ocr profile show` prints the full default profile as TOML so you can see every
 tunable option and its default value.
@@ -106,7 +121,7 @@ detect → preprocess → mask → denoise → inpaint (optional) → export
 | `pc-preprocess` + `pc-ocr` | Stage 2 — box filtering, merging, reading order, OCR pass |
 | `pc-mask` | Stage 3 — growth/dilation, border-color fitting, mask composition |
 | `pc-denoise` | Stage 4 — non-local-means denoising (from-scratch, exact) |
-| `pc-inpaint` | Stage 4b — LaMa-based inpainting for masked regions (opt-in) |
+| `pc-inpaint` | Stage 4b — LaMa-based inpainting for masked regions (on by default; opt out with `inpainting_enabled = false` or `--skip-inpaint`) |
 | `pc-export` | Stage 5 — format coercion, compositing, OCR reports |
 | `pc-pipeline` + `pc-cli` | Orchestrator + the `panel-ocr` binary |
 | `xtask` | Fixture recording (`cargo xtask record-fixtures`), golden calibration (`cargo xtask calibrate-goldens`), and the Simple/Annotation/LaMa mode-comparison benchmark (`cargo xtask mode-bench`) |
@@ -148,11 +163,12 @@ Windows it builds but is not yet CI-verified (§16.33 item 10).
       partial is deferred by §16.33 item 10, not claimed as working.
 
 ### v1.2 — done
-- [x] `Annotation` mask-refine mode — opt-in parity with upstream PanelCleaner's mask
-      refinement (`mask_refine_mode = "annotation"`; `Simple` stays the default, DEVIATION(12))
+- [x] `Annotation` mask-refine mode — parity with upstream PanelCleaner's mask refinement,
+      and the shipped default since §16.46 (`mask_refine_mode = "simple"` is the opt-out;
+      DEVIATION(12), the default-value divergence, is retired by that entry)
 - [x] LaMa inpainting — fills masked regions with generated content instead of a flat
-      color, wired into the pipeline end-to-end (opt-in via `inpainting_enabled = true`,
-      or force it off per-run with `--skip-inpaint`)
+      color, wired into the pipeline end-to-end and on by default (opt out with
+      `inpainting_enabled = false`, or per-run with `--skip-inpaint`)
 - [x] Fixed a real compositing defect (§16.45): partial-alpha regions (denoise/mask rims
       composited onto a transparent base) were darkening visibly instead of blending
       correctly — found via visual inspection of a real page, root-caused to

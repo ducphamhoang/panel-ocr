@@ -7,7 +7,7 @@ use common::{
     COVERED_RECT, REPLAY_SIZE, UNCOVERED_RECT,
 };
 use image::{GrayImage, Luma};
-use pc_config::TextDetectorConfig;
+use pc_config::{MaskRefineMode, TextDetectorConfig};
 use pc_core::{Language, Rect, Stage, StageError};
 use pc_detect::{DetectStage, MockDetector, ReplayDetector, TextDetector};
 use std::path::{Path, PathBuf};
@@ -541,7 +541,14 @@ fn recorded_input(dests: Option<&Path>) -> pc_detect::DetectInput {
         base_image_dest: dests.map(|dir| dir.join(format!("{RECORDED_STEM}_base.png"))),
         raw_mask_dest: dests.map(|dir| dir.join(format!("{RECORDED_STEM}_raw_mask.png"))),
         min_mask_coverage: pc_detect::DEFAULT_MIN_MASK_COVERAGE,
-        config: TextDetectorConfig::default(),
+        // §16.46 item 13(b) INPUT PIN -- no assertion, name or expected value changes with
+        // it. This suite's subject is `Simple`'s behaviour, and item 1(a) moves the shipped
+        // default to `Annotation`; inheriting the default would silently re-point every
+        // expectation below at a different algorithm while the suite stayed green.
+        config: TextDetectorConfig {
+            mask_refine_mode: MaskRefineMode::Simple,
+            ..TextDetectorConfig::default()
+        },
     }
 }
 

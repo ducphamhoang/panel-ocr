@@ -77,3 +77,26 @@ fn cli_provider_is_injected_into_pipeline_context() {
     let ctx = PipelineCtx::new(&detector).with_inpainter(provider.as_ref());
     assert!(ctx.inpainter.is_some());
 }
+
+/// §16.46 item 13(d). `skip_inpaint_overrides_configured_inpainting_but_absence_preserves_config`
+/// above covers a HAND-SET flag. This covers the SHIPPED DEFAULT, which is a different case
+/// and was untestable before §16.46: the default was already `false`, so that test's
+/// "absence preserves config" leg proved nothing about a default run.
+///
+/// Turns red if `effective_inpainting_enabled` stops reading the profile, if `--skip-inpaint`
+/// stops being honoured, or if the default reverts -- in which case the premise fires first,
+/// with a message saying so, rather than the test silently going vacuous.
+#[test]
+fn skip_inpaint_turns_off_the_now_default_on_inpainting() {
+    let profile = Profile::default();
+    assert!(
+        profile.inpainter.inpainting_enabled,
+        "premise (§16.46 item 1(b)): the shipped default is ON, or both legs below are vacuous"
+    );
+
+    assert!(effective_inpainting_enabled(&clean(&[]), &profile));
+    assert!(!effective_inpainting_enabled(
+        &clean(&["--skip-inpaint"]),
+        &profile
+    ));
+}

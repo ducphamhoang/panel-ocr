@@ -61,6 +61,13 @@ fn two_blocks() -> Vec<RawBlock> {
 /// the real `apply_report_overrides`, and `performing_ocr` is `true` as `run_ocr` sets it.
 fn ocr_options(cache_dir: &Path) -> PipelineOptions {
     let mut profile = Profile::default();
+    // §16.46 item 13(b) INPUT PIN -- no assertion, name or expected value changes with it.
+    // This suite's subject is CSV row geometry, which is mode-independent, so the flip does
+    // not move any expectation here; pinned anyway because inheriting the shipped defaults
+    // would silently run every row through Annotation masking and an enabled inpainter this
+    // harness injects no provider for. Missed by D2's sweep and found by its review.
+    profile.text_detector.mask_refine_mode = pc_config::MaskRefineMode::Simple;
+    profile.inpainter.inpainting_enabled = false;
     pc_cli::ocr::apply_report_overrides(&mut profile);
     PipelineOptions {
         threads: 1,

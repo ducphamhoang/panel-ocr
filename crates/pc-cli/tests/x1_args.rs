@@ -525,8 +525,14 @@ fn models(args: &[&str]) -> pc_cli::args::ModelsCommand {
     }
 }
 
-/// §16.38 item 19(b): the flag exists on `models download` and defaults to off, so the
-/// default invocation cannot pull the 207 MB optional artifact.
+/// §16.38 item 19(b): the flag exists on `models download` and defaults to off.
+///
+/// **What that no longer implies.** When this was written, the flag defaulting to off was
+/// what kept a default invocation from pulling the 207 MB LaMa artifact. §16.46 item 11(b)
+/// promoted that artifact to `Requirement::Required`, so a default `models download` now
+/// fetches it and the optional side of the partition currently has no member. This test's
+/// subject is unchanged and is purely the parser: the flag is accepted on `download` and
+/// is `false` when not passed.
 #[test]
 fn models_download_takes_include_optional_and_defaults_it_off() {
     match models(&["download"]) {

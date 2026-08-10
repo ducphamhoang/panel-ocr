@@ -651,7 +651,10 @@ fn record_detector(
         // in here rather than keeping a second copy, `page` above already IS that file — no copy
         // needed, and copying a file onto itself would risk truncating it via the same inode.
 
-        let config = pc_config::TextDetectorConfig::default();
+        // §16.46 item 8: pinned, never inherited. `pc_detect::run` below writes
+        // `_raw_mask.png` and scores the coverage operand off this mode, so a shipped-default
+        // change would silently re-point the committed fixture.
+        let config = crate::recording_config::recording_detector_config();
         let session_pins = crate::device::recorded_session_pins(device_policy, &config);
         crate::device::ensure_recording_policy(
             device_policy,
@@ -679,6 +682,12 @@ fn record_detector(
             bail!("direct ONNX and ReplayDetector pre-filter block lists differ");
         }
 
+        // §16.46 item 8(a) and 8(d): both provenance pins are derived from the config
+        // BEFORE it is moved into `DetectInput`, so they describe the very value the run
+        // consumed rather than a second copy that could drift from it.
+        let recorded_mask_refine_mode = crate::recording_config::mode_wire(config.mask_refine_mode);
+        let recorded_profile_non_default =
+            serde_json::to_value(crate::recording_config::profile_non_default(&config))?;
         let input = pc_detect::DetectInput {
             schema_version: pc_core::SCHEMA_VERSION,
             source: pc_core::ImageHandle::from_path(&page),
@@ -795,7 +804,15 @@ fn record_detector(
             "inter_threads": session_pins.inter_threads,
             "pad_value": pc_detect::onnx::PAD_VALUE,
             "panel_ocr_commit": panel_ocr_commit,
-            "profile_non_default": {},
+            // §16.46 item 8(d): derived by diffing the config this recording actually ran
+            // under against the shipped defaults, never a hard-coded `{}`. A literal here
+            // was a claim that the recording used a fully default profile -- false the
+            // moment the recorder pins a mode the shipped default does not carry.
+            "profile_non_default": recorded_profile_non_default,
+            // §16.46 item 8(a) (Fable's graft from the losing position): the mode this
+            // artifact was produced under, recorded unconditionally rather than only when
+            // it differs from a default that can move under it.
+            "mask_refine_mode": recorded_mask_refine_mode,
         });
         upstream_manifest["records"] = Value::Array(records);
         upstream_manifest["input_page"] = Value::String(DETECTOR_PAGE_RECORDED.into());
@@ -1350,6 +1367,11 @@ mod provenance_is_current_falsification {
                     inter_threads: 0,
                     pad_value: 0,
                     panel_ocr_commit: "b".repeat(40),
+                    // §16.46 item 8(a). `None` here on purpose: this fixture exercises the
+                    // BACKWARD-COMPATIBLE shape -- a provenance document written before the
+                    // field existed, which the two frozen readers of the committed file must
+                    // still parse.
+                    mask_refine_mode: None,
                     profile_non_default: BTreeMap::new(),
                 },
                 upstream: pc_testkit::provenance::UpstreamPins {

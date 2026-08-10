@@ -139,6 +139,12 @@ fn valid_detector_group() -> GroupProvenance {
                 inter_threads: 0,
                 pad_value: 0,
                 panel_ocr_commit: OURS_COMMIT.into(),
+                // §16.46 item 8(a). `None` on purpose: this fixture is the
+                // BACKWARD-COMPATIBLE shape, a document written before the field existed.
+                // The committed `tests/fixtures/recorded/detector/PROVENANCE.json` is in
+                // exactly that shape until the next re-record, and both frozen readers of
+                // it must keep parsing -- cookbook rule 14's exact past failure.
+                mask_refine_mode: None,
                 profile_non_default: BTreeMap::new(),
             },
             upstream: UpstreamPins {
@@ -277,6 +283,82 @@ fn the_valid_control_documents_have_no_violations() {
         provenance::validate(provenance::DETECTOR_GROUP, &valid_detector_group()),
         Vec::new()
     );
+}
+
+#[test]
+// §16.46 item 8(a), N2 of D1's independent review. The field is `Option<String>` so a
+// pre-field document parses, which leaves the string unconstrained at the parse. These two
+// controls are what make the two rules in its doc comment real instead of prose.
+//
+// The positive control comes first deliberately: without it, both negatives are satisfiable
+// by a validator that rejects every value, including the correct ones.
+fn the_mask_refine_mode_field_accepts_the_two_wire_spellings_and_rejects_anything_else() {
+    for accepted in ["simple", "annotation"] {
+        let mut group = valid_detector_group();
+        group
+            .detector
+            .as_mut()
+            .expect("detector pins")
+            .ours
+            .mask_refine_mode = Some(accepted.into());
+        assert_eq!(
+            provenance::validate("detector", &group),
+            vec![],
+            "`{accepted}` is a spelling a profile can write and must be accepted"
+        );
+    }
+
+    let mut group = valid_detector_group();
+    group
+        .detector
+        .as_mut()
+        .expect("detector pins")
+        .ours
+        .mask_refine_mode = Some("Simple".into());
+    assert_eq!(
+        provenance::validate("detector", &group),
+        vec![Violation::UnknownMaskRefineMode {
+            found: "Simple".into(),
+        }],
+        "the wire spelling is snake_case; the Rust variant name is not a profile value"
+    );
+}
+
+#[test]
+// §16.46 item 8(a) states that where `mask_refine_mode` and `profile_non_default` both name
+// the mode they must agree. A document where they disagree does not say which mode produced
+// the artifact, which is the only question either field exists to answer.
+fn a_mask_refine_mode_contradicting_its_own_profile_override_is_rejected() {
+    let mut group = valid_detector_group();
+    {
+        let ours = &mut group.detector.as_mut().expect("detector pins").ours;
+        ours.mask_refine_mode = Some("simple".into());
+        ours.profile_non_default.insert(
+            "text_detector.mask_refine_mode".into(),
+            serde_json::json!("annotation"),
+        );
+    }
+    assert_eq!(
+        provenance::validate("detector", &group),
+        vec![Violation::MaskRefineModeContradictsProfileOverride {
+            field: "simple".into(),
+            profile_override: "annotation".into(),
+        }]
+    );
+
+    // Agreement is accepted, so the rule is about contradiction and not about the override
+    // merely being present -- without this the check above would be satisfied by rejecting
+    // every document that carries both.
+    let mut agreeing = valid_detector_group();
+    {
+        let ours = &mut agreeing.detector.as_mut().expect("detector pins").ours;
+        ours.mask_refine_mode = Some("annotation".into());
+        ours.profile_non_default.insert(
+            "text_detector.mask_refine_mode".into(),
+            serde_json::json!("annotation"),
+        );
+    }
+    assert_eq!(provenance::validate("detector", &agreeing), vec![]);
 }
 
 #[test]

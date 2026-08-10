@@ -189,8 +189,13 @@ pub fn models_download_command(resolved_cache_root: Option<&Path>) -> String {
 }
 
 #[doc(hidden)]
-/// Build the recovery command for an **optional** managed model — the LaMa inpainting
-/// weights are the only one today (spec §16.38 item 19(g)).
+/// Build the recovery command for an **optional** managed model.
+///
+/// **No registry entry is `Optional` today, so this has no production caller.** §16.38 item
+/// 19(g) landed it for the LaMa weights, and §16.46 item 11(b) promoted those to
+/// `Requirement::Required` — the inpainter refusal now names the plain `models download`
+/// instead. It is kept, alongside the partition machinery §16.46 item 11(c) also keeps, for
+/// the next genuinely optional model; `x1_args.rs` still pins its output.
 ///
 /// A separate function rather than a parameter on [`models_download_command`], because
 /// that one's exact output is pinned by frozen tests and by `ModelError::Unavailable`'s

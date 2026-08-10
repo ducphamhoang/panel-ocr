@@ -357,10 +357,13 @@ fn the_resized_rect_contains_the_resized_mask_at_every_ratio_tried() {
 }
 
 /// §16.38 item 10, asserted rather than only commented: for a **failed** region the filled area is a
-/// function of `_raw_mask.png`, which v1 writes with `MaskRefineMode::Simple` instead of upstream's
-/// `refine_mask` (§14 item 12; cookbook rule 7 measures the agreement at IoU 0.258). So changing the
-/// raw mask changes the fill for a failed region and changing the combined mask does not — which is
-/// the mechanism by which `DEVIATION(12)` reaches this stage.
+/// function of `_raw_mask.png`, so whatever `mask_refine_mode` writes into that mask decides this
+/// fill. Changing the raw mask changes the fill for a failed region and changing the combined mask
+/// does not — which is the mechanism by which the refine mode reaches this stage. It was written as
+/// the mechanism by which `DEVIATION(12)` reached it, when v1 wrote `_raw_mask.png` with
+/// `MaskRefineMode::Simple` by default instead of upstream's `refine_mask` (§14 item 12; cookbook
+/// rule 7 measures the agreement at IoU 0.258); §16.46 item 1(a) made `Annotation` the default and
+/// item 2 retired that entry, and the mechanism this test pins is unchanged by either.
 #[test]
 fn a_failed_regions_fill_tracks_the_raw_mask_and_ignores_the_combined_mask() {
     let config = radii(0, 0, 0.0, 0, 0);

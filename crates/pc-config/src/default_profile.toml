@@ -17,7 +17,7 @@ model_path                   = ""        # empty = use managed cache
 concurrent_models            = 1
 intra_threads                = 0         # 0 = let ONNX Runtime choose
 inter_threads                = 0         # 0 = let ONNX Runtime choose
-mask_refine_mode             = "simple"  # simple | annotation (Annotation is opt-in; Simple remains the default)
+mask_refine_mode             = "annotation"  # simple | annotation (Annotation is the shipped default; `simple` is the opt-out)
 
 [preprocessor]
 box_min_size                 = 400       # 20*20
@@ -63,7 +63,7 @@ search_window_size            = 21
                                           # §16.38 item 7(b) established are upstream's runtime
                                           # authority -- NOT `media/default.conf`'s, which
                                           # disagrees on two keys and is read by no upstream code.
-inpainting_enabled            = false
+inpainting_enabled            = true
 inpainting_min_std_dev        = 15.0
 inpainting_max_mask_radius    = 6         # INERT, in this port and upstream: the gate its own
                                           # comment describes is `inpainting.py:89`'s

@@ -210,7 +210,7 @@ fn a_black_but_opaque_combined_mask_pixel_counts_as_covered_and_a_transparent_wh
 #[test]
 fn the_ratified_inpainter_defaults_are_what_this_suite_assumes() {
     let default = InpainterConfig::default();
-    assert!(!default.inpainting_enabled);
+    assert!(default.inpainting_enabled); // §16.46 item 1(b)
     assert_eq!(default.inpainting_min_std_dev, 15.0);
     assert_eq!(default.inpainting_max_mask_radius, 6);
     assert_eq!(default.min_inpainting_radius, 7);

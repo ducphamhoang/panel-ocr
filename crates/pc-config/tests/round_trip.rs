@@ -342,33 +342,40 @@ fn malformed_toml_is_a_parse_error() {
 // spec §6 as superseded by §16.38 item 13: the `[inpainter]` block round-trips through both
 // from-scratch serialization and in-place `toml_edit` updates, like every other table. This
 // is what stops `profile edit` from silently dropping the whole new table or resetting
-// `inpainting_enabled` to false on save -- `set_profile` iterates `Profile::TABLES`, so a
-// table absent from that registry is written by nobody.
+// `inpainting_enabled` on save -- `set_profile` iterates `Profile::TABLES`, so a table
+// absent from that registry is written by nobody.
 //
-// `inpainting_enabled` is the field edited because it is the one whose loss is invisible: a
-// dropped `true` turns the feature off with no error anywhere.
+// `inpainting_enabled` is the field edited because it is the one whose loss is invisible,
+// and §16.46 item 1(b) INVERTS WHICH DIRECTION that is: with the flag shipping ON, a dropped
+// `false` silently re-enables a 207 MB stage the user turned off, where before the flip it
+// was a dropped `true` that silently disabled it. The edited direction follows the risk.
+// Both planning agents reached this independently and neither disputed it, which is why
+// §16.46 item 13(a) pre-authorises it as one of its six sites.
 fn the_inpainter_table_round_trips_through_text_and_set_profile() {
     let mut original = Profile::default();
-    original.inpainter.inpainting_enabled = true;
+    original.inpainter.inpainting_enabled = false;
     original.inpainter.min_inpainting_radius = 3;
     original.inpainter.max_inpainting_radius = 30;
     let text = ProfileDocument::from_profile(&original).to_toml_string();
     assert!(
-        text.contains("inpainting_enabled = true"),
+        text.contains("inpainting_enabled = false"),
         "the wire value must be a TOML boolean: {text}"
     );
     assert_eq!(*ProfileDocument::parse(&text).unwrap().profile(), original);
 
     let mut doc = ProfileDocument::parse(DEFAULT_PROFILE_TOML).unwrap();
-    assert!(!doc.profile().inpainter.inpainting_enabled);
+    assert!(
+        doc.profile().inpainter.inpainting_enabled,
+        "premise (§16.46 item 1(b)): the shipped document has the flag ON, or the edit below is a no-op and this test passes without exercising `set_profile` at all"
+    );
     let mut edited = doc.profile().clone();
-    edited.inpainter.inpainting_enabled = true;
+    edited.inpainter.inpainting_enabled = false;
     doc.set_profile(&edited).unwrap();
 
     // Read through toml_edit rather than depending on column alignment in the shipped file.
     assert_eq!(
         doc.document()["inpainter"]["inpainting_enabled"].as_bool(),
-        Some(true),
+        Some(false),
         "got: {}",
         doc.to_toml_string()
     );
@@ -382,6 +389,9 @@ fn the_inpainter_table_round_trips_through_text_and_set_profile() {
         "the inert-key comment must survive an in-place edit: {out}"
     );
     let reparsed = ProfileDocument::parse(&out).unwrap();
-    assert!(reparsed.profile().inpainter.inpainting_enabled);
+    assert!(
+        !reparsed.profile().inpainter.inpainting_enabled,
+        "the edited `false` must survive the round trip -- post-§16.46 that is the direction whose silent loss re-enables a 207 MB stage the user turned off"
+    );
     assert_eq!(reparsed.warnings(), &[]);
 }

@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 
 use image::{GrayImage, Luma, Rgb, RgbImage};
-use pc_config::TextDetectorConfig;
+use pc_config::{MaskRefineMode, TextDetectorConfig};
 use pc_core::{ImageHandle, Rect};
 use pc_detect::{DetectInput, RawBlock};
 use std::path::PathBuf;
@@ -96,7 +96,14 @@ pub fn memory_input(image: RgbImage) -> DetectInput {
         base_image_dest: None,
         raw_mask_dest: None,
         min_mask_coverage: pc_detect::DEFAULT_MIN_MASK_COVERAGE,
-        config: TextDetectorConfig::default(),
+        // §16.46 item 13(b) INPUT PIN -- no assertion, name or expected value changes with
+        // it. This suite's subject is `Simple`'s behaviour, and item 1(a) moves the shipped
+        // default to `Annotation`; inheriting the default would silently re-point every
+        // expectation below at a different algorithm while the suite stayed green.
+        config: TextDetectorConfig {
+            mask_refine_mode: MaskRefineMode::Simple,
+            ..TextDetectorConfig::default()
+        },
     }
 }
 

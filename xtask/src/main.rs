@@ -19,6 +19,7 @@ mod model_signature;
 mod ocr_model_signature;
 mod paths;
 mod record;
+mod recording_config;
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};

@@ -24,9 +24,11 @@ const RECORDED_ORIGINAL_PATH: &str =
 const RECORDED_HEIGHT_LOWER: u32 = 1000;
 const RECORDED_HEIGHT_UPPER: u32 = 4000;
 
-/// §16.37 item 9, retained by §16.39 items 2 and 6(a): the shipped default remains
-/// `Simple`, and its recorded raw-mask PNG stays byte-identical. This literal comes
-/// from committed provenance, not from the artifact under test.
+/// §16.37 item 9, retained by §16.39 items 2 and 6(a) and then superseded in part by
+/// §16.46 item 12: `Simple` is no longer the shipped default, but its recorded raw-mask
+/// PNG stays byte-identical, because every test frozen against `Simple` names `Simple`
+/// explicitly in its input rather than inheriting it. This literal comes from committed
+/// provenance, not from the artifact under test.
 const RECORDED_SIMPLE_RAW_MASK_SHA256: &str =
     "d33e5359541962c563cf89c42d9ab99c52b690a7f425f40d7a9e4535911c78d7";
 
@@ -180,8 +182,9 @@ fn fill_gray(image: &mut GrayImage, x1: u32, y1: u32, x2: u32, y2: u32, value: u
 }
 
 /// Requirement: §16.39 item 6(a), revising §16.5 item 3 and §8.3 step 5.
-/// `mask_refine_mode = Annotation` is the opt-in itself; `run` must invoke the
-/// Annotation algorithm rather than refuse the mode or silently execute Simple.
+/// `mask_refine_mode` is the mode selector itself — it was the opt-in when this test was
+/// written and is the shipped default since §16.46 item 1(a); either way `run` must invoke
+/// the Annotation algorithm rather than refuse the mode or silently execute Simple.
 /// This replaces `d7_run.rs::run_rejects_annotation_refine_mode` under §16.39
 /// item 3(d)'s joint-architect cookbook-rule-8 ruling.
 ///
@@ -199,7 +202,7 @@ fn run_in_annotation_mode_refines_with_the_annotation_path_instead_of_refusing()
         memory_input(page.clone(), MaskRefineMode::Annotation),
         &annotation_detector,
     )
-    .expect("Annotation is an accepted opt-in mode");
+    .expect("Annotation is an accepted mode");
 
     let simple_detector = MockDetector::new().with_blocks(blocks).with_mask(pred_mask);
     let simple = pc_detect::run(memory_input(page, MaskRefineMode::Simple), &simple_detector)
@@ -218,19 +221,22 @@ fn run_in_annotation_mode_refines_with_the_annotation_path_instead_of_refusing()
     );
 }
 
-/// Requirement: §16.37 item 9, retained by §16.39 items 2 and 6(a). `Simple`
-/// stays the shipped default and every value frozen against it stays unchanged.
+/// Requirement: §16.37 item 9, retained by §16.39 items 2 and 6(a), and superseded in
+/// part by §16.46 item 12. `Simple` is no longer the shipped default; what survives is
+/// the half that mattered — every value frozen against `Simple` stays unchanged — and it
+/// survives because this test names `Simple` in its input instead of inheriting it.
 /// The expected digest is the hard-coded provenance digest, not a value derived
 /// from `run` or from the committed mask at test time.
 ///
-/// Turns red if the default changes, Simple routes through Annotation, or A4
-/// changes the recorded Simple mask's encoded bytes.
+/// Turns red if the shipped default REVERTS to `Simple` (the `assert_ne!` premise below,
+/// which would mean the explicit mode argument had stopped proving anything), if `Simple`
+/// routes through Annotation, or if the recorded `Simple` mask's encoded bytes change.
 #[test]
 fn run_in_simple_mode_is_byte_identical_to_the_committed_recorded_mask() {
-    assert_eq!(
+    assert_ne!(
         TextDetectorConfig::default().mask_refine_mode,
         MaskRefineMode::Simple,
-        "the shipped default itself is part of the requirement"
+        "§16.46 item 1(a): if the default is Simple again, this test's explicit mode argument          stops proving anything and this file needs re-reading, not re-running"
     );
 
     let detector = recorded_replay_detector();

@@ -9,7 +9,8 @@
 //! where the answer is pinned.
 //!
 //! **Gating, and why it is `#[ignore]` rather than a silent skip.** These need the 207 MB
-//! optional artifact on disk (§16.38 item 1(a); `Requirement::Optional` per item 19), so they
+//! artifact on disk (§16.38 item 1(a); `Requirement::Required` since §16.46 item 11(b)
+//! promoted it from the `Requirement::Optional` item 19 gave it), so they
 //! follow the shape `crates/pc-ocr/tests/p7_session.rs` established for real manga-ocr
 //! weights: `#[ignore]`, plus an env-var pointing at the file, plus a `runtime_available`
 //! probe. Run them with:
@@ -33,7 +34,8 @@ fn open_pinned_model() -> Option<OnnxInpainter> {
     let Some(path) = std::env::var_os("PANEL_OCR_LAMA_MODEL") else {
         eprintln!(
             "skipping: set PANEL_OCR_LAMA_MODEL to the pinned lama-manga.onnx \
-             (`panel-ocr models download --include-optional`)"
+             (`panel-ocr models download` fetches it; it is a required model since \
+             §16.46 item 11(b))"
         );
         return None;
     };
@@ -70,7 +72,7 @@ fn centre_hole() -> BinaryMask {
 /// the `SAMPLE_SCALE = 255.0` in `onnx.rs` depends on it. A model emitting `0..255` directly
 /// would make every decoded pixel white, and this is the assertion that would catch it.
 #[test]
-#[ignore = "opt-in: needs the 207 MB optional lama-manga.onnx and an ONNX Runtime shared library"]
+#[ignore = "opt-in: needs the 207 MB lama-manga.onnx and an ONNX Runtime shared library"]
 fn the_runtime_output_shape_is_1_3_512_512_and_every_sample_lies_in_the_unit_interval() {
     let Some(inpainter) = open_pinned_model() else {
         return;
@@ -109,7 +111,7 @@ fn the_runtime_output_shape_is_1_3_512_512_and_every_sample_lies_in_the_unit_int
 /// size are indistinguishable downstream, so the channel counts paired with the names are the
 /// only signal that `image` is the 3-channel one.
 #[test]
-#[ignore = "opt-in: needs the 207 MB optional lama-manga.onnx and an ONNX Runtime shared library"]
+#[ignore = "opt-in: needs the 207 MB lama-manga.onnx and an ONNX Runtime shared library"]
 fn the_live_graph_declares_exactly_the_two_separate_inputs_item_1b_decoded() {
     let Some(inpainter) = open_pinned_model() else {
         return;
@@ -151,7 +153,7 @@ fn the_live_graph_declares_exactly_the_two_separate_inputs_item_1b_decoded() {
 /// declared output shape (item 1(c) forbids it), so the correct response is to re-transcribe the
 /// note, not to change `EXPECTED_OUTPUT_SHAPE`.
 #[test]
-#[ignore = "opt-in: needs the 207 MB optional lama-manga.onnx and an ONNX Runtime shared library"]
+#[ignore = "opt-in: needs the 207 MB lama-manga.onnx and an ONNX Runtime shared library"]
 fn ort_declares_one_output_named_output_with_a_free_batch_axis_and_concrete_512_spatial_axes() {
     let Some(inpainter) = open_pinned_model() else {
         return;
@@ -182,7 +184,7 @@ fn ort_declares_one_output_named_output_with_a_free_batch_axis_and_concrete_512_
 /// work), and page content inside the hole cannot leak into the fill. If a future artifact
 /// moves the masking out of the graph, this goes red and the caller owes the zeroing.
 #[test]
-#[ignore = "opt-in: needs the 207 MB optional lama-manga.onnx and an ONNX Runtime shared library"]
+#[ignore = "opt-in: needs the 207 MB lama-manga.onnx and an ONNX Runtime shared library"]
 fn the_graph_zeroes_the_masked_region_itself_so_hole_content_cannot_reach_the_output() {
     let Some(inpainter) = open_pinned_model() else {
         return;
@@ -231,7 +233,7 @@ fn the_graph_zeroes_the_masked_region_itself_so_hole_content_cannot_reach_the_ou
 /// measured 0.0082 in `0..1` units (about 2.1/255); the bound of 8/255 leaves headroom while
 /// still failing loudly if the model were fed unnormalised `0..255` samples.
 #[test]
-#[ignore = "opt-in: needs the 207 MB optional lama-manga.onnx and an ONNX Runtime shared library"]
+#[ignore = "opt-in: needs the 207 MB lama-manga.onnx and an ONNX Runtime shared library"]
 fn a_zero_mask_still_regenerates_the_tile_but_stays_close_to_the_input_which_pins_the_scaling() {
     let Some(inpainter) = open_pinned_model() else {
         return;
@@ -280,7 +282,7 @@ fn a_zero_mask_still_regenerates_the_tile_but_stays_close_to_the_input_which_pin
 /// The "changed" assertion uses a hole placed over a **flat** area whose input value is
 /// known, so the expectation is a property of the input and not of the output.
 #[test]
-#[ignore = "opt-in: needs the 207 MB optional lama-manga.onnx and an ONNX Runtime shared library"]
+#[ignore = "opt-in: needs the 207 MB lama-manga.onnx and an ONNX Runtime shared library"]
 fn inpaint_tile_returns_a_512_square_rgb_tile_whose_masked_region_no_longer_matches_the_page() {
     let Some(inpainter) = open_pinned_model() else {
         return;

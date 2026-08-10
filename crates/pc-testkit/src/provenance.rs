@@ -82,6 +82,26 @@ pub struct OursPins {
     pub inter_threads: usize,
     pub pad_value: u8,
     pub panel_ocr_commit: String,
+    /// §16.46 item 8(a) (Fable's graft from the losing position): the `mask_refine_mode` the
+    /// recording actually ran under, written by the generator's own key list and never by
+    /// hand — which is what §16.37 item 10(f)'s second ground requires of any field added to
+    /// this file (*"a hand-added … field would be dropped silently at the next re-record"*).
+    ///
+    /// **Optional at the parse, and this is a compatibility decision rather than laxity.**
+    /// The committed `tests/fixtures/recorded/detector/PROVENANCE.json` predates the field,
+    /// and `OursPins` carries `deny_unknown_fields`, so a required field here would make the
+    /// two frozen readers of that file — `recorded_provenance.rs` and `model_signature.rs` —
+    /// fail at the parse (cookbook rule 14's exact past failure). It is written by every
+    /// future recording and will appear in the committed file at the next re-record;
+    /// re-recording needs ONNX plus the real weights and is deliberately not part of the task
+    /// that added this field.
+    ///
+    /// It is deliberately redundant with `profile_non_default`, which only reports the mode
+    /// when it differs from the shipped default. This field answers "what produced this
+    /// artifact" unconditionally; that one answers "what differed from the default at
+    /// recording time". Where both are present they must agree about the mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask_refine_mode: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub profile_non_default: BTreeMap<String, Value>,
 }
@@ -192,6 +212,21 @@ pub enum Violation {
     },
     ExecutionProviderNotCpu {
         found: String,
+    },
+    /// §16.46 item 8(a): `detector.ours.mask_refine_mode` is present but is not one of the
+    /// two wire spellings a profile can actually write. The field is `Option<String>` rather
+    /// than a typed enum so a pre-field document still parses, which means the string is
+    /// unconstrained at the parse and has to be constrained here instead.
+    UnknownMaskRefineMode {
+        found: String,
+    },
+    /// §16.46 item 8(a) states that where `mask_refine_mode` and `profile_non_default` both
+    /// describe the mode they must agree. That was written as prose with nothing behind it;
+    /// this is the assertion. A document where the two disagree does not say which one
+    /// produced the artifact, which is the only question either field exists to answer.
+    MaskRefineModeContradictsProfileOverride {
+        field: String,
+        profile_override: String,
     },
     EmptyDependencyVersions,
 }
@@ -476,6 +511,35 @@ fn validate_ours(violations: &mut Vec<Violation>, ours: &OursPins) {
     // sweep's whole purpose is that the typed layer enumerates *declarations* while the sweep
     // enumerates *digests present in the file*, and the two populations must match; a map the
     // sweep does not visit breaks that invariant silently.
+    // §16.46 item 8(a), N2 of D1's independent review. The field is `Option<String>` so a
+    // document written before it existed still parses, which leaves the string itself
+    // unconstrained at the parse — so both of its stated rules are enforced here instead of
+    // being left as doc-comment prose. The accepted set is the two serde wire spellings of
+    // `MaskRefineMode`; they are literals rather than `serde_json::to_value(..)` because
+    // `pc-testkit` does not depend on `pc-config`, and because a validator that derived its
+    // accepted set from the type it validates would accept whatever that type became.
+    if let Some(mode) = &ours.mask_refine_mode {
+        if mode != "simple" && mode != "annotation" {
+            violations.push(Violation::UnknownMaskRefineMode {
+                found: mode.clone(),
+            });
+        }
+        // The agreement rule. `profile_non_default` reports the mode only when it differs
+        // from the shipped default, so its absence says nothing and only a present-and-
+        // different value is a contradiction.
+        if let Some(override_value) = ours
+            .profile_non_default
+            .get("text_detector.mask_refine_mode")
+            .and_then(Value::as_str)
+        {
+            if override_value != mode {
+                violations.push(Violation::MaskRefineModeContradictsProfileOverride {
+                    field: mode.clone(),
+                    profile_override: override_value.to_owned(),
+                });
+            }
+        }
+    }
     validate_freeform(
         &ours.profile_non_default,
         "detector.ours.profile_non_default",

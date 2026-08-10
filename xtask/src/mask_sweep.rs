@@ -2,7 +2,7 @@
 
 use crate::paths;
 use anyhow::{anyhow, bail, Context, Result};
-use pc_config::{MaskerConfig, PreprocessorConfig, TextDetectorConfig};
+use pc_config::{MaskerConfig, PreprocessorConfig};
 use pc_core::ImageHandle;
 use pc_mask::fit::{fit_accepted, fit_region_scored, resolve_fallback, Scored, Selection};
 use std::fmt::Write as _;
@@ -205,7 +205,9 @@ fn run_local(pages: &Path, detector_spec: &str) -> Result<(Sweep, String)> {
         .with_context(|| format!("verifying detector model {}", model.display()))?;
     let detector = pc_detect::onnx::OnnxDetector::from_path_with_config(
         &model,
-        &TextDetectorConfig::default(),
+        // Session pins only: `from_path_with_config` reads the thread and path fields and
+        // never `mask_refine_mode`, so §16.46 item 8(c) leaves this site unpinned on purpose.
+        &pc_config::TextDetectorConfig::default(),
     )
     .map_err(|error| anyhow!(error.to_string()))
     .with_context(|| "constructing the ONNX detector")?;
@@ -277,7 +279,9 @@ fn measure_page(
             base_image_dest: None,
             raw_mask_dest: None,
             min_mask_coverage: pc_detect::DEFAULT_MIN_MASK_COVERAGE,
-            config: TextDetectorConfig::default(),
+            // §16.46 item 8: pinned; this drives `pc_detect::run`, whose measurements are
+            // the frozen replay ladder in `xtask/tests/mask_sweep_cli.rs`.
+            config: crate::recording_config::recording_detector_config(),
         },
         detector,
     )
@@ -379,6 +383,20 @@ fn render_document(
     let _ = writeln!(
         body,
         "- **Rescue policy:** `resolve_fallback(selection, mask_max_standard_deviation, true)` (measured independently of T4 configuration).\n"
+    );
+    // §16.46 item 8(a): the mask-refine mode is rendered from `recording_detector_config()`
+    // -- the same deterministic constructor `measure_page` builds its `DetectInput` from, so
+    // the two agree by construction. This is a second call to that constructor, not a read
+    // of the config the run consumed; `the_rendered_report_states_the_pinned_mask_refine_mode`
+    // is what keeps the rendered value pinned. Before this the report named no mode at all,
+    // so a reader could not tell which refinement produced the ladder below -- and a
+    // shipped-default change would have moved every number here with nothing saying so.
+    let _ = writeln!(
+        body,
+        "- **Mask-refine mode:** `{}` (§16.46 item 8: pinned for report and recording paths, not inherited from the shipped default).",
+        crate::recording_config::mode_display(
+            crate::recording_config::recording_detector_config().mask_refine_mode
+        )
     );
     body.push_str(detector_provenance.trim_end());
     body.push_str("\n\n## 2. Summary\n\n");
@@ -514,5 +532,24 @@ mod tests {
         assert!(document.contains("- **Method:** method"));
         assert!(document
             .contains("| page | 0 | 0 | 12.345679 | 0 | 12.345679 | accepted | [12.345679] |"));
+    }
+
+    /// §16.46 item 8(a): the report must state the mask-refine mode it ran under, and state
+    /// the PINNED one rather than whatever `TextDetectorConfig::default()` currently is.
+    ///
+    /// The expectation is the literal `MaskRefineMode::Simple` — a hard-coded value, not
+    /// `mode_display(recording_detector_config().mask_refine_mode)`, which would be the code
+    /// under test compared against itself (cookbook rule 1). Once §16.46 item 1(a) makes
+    /// `Annotation` the shipped default, this literal is what distinguishes "renders the pin"
+    /// from "renders the default"; until then it still proves a mode is stated at all, which
+    /// this report previously did not do.
+    #[test]
+    fn the_rendered_report_states_the_pinned_mask_refine_mode() {
+        let sweep = Sweep::default();
+        let document = render_document(&sweep, "reviewer", "2026-08-05", "method", "provenance");
+        assert!(
+            document.contains("- **Mask-refine mode:** `MaskRefineMode::Simple`"),
+            "the report must name the mode it ran under: {document}"
+        );
     }
 }

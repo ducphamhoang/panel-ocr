@@ -247,13 +247,15 @@ pub enum CacheCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ModelsCommand {
-    /// Download the required detector/OCR models into the managed cache, repairing entries with mismatched digests. Requires network access; the detector model is about 90 MB. No `onnx` feature or ONNX Runtime is required.
+    /// Download the required detector/OCR/inpainting models into the managed cache, repairing entries with mismatched digests. Requires network access; 763,086,911 bytes in total (~763 MB) across all four required models — detector 95 MB, OCR encoder 343 MB, OCR decoder 117 MB, LaMa inpainter 207 MB. No `onnx` feature or ONNX Runtime is required.
     Download {
         /// Cache directory override (spec §16.12 item 21).
         #[arg(long, value_name = "DIR", hide = true)]
         cache_dir: Option<PathBuf>,
-        /// Also fetch optional models (the ~207 MB LaMa inpainting weights). Spec §13.1 as
-        /// superseded by §16.38 item 19. Visible on purpose, unlike `--cache-dir`.
+        /// Also fetch optional models. No model is currently optional -- the LaMa inpainting
+        /// weights became required with §16.46 item 11(b) -- so this fetches nothing extra
+        /// today. Spec §13.1 as superseded by §16.38 item 19 and §16.46 item 11(c). Visible on
+        /// purpose, unlike `--cache-dir`.
         #[arg(long)]
         include_optional: bool,
     },
@@ -263,7 +265,8 @@ pub enum ModelsCommand {
         #[arg(long, value_name = "DIR", hide = true)]
         cache_dir: Option<PathBuf>,
         /// Also report optional models. An absent optional model is reported and is not a
-        /// failure; a corrupt one still is. Spec §13.1 as superseded by §16.38 item 19.
+        /// failure; a corrupt one still is. No model is currently optional (§16.46 item
+        /// 11(b)/(c)), so this adds no row today. Spec §13.1 as superseded by §16.38 item 19.
         #[arg(long)]
         include_optional: bool,
     },

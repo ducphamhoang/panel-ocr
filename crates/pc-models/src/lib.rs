@@ -81,15 +81,32 @@ pub const MANGA_OCR_DECODER: ModelSpec = ModelSpec {
 /// provenance chain is a *string match* on the republisher's declared
 /// `source_checkpoint`, not numerical equivalence at any tolerance (§16.38 item 6(a)).
 ///
-/// `Requirement::Optional` because `inpainting_enabled` defaults to `false` (§6,
-/// `config.py:817`) and the artifact is 207,482,644 bytes: §16.38 item 19 forbids growing
-/// every user's `models download` by that much for a feature that defaults off.
+/// **`Requirement::Required` as of §16.46 item 11(b).** It was `Optional`, on the ground
+/// that *"`inpainting_enabled` defaults to `false` … §16.38 item 19 forbids growing every
+/// user's `models download` by that much for a feature that defaults off"* — and §16.46
+/// item 1(b) turns inpainting on by default, which retires that ground entirely.
+///
+/// **What the promotion buys, stated as the failure it prevents.** With the flag on and this
+/// artifact absent, the first page carrying an eligible region aborts the whole batch: the
+/// provider declares its construction failures run-fatal, so §16.38 item 9(f)'s outcome is
+/// *"**zero** pages are exported and the exit code is 1"*. Item 9(f) accepted that on the
+/// explicit ground that *"the blast radius is confined to users who explicitly set the flag,
+/// since it defaults to false"* — a sentence §16.46 item 11(a) supersedes. Leaving this
+/// `Optional` would therefore have made a run-fatal abort the DEFAULT first-run experience
+/// for anyone who had not passed `--include-optional`, while `models download` reported
+/// success and `models verify` reported OK.
+///
+/// **The cost, not minimised:** every user's `models download` grows by 207,482,644 bytes.
+/// Two alternatives were put to the maintainer and declined — leaving it optional and
+/// accepting the abort, and degrading to a flat fill with a WARN (which contradicts §16.38
+/// item 9's *"The remedy is provisioning, not a runtime fallback"* and would need its own
+/// ratification). §16.46 item 11(b) records the choice.
 pub const LAMA_MANGA_INPAINTER: ModelSpec = ModelSpec {
     name: "lama-manga-inpainter",
     file_name: "lama-manga.onnx",
     url: "https://huggingface.co/mayocream/koharu/resolve/15439cba09df388c51de6e47c6020bc31edab41f/lama-manga.onnx",
     sha256: "50a1abae0d73bd46d08eae36c8590cd59ad09029494c9698702b050ef00b0100",
-    requirement: Requirement::Optional,
+    requirement: Requirement::Required,
 };
 
 /// The registry exposed to model-management callers.

@@ -8,8 +8,8 @@ mod common;
 use common::{FAKE_SPEC, PAYLOAD, PAYLOAD_SHA256};
 use pc_core::StageError;
 use pc_models::{
-    resolve, sha256_hex, verify_sha256, ModelError, Requirement, Resolution, COMIC_TEXT_DETECTOR,
-    LAMA_MANGA_INPAINTER, MANGA_OCR_DECODER, MANGA_OCR_ENCODER,
+    resolve, sha256_hex, verify_sha256, ModelError, Requirement, Resolution, VerifyStatus,
+    COMIC_TEXT_DETECTOR, LAMA_MANGA_INPAINTER, MANGA_OCR_DECODER, MANGA_OCR_ENCODER,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -129,13 +129,14 @@ fn the_required_optional_partition_is_pinned_by_name() {
             "comic-text-detector",
             "manga-ocr-encoder",
             "manga-ocr-decoder",
+            "lama-manga-inpainter",
         ]),
-        "the three models a default run needs must all be Required"
+        "§16.46 item 11(b): every model a DEFAULT run needs must be Required, and item 1(b) turns inpainting on by default, so that now includes the LaMa weights"
     );
     assert_eq!(
         names_at(Requirement::Optional),
-        BTreeSet::from(["lama-manga-inpainter"]),
-        "the 207 MB inpainting weights must be the only Optional entry"
+        BTreeSet::new(),
+        "§16.46 item 11(c): the Optional side is now EMPTY -- the partition machinery and the `--include-optional` flag stay in place, per that item, with no member"
     );
 
     // Anti-vacuity: a hard-coded total that cannot be computed from the registry, so the
@@ -147,7 +148,7 @@ fn the_required_optional_partition_is_pinned_by_name() {
     assert_eq!(COMIC_TEXT_DETECTOR.requirement, Requirement::Required);
     assert_eq!(MANGA_OCR_ENCODER.requirement, Requirement::Required);
     assert_eq!(MANGA_OCR_DECODER.requirement, Requirement::Required);
-    assert_eq!(LAMA_MANGA_INPAINTER.requirement, Requirement::Optional);
+    assert_eq!(LAMA_MANGA_INPAINTER.requirement, Requirement::Required);
 }
 
 #[test]
@@ -155,15 +156,21 @@ fn download_without_the_flag_selects_exactly_the_required_models() {
     // §16.38 item 19(b): `models download` with no flag fetches only `Required` models.
     // The set is written out literally rather than derived from `Requirement::Required`,
     // so this cannot pass by `selected` and `names_at` sharing one bug.
+    //
+    // §16.46 item 11(b) makes that set ALL FOUR entries: a fresh install's plain
+    // `models download` now fetches the 207,482,644-byte LaMa artifact. That is the point of
+    // the promotion -- inpainting is on by default, so a run that cannot reach the weights
+    // aborts the whole batch (§16.38 item 9: exit 1, zero pages exported).
     assert_eq!(
         names_of(&pc_models::selected(false)),
         BTreeSet::from([
             "comic-text-detector",
             "manga-ocr-encoder",
             "manga-ocr-decoder",
+            "lama-manga-inpainter",
         ])
     );
-    assert_eq!(pc_models::selected(false).len(), 3);
+    assert_eq!(pc_models::selected(false).len(), 4);
 }
 
 #[test]
@@ -182,14 +189,48 @@ fn download_with_the_flag_selects_every_registry_entry() {
 }
 
 #[test]
-fn the_skipped_set_names_the_optional_models_and_is_empty_under_the_flag() {
-    // §16.38 item 19(c): `models download` must NAME what it left out, so the caller needs
-    // a list of it — an empty list under the flag, the optional entry without.
-    assert_eq!(
-        names_of(&pc_models::skipped(false)),
-        BTreeSet::from(["lama-manga-inpainter"])
-    );
+fn the_skipped_set_is_empty_at_both_flag_settings_now_that_nothing_is_optional() {
+    // §16.38 item 19(c) requires `models download` to NAME what it left out. §16.46 item
+    // 11(c) empties the Optional side, so it now leaves out nothing at either setting.
+    //
+    // A COVERAGE LOSS, recorded rather than hidden: with no Optional entry in the real
+    // registry, `skipped`'s non-empty branch and `models download`'s "SKIPPED (optional)"
+    // line are no longer exercised by anything that goes through `ALL`, and
+    // `--include-optional` is a no-op for every current entry. The machinery is kept
+    // deliberately (§16.46 item 11(c)) against a future optional model; it is simply
+    // unexercised until there is one. `selected_and_skipped_partition_the_whole_registry_at_both_flag_settings`
+    // still holds and is now the only thing binding the two functions together over `ALL`.
+    // The Optional SEMANTICS are not lost with it: `l3_verify.rs` drives `VerifyStatus::absent`
+    // and the whole verify path through SYNTHETIC `Required`/`Optional` specs, so the
+    // non-failing-absence branch stays covered by tests that never read `ALL`.
+    assert_eq!(names_of(&pc_models::skipped(false)), BTreeSet::new());
     assert_eq!(names_of(&pc_models::skipped(true)), BTreeSet::new());
+}
+
+#[test]
+fn an_absent_lama_artifact_now_fails_models_verify_instead_of_being_reported_as_optional() {
+    // §16.46 item 11(b), the user-visible half of the promotion. This is the behaviour the
+    // promotion exists for, and it is asserted through the REAL registry entry rather than a
+    // synthetic spec, because what changed is that entry's `requirement` field.
+    //
+    // `VerifyStatus::absent` is the one place `Requirement` reaches the verify policy, and
+    // `pc-cli`'s `run_models` sets `all_ok = false` on any `is_failure()` status and returns
+    // `EXIT_FATAL`. So this pair is what makes `panel-ocr models verify` exit non-zero on a
+    // machine that never fetched the weights -- where before the promotion the row read
+    // "NOT INSTALLED (optional)" and the command exited 0.
+    //
+    // Turns red if the entry is demoted back to `Optional` without a ratification, or if
+    // `absent` stops routing `Required` to a failing status.
+    let status = VerifyStatus::absent(LAMA_MANGA_INPAINTER.requirement);
+    assert_eq!(status, VerifyStatus::Missing);
+    assert!(status.is_failure());
+    assert_eq!(status.label(), "MISSING");
+
+    // The control, so the assertions above are not satisfied by an `absent` that fails for
+    // every requirement: the other arm must still be the non-failing one.
+    let optional = VerifyStatus::absent(Requirement::Optional);
+    assert_eq!(optional, VerifyStatus::NotInstalled);
+    assert!(!optional.is_failure());
 }
 
 #[test]

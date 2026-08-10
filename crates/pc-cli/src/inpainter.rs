@@ -9,8 +9,15 @@
 //! latch. It does **not** wire anything into `pc-pipeline`: `Step::Inpaint`, the cache
 //! suffixes, `ExportSources` and `--skip-inpaint` are all L6 (§16.38 item 16(e)), so nothing
 //! here has a caller yet — the same "added now, unwired" shape item 19(g) used for
-//! [`crate::models::models_download_optional_command`], which this module is the first caller
-//! of.
+//! [`crate::models::models_download_optional_command`].
+//!
+//! **That last cross-reference is historical: this module is no longer a caller of it.**
+//! §16.46 item 11(b) promoted the LaMa weights to `Requirement::Required`, so both refusal
+//! paths below name the plain `models_download_command` instead — pointing a user at
+//! `--include-optional` for a required artifact would send them to a flag they do not need.
+//! `models::models_download_optional_command` now has no production caller at all, which its
+//! own doc records; the two statements are kept consistent deliberately, because an earlier
+//! version of this paragraph contradicted it.
 
 use pc_core::device::Device;
 use pc_core::StageError;
@@ -75,8 +82,11 @@ type InitHook = Box<dyn Fn() -> Result<Arc<dyn Inpainter>, String> + Send + Sync
 // refusal for the whole run.
 //
 // The config flag alone would NOT force this — it forces conditionality, and §16.38 item 8(b)
-// says so explicitly: an eager-but-flag-gated construction already avoids the 207 MB download
-// for every default run, since `inpainting_enabled` defaults to false. What forces laziness is
+// said so explicitly on a premise that has since moved: an eager-but-flag-gated construction
+// already avoided the 207 MB download for every default run *while* `inpainting_enabled`
+// defaulted to false. It defaults to TRUE as of §16.46 item 1(b) (registered `DEVIATION(30)`),
+// so that argument no longer covers a default run at all — which strengthens rather than
+// weakens the case for laziness below. What forces laziness is
 // item 8(c): a batch may have `inpainting_enabled = true` and ZERO eligible regions on every
 // page — upstream's own `if boxes_to_inpaint:` guard at `inpainting.py:131` shows the empty
 // case is expected rather than pathological — and such a run must not pay a 207 MB download
@@ -128,7 +138,7 @@ impl OnnxInpainterProvider {
         }
     }
 
-    /// Resolve the optional LaMa artifact and **verify its digest**, then build the session.
+    /// Resolve the LaMa artifact and **verify its digest**, then build the session.
     fn initialize(&self) -> Result<Arc<dyn Inpainter>, String> {
         #[cfg(test)]
         {
@@ -157,14 +167,21 @@ impl OnnxInpainterProvider {
     /// instead of trusting the last `models verify`: *"L5's inpainter runtime path must
     /// independently verify the LaMa artifact's integrity before use, regardless of what
     /// `models verify` last reported, so a corrupt optional model yields a run-fatal refusal at
-    /// the stage rather than corrupted inpainting"*. That is what makes the same item's
+    /// the stage rather than corrupted inpainting"*. That is what made the same item's
     /// accepted tradeoff — a plain `models verify` not reporting an `Optional` row at all —
     /// low-severity, so this check is load-bearing for a ratified decision and not belt-and-
     /// braces.
     ///
-    /// A **missing** artifact names `--include-optional` (item 19(g)); a **corrupt** one does
-    /// not get to be optional at all (item 19(d): *"optionality licenses **absence only, never
-    /// corruption**"*).
+    /// **The optionality that framing rests on is gone; the check is not.** §16.46 item 11(b)
+    /// promoted this artifact to `Requirement::Required`, so a plain `models verify` does
+    /// report it and the tradeoff above has no live instance. The hash check stays exactly as
+    /// ruled: item 19(b) grounds it on not trusting a *stale* `models verify`, which is
+    /// independent of the row's requirement class.
+    ///
+    /// A **missing** artifact therefore names the plain `models download` and NOT
+    /// `--include-optional` — see the arm below, which item 19(g) predates. A **corrupt** one
+    /// was never licensed by optionality in the first place (item 19(d): *"optionality
+    /// licenses **absence only, never corruption**"*).
     fn resolve_model(&self) -> Result<PathBuf, String> {
         let models_dir = crate::paths::models_dir(&self.cache_root);
         let spec = &pc_models::LAMA_MANGA_INPAINTER;
@@ -183,10 +200,16 @@ impl OnnxInpainterProvider {
         match resolution {
             // An explicit path is the user's own artifact; existence-checked, not hashed.
             pc_models::Resolution::Override(path) => Ok(path),
+            // §16.46 item 11(b): the LaMa artifact is `Requirement::Required`, so a plain
+            // `models download` fetches it and the word "optional" no longer describes it.
+            // Naming `--include-optional` here would send the user to a flag they do not
+            // need -- and `models_download_optional_command`'s own doc gives the mirror of
+            // that reason for keeping the two commands separate: "a required model's refusal
+            // must never suggest a flag that fetches 207 MB the user did not ask for."
             pc_models::Resolution::Missing(path) => Err(format!(
-                "the optional LaMa inpainting model is missing at `{}`; run `{}`",
+                "the LaMa inpainting model is missing at `{}`; run `{}`",
                 path.display(),
-                crate::models::models_download_optional_command(Some(&self.cache_root))
+                crate::models::models_download_command(Some(&self.cache_root))
             )),
             pc_models::Resolution::Cached(path) => {
                 match pc_models::verify_sha256(&path, spec.sha256) {
@@ -199,7 +222,9 @@ impl OnnxInpainterProvider {
                         "inpainting model sha256 mismatch for `{}`: expected {expected}, \
                          actual {actual}; run `{}`",
                         path.display(),
-                        crate::models::models_download_optional_command(Some(&self.cache_root))
+                        // §16.46 item 11(b), same reason as the missing-artifact arm above:
+                        // a required model's recovery command is the plain download.
+                        crate::models::models_download_command(Some(&self.cache_root))
                     )),
                     Err(error) => Err(error.to_string()),
                 }
@@ -411,10 +436,12 @@ mod tests {
             0,
             "eager construction would defeat item 8(c)"
         );
-        // And the flag being off yields no provider at all, so a default run cannot even ask.
+        // And the flag being off yields no provider at all, so a run that has opted out with
+        // `inpainting_enabled = false` cannot even ask. (That is the opt-out, not the default:
+        // §16.46 item 1(b) supersedes §16.38 item 13(a)'s `false` and ships the flag ON.)
         assert!(
             build_provider(false, None, cache.path(), Device::Cpu).is_none(),
-            "`inpainting_enabled = false` (the §16.38 item 13(a) default) means no provider"
+            "`inpainting_enabled = false` (the §16.46 item 1(c) opt-out) means no provider"
         );
         assert!(build_provider(true, None, cache.path(), Device::Cpu).is_some());
     }

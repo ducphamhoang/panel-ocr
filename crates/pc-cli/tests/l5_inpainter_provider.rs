@@ -1,9 +1,15 @@
 //! Task **L5** — the inpainting provider's refusals, as a user reads them.
 //!
 //! These are integration tests on purpose: the messages here are the *only* thing a user sees
-//! when an opt-in 207 MB artifact is absent or corrupt, and §16.38 item 19(b)'s ruling makes
-//! this runtime check the reason a plain `models verify` is allowed to omit the optional row
+//! when the 207 MB LaMa artifact is absent or corrupt, and §16.38 item 19(b)'s ruling makes
+//! this runtime check the reason a plain `models verify` is allowed to omit an optional row
 //! at all. A test on a private helper would not prove the message reaches the boundary.
+//!
+//! That artifact is no longer optional: §16.46 item 11(b) promoted it to
+//! `Requirement::Required`, so a plain `models download` fetches it and `models verify`
+//! reports it as a required row. The runtime check below is unchanged by the promotion —
+//! item 19(d)'s *"optionality licenses **absence only, never corruption**"* was never what
+//! made the corrupt-file leg necessary.
 //!
 //! The latch itself is unit-tested next to its `OnceLock`, in
 //! `crates/pc-cli/src/inpainter.rs`, because the attempt counter it asserts on is deliberately
@@ -14,8 +20,11 @@ use pc_core::device::Device;
 use pc_core::StageError;
 use tempfile::TempDir;
 
-/// §16.38 item 13(a): `inpainting_enabled` defaults to `false`. A default run must not even
-/// have a provider to ask, which is what keeps item 8(c)'s "inpaint nothing" run free.
+/// §16.38 item 13(a) as superseded by §16.46 items 1(b) and 10: `inpainting_enabled` now
+/// defaults to `true`, so `false` is the opt-out rather than the default. A run that has
+/// opted out must not even have a provider to ask, which is what keeps item 8(c)'s
+/// "inpaint nothing" run free. Both legs pass their flag explicitly, so neither depends on
+/// which value ships.
 #[test]
 fn the_disabled_flag_yields_no_provider_at_all_rather_than_one_that_refuses() {
     let cache = TempDir::new().expect("temp dir");
@@ -49,16 +58,23 @@ fn every_provider_this_build_can_produce_declares_its_construction_failures_run_
     assert!(matches!(error, StageError::Model(_)), "got {error:?}");
 }
 
-/// §16.38 item 19(g): the refusal hint for the **optional** artifact must name
-/// `--include-optional`, because *"a user who has enabled `inpainting_enabled` and run
-/// `models download` must not be left inferring why the stage still refuses"* (item 19(c)).
+/// §16.38 item 19(g) as amended by §16.46 item 11(b): the refusal hint must name the command
+/// that actually fetches the artifact, because *"a user who has enabled `inpainting_enabled`
+/// and run `models download` must not be left inferring why the stage still refuses"*
+/// (item 19(c)).
 ///
-/// The expected substring comes from `pc_cli::models::models_download_optional_command`, which
-/// is the function item 19(g) landed for exactly this caller — an independent oracle rather
-/// than a second copy of the string.
+/// **Value correction, 2026-08-10.** This asserted the hint named `--include-optional`, which
+/// was right while the LaMa weights were `Requirement::Optional` and became wrong the moment
+/// D3 promoted them: a plain `models download` now fetches them, so the flag is advice the
+/// user does not need. The assertion's subject is the promotion itself, which is why this is
+/// the same class as §16.46 item 13(a)'s pre-authorised corrections.
+///
+/// The expected substring comes from `pc_cli::models::models_download_command` — an
+/// independent oracle rather than a second copy of the string — and the negative leg is what
+/// makes the correction real rather than merely renamed.
 #[test]
 #[cfg(feature = "onnx")]
-fn a_missing_optional_model_refuses_by_naming_the_include_optional_download() {
+fn a_missing_required_model_refuses_by_naming_the_plain_download() {
     let cache = TempDir::new().expect("temp dir");
     let provider =
         build_provider(true, None, cache.path(), Device::Cpu).expect("the flag is enabled");
@@ -71,8 +87,12 @@ fn a_missing_optional_model_refuses_by_naming_the_include_optional_download() {
         panic!("a missing model is run-fatal `Model`; got {error:?}");
     };
     assert!(
-        message.contains("--include-optional"),
-        "the hint must name the flag that fetches it; got {message}"
+        message.contains(&pc_cli::models::models_download_command(Some(cache.path()))),
+        "the hint must name the command that fetches it; got {message}"
+    );
+    assert!(
+        !message.contains("--include-optional"),
+        "and must NOT send the user to a flag a required model does not need; got {message}"
     );
     assert!(
         message.contains("lama-manga.onnx"),

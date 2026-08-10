@@ -205,16 +205,28 @@ impl Default for TextDetectorConfig {
         }
     }
 }
-/// spec §8.3 step 5 / §15.2. Simple remains the shipped default; `Annotation` is
-/// accepted by config and opts into upstream refinement. The default remains a deliberate divergence from upstream's
-/// unconditional refinement.
+/// spec §8.3 step 5 / §15.2, as superseded by §16.46 items 1(a), 2 and 4. `Annotation` is
+/// the shipped default and is upstream's own unconditional refinement; `Simple` stays
+/// selectable as the opt-out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MaskRefineMode {
-    /// DEVIATION(12): the shipped default is `Simple`; parity is reachable only by opting in
-    /// with `mask_refine_mode = "annotation"`.
-    #[default]
+    /// koharu's refinement, and a deliberate v1 addition upstream has no equivalent of. It is
+    /// the opt-out, reached with `mask_refine_mode = "simple"`.
+    ///
+    /// **`DEVIATION(12)` is RETIRED here (§16.46 item 2).** The entry's only remaining
+    /// content was the default-value divergence — *"the shipped default is `Simple`, so a
+    /// default run diverges from upstream's unconditional refinement"* — and item 1(a)
+    /// removes it. The §14 register keeps the entry, marked retired and dated, so a future
+    /// reader sees that the rule changed rather than that it never existed. Retiring it does
+    /// NOT claim parity in every respect: this mode still exists and upstream has no
+    /// equivalent, which §16.46 item 2(b) leaves as an open register question.
     Simple,
+    /// Upstream's `refine_mask` + `refine_undetected_mask`, run unconditionally as upstream
+    /// does. Its run-to-run and thread-count determinism on the recorded page is the A5 gate
+    /// (`crates/pc-detect/tests/a5_annotation_determinism.rs`), which §16.46 item 9 made a
+    /// precondition for this variant becoming the default.
+    #[default]
     Annotation,
 }
 
@@ -435,7 +447,12 @@ impl InpainterConfig {
 impl Default for InpainterConfig {
     fn default() -> Self {
         Self {
-            inpainting_enabled: false,
+            // DEVIATION(30) (§16.46 items 1(b) and 10): upstream's `config.py:817` dataclass
+            // default is `False`, and this is the one value in this block that deliberately
+            // diverges from it. The other seven are upstream's. §16.46 item 11 records the
+            // consequence: the LaMa artifact is promoted to `Requirement::Required`, so a
+            // default-on inpainter cannot abort a fresh install that never fetched it.
+            inpainting_enabled: true,
             inpainting_min_std_dev: 15.0,
             inpainting_max_mask_radius: Self::DEFAULT_MAX_MASK_RADIUS,
             min_inpainting_radius: 7,
