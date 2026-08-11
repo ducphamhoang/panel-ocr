@@ -42,7 +42,14 @@ const MARKER: &str = "**SUPERSEDES:";
 // message, now superseded in full rather than in part; §16.47 item 6's "inpainter half is
 // untouched" claim; §16.48 item 2's shipped LaMa refusal message, which no longer exists;
 // §16.48 item 3's prediction, now fulfilled).
-const EXPECTED_PARSED_CLAIMS: usize = 71;
+// §16.50 raises it from 71 to 76: one marker naming five targets (§16.23 item 1's v1.5
+// scope list, narrowed to drop legacy INI import/Lab NLM/PSD/DBNet lines; §16.38 items
+// 7(c) and 15(f), whose "remain in v1.5 scope"/"ships legacy INI import at v1.5" clauses
+// went stale for INI import and Lab NLM specifically -- found by a step-1a fresh-reader
+// pass, not in the original draft; §16.47 item 11's and §16.49 item 7's merge-policy
+// sentences, both corrected to drop the "rest of the v1.5 backlog" precondition) -- the
+// maintainer's direct decision to defer those four items and close v1.5 on GPU-2/3/4 alone.
+const EXPECTED_PARSED_CLAIMS: usize = 76;
 
 /// Claims whose declared sub-item identity must scope the target-side back-pointer independently.
 /// Most historical lettered claims retain §16.26 item 3(a)'s parent-item span. These two are pinned
@@ -425,6 +432,16 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.49", "16.47 item 6"),
     ("16.49", "16.48 item 2"),
     ("16.49", "16.48 item 3"),
+    // §16.50's one marker, five targets: the maintainer's direct decision to defer legacy
+    // INI import/Lab NLM/PSD/DBNet lines and close v1.5 on GPU-2/3/4 alone. §16.38 items
+    // 7(c)/15(f) added by a step-1a fresh-reader pass (B2), which found the original draft
+    // only corrected §16.23/§16.47/§16.49 and missed two further sites making the same
+    // now-false "still v1.5 scope" claim. Raises EXPECTED_PARSED_CLAIMS from 71 to 76.
+    ("16.50", "16.23 item 1"),
+    ("16.50", "16.38 item 7(c)"),
+    ("16.50", "16.38 item 15(f)"),
+    ("16.50", "16.47 item 11"),
+    ("16.50", "16.49 item 7"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.

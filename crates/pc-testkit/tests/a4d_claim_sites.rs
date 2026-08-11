@@ -253,8 +253,14 @@ const ABSENT: &[Site] = &[
         text: "DEVIATION(12): v1 ships",
     },
     Site {
+        // Re-pinned 2026-08-11 (v1.5 closure + README rewrite, §16.50): the old "in
+        // progress" v1.5 checklist this ABSENT row guarded against is gone entirely --
+        // Annotation shipped at v1.2 and the checklist item never described v1.5 scope in
+        // the current README anyway. Vacuously true at any line lacking the exact text,
+        // same discipline this file already documents for other ABSENT rows; pointed at
+        // the line that now carries Annotation's real, shipped status for meaningfulness.
         path: "README.md",
-        line: 102,
+        line: 289,
         text: "[ ] `Mask RefineMode::Annotation`",
     },
     Site {
@@ -320,6 +326,10 @@ const ABSENT: &[Site] = &[
         // section reframed around opting OUT. Before this pair, the only README row in this gate
         // was the `### v2` heading, which asserts nothing about defaults — so the one artifact an
         // end user actually reads was ungated for exactly the claim D4 exists to correct.
+        // Re-pinned 2026-08-11 (v1.5 closure + README rewrite, §16.50): README restructured
+        // (new Prerequisites/GPU acceleration/FAQ sections inserted above this point).
+        // Content at line 76 changed, but the checked-absent text never occurred anywhere
+        // in the file either before or after -- vacuously true either way.
         path: "README.md",
         line: 76,
         text: "### Getting the best cleaning quality",
@@ -374,8 +384,11 @@ const ABSENT: &[Site] = &[
         //   → 3909 (2026-08-10, Senior Rust Engineer, mechanical — the §16.46
         //     shipped-defaults ratification plus its ten supersession back-pointers,
         //     inserted above this point). Re-derived by content, not by adding a delta.
+        //   → 3913 (2026-08-11, §16.50's back-pointer at §16.23 item 1 inserted above
+        //     this point; re-derived by content — the ABSENT check still holds vacuously
+        //     at the new line, same as the existing note above documents for prior shifts).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3911,
+        line: 3913,
         text: "**Annotation** last",
     },
 ];
@@ -533,8 +546,10 @@ const PRESENT: &[Site] = &[
         //   → 3852 (2026-08-10, Senior Rust Engineer, mechanical — the §16.46
         //     shipped-defaults ratification plus its ten supersession back-pointers,
         //     inserted above this point). Re-derived by content, not by adding a delta.
+        //   → 3856 (2026-08-11, §16.50's back-pointer at §16.23 item 1 inserted above
+        //     this point; re-derived by content, single occurrence confirmed).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3854,
+        line: 3856,
         text: "Historical sequencing (2026-07-29)",
     },
     Site {
@@ -544,8 +559,10 @@ const PRESENT: &[Site] = &[
         //   → 3871 (2026-08-10, Senior Rust Engineer, mechanical — the §16.46
         //     shipped-defaults ratification plus its ten supersession back-pointers,
         //     inserted above this point). Re-derived by content, not by adding a delta.
+        //   → 3875 (2026-08-11, §16.50's back-pointer at §16.23 item 1 inserted above
+        //     this point; re-derived by content, single occurrence confirmed).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3873,
+        line: 3875,
         text: "§16.39 subsequently landed the path",
     },
     Site {
@@ -555,8 +572,10 @@ const PRESENT: &[Site] = &[
         //   → 3916 (2026-08-10, Senior Rust Engineer, mechanical — the §16.46
         //     shipped-defaults ratification plus its ten supersession back-pointers,
         //     inserted above this point). Re-derived by content, not by adding a delta.
+        //   → 3920 (2026-08-11, §16.50's back-pointer at §16.23 item 1 inserted above
+        //     this point; re-derived by content, single occurrence confirmed).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3918,
+        line: 3920,
         text: "historical final step; §16.39 subsequently landed it",
     },
     Site {
@@ -621,8 +640,19 @@ const PRESENT: &[Site] = &[
         //     unmarked as superseded, and item 4's enumeration omitted DETECTOR_DEVICE_MECHANISM)
         //     plus six non-blocking corrections fixed, net lines added above this point;
         //     re-derived by content, single occurrence confirmed).
+        //   → 9515 (2026-08-11, §16.50 inserted above this point -- the maintainer's direct
+        //     decision to defer legacy INI import/Lab NLM/PSD/DBNet lines and close v1.5 on
+        //     GPU-2/3/4 alone; re-derived by content, single occurrence confirmed).
+        //   → 9517 (2026-08-11, same task -- the `## 16. Summary of what v1 is NOT` heading
+        //     was accidentally deleted by the §16.50 edit and restored 2 lines further down;
+        //     re-derived by content, single occurrence confirmed).
+        //   → 9523 (2026-08-11, same task -- the step-1a fresh-reader pass's two blocking
+        //     findings (B1: a truncated §16.23 quote read as narrowing the whole list rather
+        //     than four clauses; B2: two more "still v1.5 scope" sites found unmarked) plus
+        //     five non-blocking corrections fixed, net lines added above this point;
+        //     re-derived by content, single occurrence confirmed).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 9495,
+        line: 9523,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {
@@ -635,15 +665,21 @@ const PRESENT: &[Site] = &[
         //     2026-08-05, verified against git — checking the box and adding the
         //     shipped-date note added one net line above this point). Re-derived by
         //     content: exactly one hit.
+        //   → 328 (2026-08-11, v1.5 closure + README rewrite, §16.50: new Prerequisites,
+        //     GPU acceleration, and FAQ sections inserted above this point; the v2 heading
+        //     is unchanged content, just moved further down). Re-derived by content:
+        //     exactly one hit.
         path: "README.md",
-        line: 190,
+        line: 328,
         text: "### v2",
     },
     Site {
         // Added 2026-08-10 (D4): pairs with the ABSENT row at this same line, and is the only
         // row in this gate asserting anything about README's default-related PROSE.
+        //   → 95 (2026-08-11, v1.5 closure + README rewrite, §16.50: a new Prerequisites
+        //     section inserted above this point). Re-derived by content: exactly one hit.
         path: "README.md",
-        line: 76,
+        line: 95,
         text: "### Opting out of the default refinement and inpainting",
     },
     Site {
