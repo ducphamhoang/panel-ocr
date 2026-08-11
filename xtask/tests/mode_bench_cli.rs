@@ -21,6 +21,8 @@ const REPLAY_STEM: &str = "ja_Pepper-and-Carrot_by-David-Revoy_E01P01";
 /// `pc_core::device::DeviceRefusal::NotCompiledIn { requested: Cuda }`'s message, copied
 /// character-for-character from `crates/pc-core/src/device.rs`. Hard-coded rather than
 /// imported so this asserts the *text a user sees*, not that two call sites agree.
+/// GPU-2 (§16.47 item 10): used only by the `not(feature = "cuda")` test below.
+#[cfg(not(feature = "cuda"))]
 const CUDA_REFUSAL: &str = "the cuda execution provider is not available in this build (panel-ocr was compiled without the `cuda` feature, so no CUDA execution provider is linked in). Rebuild with `--features cuda`, or set `device = \"cpu\"` under `[general]` in your profile to run on the CPU execution provider.";
 
 /// The one device statement §16.43 item 6 requires verbatim, for `--device cpu`.
@@ -89,9 +91,13 @@ fn replay_mode_writes_a_report_with_the_ratified_structure() {
     // §16.43 item 6: one device statement, verbatim, once.
     assert_eq!(document.matches(CPU_DEVICE_STATEMENT).count(), 1);
     assert_eq!(document.matches("device: requested").count(), 1);
+    // §16.47 item 6: corrects the sentence above, false since G2-C's real detector CUDA
+    // registration landed.
     assert!(document.contains(
-        "its session constructor takes no device argument at all — device reaches the \
-         detector path only as an up-front refusal, never as a registration"
+        "its session constructor takes the resolved device policy directly and attempts \
+         real registration when a provider is requested — refusal now happens only when \
+         the stage has no ratified path for the requested device (§16.47 item 4), not as \
+         a substitute for registration"
     ));
 
     // D1's default cell set, present as rows — identity, not a count.
@@ -130,6 +136,12 @@ fn replay_mode_writes_a_report_with_the_ratified_structure() {
     assert!(document.contains("does **not** close §16.38 item 17(b) decision point D2"));
 }
 
+// §16.47 item 6: scoped to "a build with no cuda feature", per this test's own text
+// below — stays correct and unedited for the default tier. Gated because Cargo's
+// feature unification turns `pc_core::device::DeviceSupport::compiled()` into
+// `WITH_CUDA` inside xtask's own binary too once `xtask/cuda` is selected (item 9's
+// gate), at which point this test's premise (CUDA is never resolvable here) is false.
+#[cfg(not(feature = "cuda"))]
 #[test]
 fn cuda_is_a_hard_refusal_carrying_pc_cores_own_message_and_writes_no_report() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -157,6 +169,37 @@ fn cuda_is_a_hard_refusal_carrying_pc_cores_own_message_and_writes_no_report() {
     assert!(
         !report.exists(),
         "a refused run still wrote a report — the downgrade this forbids happened silently"
+    );
+}
+
+/// §16.47 item 6's replacement for the `cuda`-feature tier: `--replay` never builds a
+/// real session for any device (it uses `ReplayDetector`/mock, and never attempts LaMa
+/// acquisition per §16.44's ruling), so a resolvable-but-unexercised CUDA policy changes
+/// only the disclosed device text, never whether the run succeeds — mirroring the
+/// `cpu_is_accepted_...` control below. Do NOT assert a registration-failure string:
+/// that is a property of the running machine's CUDA/cuDNN installation, not this
+/// codebase (§16.47 item 8's manual verification covers that, separately).
+#[cfg(feature = "cuda")]
+#[test]
+fn cuda_is_accepted_under_replay_once_resolvable_and_writes_a_report() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let report = temp.path().join("MODE_COMPARISON.md");
+    let result = xtask(&[
+        "mode-bench",
+        "--replay",
+        "--device",
+        "cuda",
+        "--out",
+        report.to_str().expect("utf-8 report path"),
+    ]);
+    assert!(
+        result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(
+        report.exists(),
+        "a resolvable cuda policy under --replay must still write a report"
     );
 }
 

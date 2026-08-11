@@ -46,10 +46,14 @@ const REPLAY_STEM: &str = "ja_Pepper-and-Carrot_by-David-Revoy_E01P01";
 /// mean the same thing.
 const REFERENCE_DILATE_RADIUS: u32 = 2;
 
-/// §16.43 item 6's graft, quoted: the detector's row must state this.
+/// §16.47 item 6: corrects §16.43 item 6's graft, false since GPU-2's G2-C landed real
+/// detector CUDA registration. The detector's session constructor now takes the resolved
+/// device policy directly and attempts real registration when a provider is requested.
 const DETECTOR_DEVICE_MECHANISM: &str =
-    "its session constructor takes no device argument at all — device reaches the \
-     detector path only as an up-front refusal, never as a registration";
+    "its session constructor takes the resolved device policy directly and attempts \
+     real registration when a provider is requested — refusal now happens only when \
+     the stage has no ratified path for the requested device (§16.47 item 4), not as \
+     a substitute for registration";
 
 /// §16.43 item 6's graft, quoted: the inpainter's row must state this.
 const INPAINTER_DEVICE_MECHANISM: &str =
@@ -2278,10 +2282,7 @@ mod tests {
         let stages = stage_disclosures(&[CellId::Simple, CellId::SimpleLama]);
         let device = render_device_section(&cpu_policy(), &stages);
         assert!(
-            device.contains(
-                "its session constructor takes no device argument at all — device reaches the \
-                 detector path only as an up-front refusal, never as a registration"
-            ),
+            device.contains(DETECTOR_DEVICE_MECHANISM),
             "detector mechanism sentence missing: {device}"
         );
         assert!(

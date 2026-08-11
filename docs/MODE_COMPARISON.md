@@ -27,7 +27,7 @@ That is the **one** device statement for this whole invocation: one `--device` f
 
 Mechanism disclosure per stage — not a second policy statement:
 
-- **detector:** its session constructor takes no device argument at all — device reaches the detector path only as an up-front refusal, never as a registration
+- **detector:** its session constructor takes the resolved device policy directly and attempts real registration when a provider is requested — refusal now happens only when the stage has no ratified path for the requested device (§16.47 item 4), not as a substitute for registration
 - **inpainter:** its construction route (`from_path_for_device`) re-resolves the same requested device through the same resolver
 
 ## 3. Per-page, per-cell measurements
