@@ -98,7 +98,7 @@ impl OnnxProvider {
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
 
-        pc_core::device::resolve(self.device, DeviceSupport::compiled())
+        let policy = pc_core::device::resolve(self.device, DeviceSupport::compiled())
             .map_err(|refusal| refusal.message())?;
 
         #[cfg(test)]
@@ -130,8 +130,12 @@ impl OnnxProvider {
             inter_threads: self.inter_threads,
             ..TextDetectorConfig::default()
         };
-        let detector = pc_detect::onnx::OnnxDetector::from_path_with_config(&model_path, &config)
-            .map_err(|error| error.to_string())?;
+        let detector = pc_detect::onnx::OnnxDetector::from_path_with_config_and_policy(
+            &model_path,
+            &config,
+            &policy,
+        )
+        .map_err(|error| error.to_string())?;
         Ok(Arc::new(detector))
     }
 }

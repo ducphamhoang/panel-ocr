@@ -362,11 +362,17 @@ enum WorkerInferenceResponse {
 
 #[cfg(feature = "onnx")]
 use ort::{
-    session::{builder::GraphOptimizationLevel, Session, SessionOutputs},
+    ep::{ExecutionProviderDispatch, CUDA},
+    session::{
+        builder::{GraphOptimizationLevel, SessionBuilder},
+        Session, SessionOutputs,
+    },
     value::{Outlet, Tensor},
 };
 #[cfg(feature = "onnx")]
 use pc_config::TextDetectorConfig;
+#[cfg(feature = "onnx")]
+use pc_core::device::{DevicePolicy, ProviderRequest};
 
 #[cfg(feature = "onnx")]
 #[derive(Debug)]
@@ -411,11 +417,23 @@ impl OnnxDetector {
         model: &Path,
         config: &TextDetectorConfig,
     ) -> Result<Self, StageError> {
+        Self::from_path_with_config_and_policy(model, config, &DevicePolicy::cpu())
+    }
+
+    /// The policy-aware construction route (§16.47 item 3/5): a resolved [`DevicePolicy`]
+    /// is threaded through to the worker so `build_session` can perform real
+    /// execution-provider registration before the model is committed.
+    pub fn from_path_with_config_and_policy(
+        model: &Path,
+        config: &TextDetectorConfig,
+        policy: &DevicePolicy,
+    ) -> Result<Self, StageError> {
         Self::from_path_with_tuning_impl(
             model,
             config.intra_threads,
             config.inter_threads,
             &SessionTuning::default(),
+            policy,
         )
     }
 
@@ -426,7 +444,13 @@ impl OnnxDetector {
         inter_threads: usize,
         tuning: &SessionTuning,
     ) -> Result<Self, StageError> {
-        Self::from_path_with_tuning_impl(model, intra_threads, inter_threads, tuning)
+        Self::from_path_with_tuning_impl(
+            model,
+            intra_threads,
+            inter_threads,
+            tuning,
+            &DevicePolicy::cpu(),
+        )
     }
 
     fn from_path_with_tuning_impl(
@@ -434,6 +458,7 @@ impl OnnxDetector {
         intra_threads: usize,
         inter_threads: usize,
         tuning: &SessionTuning,
+        policy: &DevicePolicy,
     ) -> Result<Self, StageError> {
         // This pre-flight must precede every ort call so path errors remain actionable.
         ensure_model_file(model)?;
@@ -441,6 +466,7 @@ impl OnnxDetector {
         let model_path = model.to_path_buf();
         let worker_model_path = model_path.clone();
         let worker_tuning = tuning.clone();
+        let worker_policy = policy.clone();
         let (worker_tx, worker_rx) = mpsc::channel();
         let (init_tx, init_rx) = mpsc::channel::<WorkerInitResponse>();
         let worker_join = thread::Builder::new()
@@ -455,6 +481,7 @@ impl OnnxDetector {
                         intra_threads,
                         inter_threads,
                         &worker_tuning,
+                        &worker_policy,
                     )
                 }));
                 match initialization {
@@ -527,12 +554,72 @@ impl OnnxDetector {
     }
 }
 
+/// The explicit execution-provider registrations a resolved [`DevicePolicy`] calls for
+/// (§16.47 item 3).
+///
+/// Each `ProviderRequest::Cuda` becomes an `ort::ep::CUDA` configured with its pinned
+/// convolution-algorithm search mode, then `.error_on_failure()` — countermanding `ort`'s
+/// own default (`ExecutionProviderDispatch::new` sets `error_on_failure: false`,
+/// documented as "silently fail and fall back to ... the CPU provider"), which §16.22
+/// item 5(c) calls "the single most important line in the feature".
+///
+/// A CPU policy is structurally "no explicit registration" (§16.36 item 2), so an empty
+/// `provider_requests()` yields an empty list — a caller registering that list would be
+/// an explicit no-op registration, which `apply_device_policy` deliberately avoids.
+#[cfg(feature = "onnx")]
+pub fn execution_provider_dispatches(policy: &DevicePolicy) -> Vec<ExecutionProviderDispatch> {
+    policy
+        .provider_requests()
+        .iter()
+        .map(|request| match request {
+            ProviderRequest::Cuda {
+                conv_algorithm_search,
+            } => CUDA::default()
+                .with_conv_algorithm_search(match conv_algorithm_search {
+                    pc_core::device::ConvAlgorithmSearch::Heuristic => {
+                        ort::ep::cuda::ConvAlgorithmSearch::Heuristic
+                    }
+                    pc_core::device::ConvAlgorithmSearch::Default => {
+                        ort::ep::cuda::ConvAlgorithmSearch::Default
+                    }
+                })
+                .build()
+                .error_on_failure(),
+        })
+        .collect()
+}
+
+/// Apply a resolved [`DevicePolicy`]'s execution-provider registrations to a session
+/// builder (§16.47 item 3).
+///
+/// An empty dispatch list returns the builder **unchanged** — `with_execution_providers`
+/// is never called with `[]`. This is load-bearing for §16.32's bit-exact CPU floats
+/// (§16.36 item 2: a CPU policy is structurally "no explicit registration"). A
+/// registration error is run-fatal `StageError::Model`, consistent with every other
+/// builder step in `build_session`.
+#[cfg(feature = "onnx")]
+pub fn apply_device_policy(
+    builder: SessionBuilder,
+    policy: &DevicePolicy,
+) -> Result<SessionBuilder, StageError> {
+    let dispatches = execution_provider_dispatches(policy);
+    if dispatches.is_empty() {
+        return Ok(builder);
+    }
+    builder
+        .with_execution_providers(dispatches)
+        .map_err(|error| {
+            StageError::Model(format!("failed to configure execution providers: {error}"))
+        })
+}
+
 #[cfg(feature = "onnx")]
 fn build_session(
     model: &Path,
     intra_threads: usize,
     inter_threads: usize,
     tuning: &SessionTuning,
+    policy: &DevicePolicy,
 ) -> Result<(Session, Vec<OutputMeta>), StageError> {
     #[cfg(any(test, feature = "bench-tuning"))]
     if PANIC_NEXT_SESSION_BUILD.swap(false, Ordering::SeqCst) {
@@ -542,6 +629,7 @@ fn build_session(
     let mut builder = Session::builder().map_err(|error| {
         StageError::Model(format!("failed to configure {}: {error}", model.display()))
     })?;
+    builder = apply_device_policy(builder, policy)?;
     builder = builder
         .with_optimization_level(GraphOptimizationLevel::Level3)
         .map_err(|error| {
@@ -575,8 +663,9 @@ fn build_session(
                 StageError::Model(format!("failed to configure {}: {error}", model.display()))
             })?;
     }
-    // No execution provider is registered: ONNX Runtime's default CPU provider is
-    // the CPU-only v1 decision.
+    // GPU-2 (§16.47 item 3): `apply_device_policy` above registers a real execution
+    // provider when `policy.provider_requests()` is non-empty; ONNX Runtime's implicit
+    // CPU provider only stays the only one for a CPU policy, not unconditionally.
     let session = builder.commit_from_file(model).map_err(|error| {
         StageError::Model(format!("failed to load {}: {error}", model.display()))
     })?;
