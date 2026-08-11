@@ -599,8 +599,20 @@ const PRESENT: &[Site] = &[
         //   → 9393 (2026-08-11, same task, second fresh-reader fix round added 6 more
         //     net lines above this point; re-derived by content, single occurrence
         //     confirmed).
+        //   → 9420 (2026-08-11, Orchestrator, mechanical — the §16.48 GPU-3 ratification
+        //     (real OCR CUDA divergence measurement, correcting §16.47 item 4's stale
+        //     citation) inserted above this point; re-derived by content, single
+        //     occurrence confirmed).
+        //   → 9422 (2026-08-11, same task, two net lines added rewording §16.48 item 4's
+        //     text to dodge a Layer-B prose-claim false positive rather than pin it;
+        //     re-derived by content, single occurrence confirmed).
+        //   → 9429 (2026-08-11, same task, the step-1a fresh-reader pass's four blocking
+        //     findings (B1-B4: a widened citation claim, an overclaimed "mechanism
+        //     unaffected", a false "no other assertion changes" claim, an undisclosed
+        //     3-part message rewrite) plus five non-blocking corrections fixed, net lines
+        //     added above this point; re-derived by content, single occurrence confirmed).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 9393,
+        line: 9429,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {

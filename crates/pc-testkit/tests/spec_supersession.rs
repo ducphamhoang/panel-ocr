@@ -32,7 +32,11 @@ const MARKER: &str = "**SUPERSEDES:";
 // §16.47 raises it from 64 to 65: one new marker (GPU-2's detector registration
 // falsifies §16.43 item 6's detector-mechanism sentence; the inpainter sentence is
 // unaffected and carries no marker).
-const EXPECTED_PARSED_CLAIMS: usize = 65;
+// §16.48 raises it from 65 to 66: one new marker (GPU-3's real, measured OCR CUDA path
+// falsifies §16.47 item 4's "CUDA has only been measured for the text detector" citation
+// clause; item 4's per-stage-citation mechanism itself is unaffected and carries no
+// marker of its own).
+const EXPECTED_PARSED_CLAIMS: usize = 66;
 
 /// Claims whose declared sub-item identity must scope the target-side back-pointer independently.
 /// Most historical lettered claims retain §16.26 item 3(a)'s parent-item span. These two are pinned
@@ -403,6 +407,11 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // shape are unaffected and carry no marker). Raises EXPECTED_PARSED_CLAIMS from
     // 64 to 65.
     ("16.47", "16.43 item 6"),
+    // §16.48's one marker: GPU-3's real, measured OCR CUDA path falsifies §16.47 item 4's
+    // quoted message/citation text (the "CUDA has only been measured for the text
+    // detector" clause) — item 4's per-stage-citation mechanism itself is unaffected and
+    // carries no marker. Raises EXPECTED_PARSED_CLAIMS from 65 to 66.
+    ("16.48", "16.47 item 4"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
