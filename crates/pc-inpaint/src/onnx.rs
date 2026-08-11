@@ -228,7 +228,7 @@ mod session {
         session::{builder::GraphOptimizationLevel, Session},
         value::{Outlet, Tensor, TensorElementType, ValueType},
     };
-    use pc_core::device::{Device, DeviceSupport};
+    use pc_core::device::{Device, DevicePolicy, DeviceSupport};
     use pc_core::StageError;
     use pc_imageops::BinaryMask;
     use std::path::{Path, PathBuf};
@@ -279,11 +279,28 @@ mod session {
             pc_core::device::ensure_stage_supports(&policy, pc_core::device::Stage::Inpaint)
                 .map_err(|refusal| StageError::Model(refusal.message()))?;
 
+            Self::from_path_with_policy(model, &policy)
+        }
+
+        /// The pre-flight-and-construct primitive for an already-resolved policy (GPU-4).
+        ///
+        /// Takes the policy directly — the stage check has already fired in
+        /// [`Self::from_path_for_device`] (which is the ONLY shipped caller), so this
+        /// performs no `resolve` and no `ensure_stage_supports`; registration happens
+        /// inside `build_session` via `pc_ort::apply_device_policy`, mirroring
+        /// `pc_ocr::onnx::from_paths_with_policy` exactly. The sole non-test caller of
+        /// this primitive is a future `xtask` producer (G4-C, not yet written).
+        ///
+        /// Every failure here is [`StageError::Model`], i.e. run-fatal (§16.38 item 9).
+        pub fn from_path_with_policy(
+            model: &Path,
+            policy: &DevicePolicy,
+        ) -> Result<Self, StageError> {
             // Before any ort call, so a missing file reports its own path rather than an
             // ORT parse error about it.
             ensure_model_file(model)?;
 
-            let session = build_session(model)?;
+            let session = build_session(model, policy)?;
             validate_declared_inputs(model, &session)?;
             Ok(Self {
                 session: Mutex::new(session),
@@ -392,10 +409,11 @@ mod session {
         }
     }
 
-    fn build_session(model: &Path) -> Result<Session, StageError> {
+    fn build_session(model: &Path, policy: &DevicePolicy) -> Result<Session, StageError> {
         let mut builder = Session::builder().map_err(|error| {
             StageError::Model(format!("failed to configure {}: {error}", model.display()))
         })?;
+        builder = pc_ort::apply_device_policy(builder, policy)?;
         builder = builder
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|error| {
@@ -411,8 +429,9 @@ mod session {
         builder = builder.with_inter_threads(0).map_err(|error| {
             StageError::Model(format!("failed to configure {}: {error}", model.display()))
         })?;
-        // No execution provider is registered: ONNX Runtime's built-in CPU provider is
-        // implicit, which is what `DevicePolicy::cpu()` reports (§16.36).
+        // GPU-4: `apply_device_policy` above registers a real execution provider when
+        // `policy.provider_requests()` is non-empty; ONNX Runtime's implicit CPU provider
+        // only stays the only one for a CPU policy, not unconditionally.
         builder.commit_from_file(model).map_err(|error| {
             StageError::Model(format!("failed to load {}: {error}", model.display()))
         })

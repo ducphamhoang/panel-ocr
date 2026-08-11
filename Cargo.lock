@@ -1157,8 +1157,10 @@ dependencies = [
  "pc-core",
  "pc-imageops",
  "pc-inpaint",
+ "pc-ort",
  "serde",
  "tempfile",
+ "toml_edit",
  "tracing",
 ]
 

@@ -15,13 +15,20 @@ repository.workspace   = true
 # records as the one that actually executes." Task L5 adds the `ort`-backed
 # `onnx::OnnxInpainter` behind this feature and changes nothing L4 pinned.
 default = []
-onnx    = ["dep:ort"]
+onnx    = ["dep:ort", "pc-ort/onnx"]
+# GPU-4: LaMa's real, measured CUDA path reuses the shared `pc-ort` boundary G3-A
+# extracted (the same boundary `pc-detect`/`pc-ocr` use), so the feature chain is the
+# same one.
+cuda    = ["onnx", "pc-ort/cuda", "pc-core/cuda"]
 # Exposes `stub::StubInpainter` to other crates' tests (the same shape `pc-detect` uses
 # for its mock backends).
 testkit = []
 
 [dependencies]
 pc-core     = { path = "../pc-core" }
+# The shared `ort` EP-registration boundary (GPU-3 G3-A): extracted out of `pc-detect`
+# so `pc-ocr`/`pc-inpaint` can reuse it without a stage-crate-to-stage-crate edge.
+pc-ort      = { path = "../pc-ort" }
 # §16.5 item 1: every stage crate depends on pc-config -- the stage's config travels by
 # value inside its Input (§3).
 pc-config   = { path = "../pc-config" }
@@ -37,3 +44,4 @@ ort         = { workspace = true, optional = true }
 # without `cfg(test)`) see the `testkit`-gated stub.
 pc-inpaint = { path = ".", features = ["testkit"] }
 tempfile   = { workspace = true }
+toml_edit  = { workspace = true }
