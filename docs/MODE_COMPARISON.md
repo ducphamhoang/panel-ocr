@@ -22,13 +22,13 @@ That is the **one** device statement for this whole invocation: one `--device` f
 
 | Stage | Model path | Expected sha256 | Digest verified? | Session constructed? | Constructing function |
 |---|---|---|---|---|---|
-| detector | C:\Users\ducph\AppData\Local/panel-ocr/models/comictextdetector.pt.onnx | `1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f` | yes | yes | `pc_detect::onnx::OnnxDetector::from_path_with_config` |
-| inpainter | C:\Users\ducph\AppData\Local\panel-ocr\models\lama-manga.onnx | `50a1abae0d73bd46d08eae36c8590cd59ad09029494c9698702b050ef00b0100` | yes | yes | `pc_inpaint::onnx::OnnxInpainter::from_path_for_device` |
+| detector | C:/Users/ducph/AppData/Local/panel-ocr/models/comictextdetector.pt.onnx | `1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f` | yes | yes | `pc_detect::onnx::OnnxDetector::from_path_with_config_and_policy` |
+| inpainter | C:\Users\ducph\AppData\Local\panel-ocr\models\lama-manga.onnx | `50a1abae0d73bd46d08eae36c8590cd59ad09029494c9698702b050ef00b0100` | yes | yes | `pc_inpaint::onnx::OnnxInpainter::from_path_with_policy` |
 
 Mechanism disclosure per stage — not a second policy statement:
 
-- **detector:** its session constructor takes the resolved device policy directly and attempts real registration when a provider is requested — refusal now happens only when the stage has no ratified path for the requested device (§16.47 item 4), not as a substitute for registration
-- **inpainter:** its construction route (`from_path_for_device`) re-resolves the same requested device through the same resolver
+- **detector:** its session constructor takes the resolved device policy directly and attempts real registration when a provider is requested — the only refusal left anywhere in this path is `pc_core::device::resolve`'s own (GPU-1), before any stage-specific code runs; no stage carries a narrower, stage-scoped refusal any more
+- **inpainter:** its construction route (`from_path_with_policy`) takes the same already-resolved device policy directly, the identical single-resolve shape the detector's row states above — GPU-4 deleted the LaMa-specific stage refusal that used to sit between them
 
 ## 3. Per-page, per-cell measurements
 

@@ -93,11 +93,12 @@ fn replay_mode_writes_a_report_with_the_ratified_structure() {
     assert_eq!(document.matches("device: requested").count(), 1);
     // §16.47 item 6: corrects the sentence above, false since G2-C's real detector CUDA
     // registration landed.
+    // GPU-4 (pending ratification as §16.49): corrects item 6's second clause, false since G4-D deleted Stage/ensure_stage_supports/NoRatifiedStagePath.
     assert!(document.contains(
         "its session constructor takes the resolved device policy directly and attempts \
-         real registration when a provider is requested — refusal now happens only when \
-         the stage has no ratified path for the requested device (§16.47 item 4), not as \
-         a substitute for registration"
+         real registration when a provider is requested — the only refusal left anywhere \
+         in this path is `pc_core::device::resolve`'s own (GPU-1), before any stage-specific \
+         code runs; no stage carries a narrower, stage-scoped refusal any more"
     ));
 
     // D1's default cell set, present as rows — identity, not a count.

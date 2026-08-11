@@ -49,16 +49,31 @@ const REFERENCE_DILATE_RADIUS: u32 = 2;
 /// §16.47 item 6: corrects §16.43 item 6's graft, false since GPU-2's G2-C landed real
 /// detector CUDA registration. The detector's session constructor now takes the resolved
 /// device policy directly and attempts real registration when a provider is requested.
+///
+/// GPU-4 (ratification pending as §16.49 — update this citation once G4-F lands):
+/// corrects this constant's own second clause, false since G4-D deleted `Stage`/
+/// `ensure_stage_supports`/`NoRatifiedStagePath` entirely. No stage anywhere still
+/// carries a stage-scoped refusal — the detector (GPU-2), OCR (GPU-3) and LaMa (GPU-4)
+/// each gained a real, measured CUDA path in turn, so "the stage has no ratified path"
+/// has no live instance left to describe.
 const DETECTOR_DEVICE_MECHANISM: &str =
     "its session constructor takes the resolved device policy directly and attempts \
-     real registration when a provider is requested — refusal now happens only when \
-     the stage has no ratified path for the requested device (§16.47 item 4), not as \
-     a substitute for registration";
+     real registration when a provider is requested — the only refusal left anywhere \
+     in this path is `pc_core::device::resolve`'s own (GPU-1), before any stage-specific \
+     code runs; no stage carries a narrower, stage-scoped refusal any more";
 
 /// §16.43 item 6's graft, quoted: the inpainter's row must state this.
+///
+/// GPU-4 (ratification pending as §16.49 — update this citation once G4-F lands):
+/// rewritten, false since G4-D changed `pc-cli`'s LaMa seam to resolve once and call
+/// `from_path_with_policy` (no re-resolve, and `from_path_for_device` is no longer the
+/// production call) — the identical single-resolve shape `DETECTOR_DEVICE_MECHANISM`
+/// already describes for the detector.
 const INPAINTER_DEVICE_MECHANISM: &str =
-    "its construction route (`from_path_for_device`) re-resolves the same requested \
-     device through the same resolver";
+    "its construction route (`from_path_with_policy`) takes the same already-resolved \
+     device policy directly, the identical single-resolve shape the detector's row \
+     states above — GPU-4 deleted the LaMa-specific stage refusal that used to sit \
+     between them";
 
 /// D5's binding conditions (§16.43 item 7), all three.
 const REFERENCE_CAVEATS: &str = "\
@@ -654,7 +669,7 @@ pub(crate) fn detector_disclosure(
         expected_sha256: pc_models::COMIC_TEXT_DETECTOR.sha256,
         digest_verified,
         session_constructed,
-        constructing_function: "`pc_detect::onnx::OnnxDetector::from_path_with_config`",
+        constructing_function: "`pc_detect::onnx::OnnxDetector::from_path_with_config_and_policy`",
         device_mechanism: DETECTOR_DEVICE_MECHANISM,
     }
 }
@@ -672,7 +687,7 @@ pub(crate) fn inpainter_disclosure(
         expected_sha256: pc_models::LAMA_MANGA_INPAINTER.sha256,
         digest_verified,
         session_constructed,
-        constructing_function: "`pc_inpaint::onnx::OnnxInpainter::from_path_for_device`",
+        constructing_function: "`pc_inpaint::onnx::OnnxInpainter::from_path_with_policy`",
         device_mechanism: INPAINTER_DEVICE_MECHANISM,
     }
 }
@@ -2287,15 +2302,19 @@ mod tests {
         );
         assert!(
             device.contains(
-                "its construction route (`from_path_for_device`) re-resolves the same requested \
-                 device through the same resolver"
+                "its construction route (`from_path_with_policy`) takes the same already-resolved \
+                 device policy directly, the identical single-resolve shape the detector's row \
+                 states above — GPU-4 deleted the LaMa-specific stage refusal that used to sit \
+                 between them"
             ),
             "inpainter mechanism sentence missing: {device}"
         );
         // The mechanism sentences name the real constructors, so a renamed constructor
         // does not leave a stale claim standing.
-        assert!(device.contains("`pc_detect::onnx::OnnxDetector::from_path_with_config`"));
-        assert!(device.contains("`pc_inpaint::onnx::OnnxInpainter::from_path_for_device`"));
+        assert!(
+            device.contains("`pc_detect::onnx::OnnxDetector::from_path_with_config_and_policy`")
+        );
+        assert!(device.contains("`pc_inpaint::onnx::OnnxInpainter::from_path_with_policy`"));
     }
 
     // --- §16.43 item 8: a blocked cell does not take the others down ----------
