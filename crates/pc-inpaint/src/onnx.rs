@@ -272,24 +272,18 @@ mod session {
         pub fn from_path_for_device(model: &Path, device: Device) -> Result<Self, StageError> {
             let policy = pc_core::device::resolve(device, DeviceSupport::compiled())
                 .map_err(|refusal| StageError::Model(refusal.message()))?;
-            // §16.47 item 4: the LaMa stage has no ratified CUDA path, so even a build
-            // that CAN register CUDA refuses here — AFTER resolve, so the GPU-1
-            // NotCompiledIn refusal (and its frozen message) keeps precedence in a
-            // non-cuda build.
-            pc_core::device::ensure_stage_supports(&policy, pc_core::device::Stage::Inpaint)
-                .map_err(|refusal| StageError::Model(refusal.message()))?;
 
             Self::from_path_with_policy(model, &policy)
         }
 
         /// The pre-flight-and-construct primitive for an already-resolved policy (GPU-4).
         ///
-        /// Takes the policy directly — the stage check has already fired in
-        /// [`Self::from_path_for_device`] (which is the ONLY shipped caller), so this
-        /// performs no `resolve` and no `ensure_stage_supports`; registration happens
+        /// Takes the policy directly — the LaMa stage seam is gone (GPU-4, §16.49), so
+        /// this performs no `resolve` and no `ensure_stage_supports`; registration happens
         /// inside `build_session` via `pc_ort::apply_device_policy`, mirroring
         /// `pc_ocr::onnx::from_paths_with_policy` exactly. The sole non-test caller of
-        /// this primitive is a future `xtask` producer (G4-C, not yet written).
+        /// this primitive is `pc-cli`'s inpainter provider, which resolves once and
+        /// threads the policy.
         ///
         /// Every failure here is [`StageError::Model`], i.e. run-fatal (§16.38 item 9).
         pub fn from_path_with_policy(

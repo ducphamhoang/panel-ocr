@@ -122,29 +122,27 @@ fn a_device_this_build_cannot_provide_is_refused_by_pc_core_policy_before_the_mo
             );
         }
         Ok(_) => {
-            // §16.47 item 4 (re-ratified with G2-B): a build that CAN provide CUDA now
-            // refuses at the stage-scoped seam (`ensure_stage_supports`) instead of
-            // falling through to the model pre-flight, because LaMa has no ratified CUDA
-            // path. The refusal must arrive before the file pre-flight, and it must be
-            // the stage-scoped one, not the GPU-1 NotCompiledIn message. Asserted rather
-            // than skipped, so this test is never vacuous in either build.
+            // GPU-4 (§16.49): LaMa now has a real, MEASURED CUDA path, so a build that can
+            // resolve CUDA no longer refuses at a stage seam — the stage seam is gone.
+            // `resolve` is the only device gate left, and it succeeded, so this call must
+            // fall through to the model pre-flight and fail on the absent file. Asserted
+            // rather than skipped, so this test is never vacuous in either build.
             let error = OnnxInpainter::from_path_for_device(&absent, Device::Cuda)
-                .expect_err("the stage-scoped refusal is still an error");
-            let expected = pc_core::device::DeviceRefusal::NoRatifiedStagePath {
-                requested: Device::Cuda,
-                stage: pc_core::device::Stage::Inpaint,
-            };
+                .expect_err("a missing model file must still fail, in either build");
             let StageError::Model(message) = &error else {
-                panic!("a stage-scoped refusal is run-fatal `Model`; got {error:?}");
+                panic!("a missing model is run-fatal `Model`; got {error:?}");
             };
             assert_eq!(
                 message,
-                &expected.message(),
-                "a CUDA-resolvable build must refuse LaMa with the stage-scoped refusal"
+                &format!(
+                    "model path is missing or is not a regular file: {}",
+                    absent.display()
+                ),
+                "a cuda-capable build must now pass straight to the model pre-flight"
             );
             assert!(
-                !message.contains(&absent.display().to_string()),
-                "the stage refusal must precede the model pre-flight; got {message}"
+                !message.contains("no CUDA path is ratified"),
+                "the deleted stage refusal must not appear; got {message}"
             );
         }
     }

@@ -149,17 +149,27 @@ impl OnnxInpainterProvider {
             }
         }
 
+        // Resolve the device policy BEFORE model resolution, mirroring
+        // `crate::detector::OnnxProvider::initialize_detector` (crates/pc-cli/src/detector.rs:
+        // the same resolve-then-provision shape). A device refusal must arrive before any
+        // model error, or a user on a CUDA-less build would be told to download a model
+        // instead of to rebuild.
+        let policy =
+            pc_core::device::resolve(self.device, pc_core::device::DeviceSupport::compiled())
+                .map_err(|refusal| refusal.message())?;
+
         let model_path = self.resolve_model()?;
         pc_inpaint::onnx::ensure_model_file(&model_path).map_err(|error| error.to_string())?;
         if !pc_inpaint::onnx::runtime_available() {
             return Err("ONNX Runtime is not loadable in this environment".to_owned());
         }
         let inpainter =
-            pc_inpaint::onnx::OnnxInpainter::from_path_for_device(&model_path, self.device)
-                .map_err(|error| match error {
+            pc_inpaint::onnx::OnnxInpainter::from_path_with_policy(&model_path, &policy).map_err(
+                |error| match error {
                     StageError::Model(message) => message,
                     other => other.to_string(),
-                })?;
+                },
+            )?;
         Ok(Arc::new(inpainter))
     }
 
