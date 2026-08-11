@@ -35,6 +35,9 @@ pub enum Command {
     Clean(CleanArgs),
     /// Run OCR over the detected boxes and write a CSV/TXT report.
     Ocr(OcrArgs),
+    /// Inpaint a user-supplied mask over an image directly — no cache/uuid state (spec-adjacent,
+    /// not part of the `clean` pipeline's five stages).
+    Inpaint(InpaintArgs),
     /// Inspect and manage profiles.
     Profile {
         #[command(subcommand)]
@@ -184,6 +187,37 @@ pub struct OcrArgs {
     #[arg(long, value_name = "SPEC", default_value = "onnx", hide = true)]
     pub detector: DetectorSpec,
 
+    #[arg(long, value_name = "DIR", hide = true)]
+    pub cache_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct InpaintArgs {
+    /// The image to inpaint.
+    #[arg(required = true, value_name = "IMAGE")]
+    pub image: PathBuf,
+
+    /// RGBA PNG the same pixel dimensions as IMAGE. Alpha > 0 marks a painted pixel;
+    /// RGB is ignored. Disjoint painted blobs become separate inpaint regions.
+    #[arg(long, value_name = "FILE")]
+    pub mask: PathBuf,
+
+    /// Where to write the inpainted result (format inferred from the extension; use `.png`).
+    #[arg(long, value_name = "FILE")]
+    pub output: PathBuf,
+
+    #[arg(long, value_name = "NAME", conflicts_with = "profile_path")]
+    pub profile: Option<String>,
+    #[arg(long, value_name = "FILE")]
+    pub profile_path: Option<PathBuf>,
+
+    /// Override the LaMa inpainting model file (bypasses the managed cache and its digest
+    /// check, same latitude `clean --model-path` gives the detector).
+    #[arg(long, value_name = "FILE")]
+    pub model_path: Option<PathBuf>,
+
+    /// Cache directory override — used only to locate/download the managed LaMa model,
+    /// never for pipeline checkpoints (this command has none). Hidden like `clean`'s.
     #[arg(long, value_name = "DIR", hide = true)]
     pub cache_dir: Option<PathBuf>,
 }

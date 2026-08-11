@@ -41,6 +41,7 @@ pc-inpaint  = { path = "../pc-inpaint" }
 
 anyhow             = { workspace = true }
 clap               = { workspace = true }
+image              = { workspace = true }
 indicatif          = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -51,5 +52,4 @@ pc-ocr    = { path = "../pc-ocr", features = ["testkit"] }
 # Feature-enabled re-declaration so the provider's latch tests can stand a `StubInpainter`
 # in for a real 6.3 s session (the same self/peer dev-dependency trick `pc-detect` uses).
 pc-inpaint = { path = "../pc-inpaint", features = ["testkit"] }
-image      = { workspace = true }
 tempfile   = { workspace = true }

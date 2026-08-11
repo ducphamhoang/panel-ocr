@@ -92,6 +92,23 @@ Run OCR and write a report:
 panel-ocr ocr my-manga-folder/ --format csv --output report.csv
 ```
 
+Inpaint a brush mask over a single image directly — no detection, masking, or denoising
+re-run, no cache:
+
+```
+panel-ocr inpaint page.png --mask brush.png --output fixed.png
+```
+
+`--mask` is an RGBA PNG the same pixel dimensions as `IMAGE`; alpha > 0 marks a painted
+pixel (RGB is ignored), and disjoint painted blobs become separate inpaint regions. This is
+for continuing or fixing a result without re-running the pipeline, not a replacement for
+`clean`. This always runs LaMa inpainting regardless of `[inpainter].inpainting_enabled`,
+and needs a build with the `onnx` feature and the LaMa model downloaded
+(`panel-ocr models download`). The inpainted area extends beyond the drawn brush strokes: at
+the default profile the painted silhouette is grown by `min_mask_thickness` + the inpaint
+`growth` radius + a fade band (roughly 10 px wider than drawn at shipped defaults), so a UI
+sizing its brush or its preview should not assume a pixel-exact result.
+
 ### Opting out of the default refinement and inpainting
 
 Out of the box you get upstream PanelCleaner's own mask refinement and LaMa inpainting —

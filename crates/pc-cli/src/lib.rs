@@ -15,10 +15,11 @@ pub mod models;
 pub mod ocr;
 pub mod paths;
 pub mod setup;
+pub mod standalone_inpaint;
 
 pub use args::{
-    CacheCommand, CleanArgs, Cli, Command, DetectorSpec, ModelsCommand, OcrArgs, ProfileCommand,
-    ReportFormatArg,
+    CacheCommand, CleanArgs, Cli, Command, DetectorSpec, InpaintArgs, ModelsCommand, OcrArgs,
+    ProfileCommand, ReportFormatArg,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -46,6 +47,7 @@ pub fn run(cli: Cli) -> i32 {
     let result = match cli.command {
         Command::Clean(args) => run_clean(args),
         Command::Ocr(args) => run_ocr(args),
+        Command::Inpaint(args) => standalone_inpaint::run(args),
         Command::Profile { command } => run_profile(command),
         Command::Cache { command } => run_cache(command),
         Command::Models { command } => run_models(command),

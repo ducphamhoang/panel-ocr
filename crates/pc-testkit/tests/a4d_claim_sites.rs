@@ -259,8 +259,16 @@ const ABSENT: &[Site] = &[
         // the current README anyway. Vacuously true at any line lacking the exact text,
         // same discipline this file already documents for other ABSENT rows; pointed at
         // the line that now carries Annotation's real, shipped status for meaningfulness.
+        //   → 301 (2026-08-11, `panel-ocr inpaint` standalone subcommand (brief
+        //     BRIEF_INPAINT_STANDALONE.md): README section documenting `clean`/`ocr`/
+        //     `inpaint` usage gained the new command, +12 net lines above this point,
+        //     re-derived by content). Pointed at the line that now carries Annotation's
+        //     real, shipped status for meaningfulness.
+        //   → 306 (2026-08-11, fix round (brief BRIEF_INPAINT_STANDALONE_FIXES.md): M5/M6/
+        //     L10 added six net lines to the `inpaint` paragraph above this point; re-derived
+        //     by content, single occurrence confirmed).
         path: "README.md",
-        line: 289,
+        line: 306,
         text: "[ ] `Mask RefineMode::Annotation`",
     },
     Site {
@@ -669,8 +677,16 @@ const PRESENT: &[Site] = &[
         //     GPU acceleration, and FAQ sections inserted above this point; the v2 heading
         //     is unchanged content, just moved further down). Re-derived by content:
         //     exactly one hit.
+        //   → 340 (2026-08-11, `panel-ocr inpaint` standalone subcommand (brief
+        //     BRIEF_INPAINT_STANDALONE.md): README section documenting `clean`/`ocr`/
+        //     `inpaint` usage gained the new command, +12 net lines above this point; the
+        //     v2 heading is unchanged content, just moved further down). Re-derived by
+        //     content: exactly one hit.
+        //   → 345 (2026-08-11, fix round (brief BRIEF_INPAINT_STANDALONE_FIXES.md): M5/M6/
+        //     L10 added six net lines to the `inpaint` paragraph above this point; re-derived
+        //     by content, single occurrence confirmed).
         path: "README.md",
-        line: 328,
+        line: 345,
         text: "### v2",
     },
     Site {
@@ -678,8 +694,14 @@ const PRESENT: &[Site] = &[
         // row in this gate asserting anything about README's default-related PROSE.
         //   → 95 (2026-08-11, v1.5 closure + README rewrite, §16.50: a new Prerequisites
         //     section inserted above this point). Re-derived by content: exactly one hit.
+        //   → 107 (2026-08-11, `panel-ocr inpaint` standalone subcommand (brief
+        //     BRIEF_INPAINT_STANDALONE.md): the usage section gained the new command, +12 net
+        //     lines above this point). Re-derived by content: exactly one hit.
+        //   → 112 (2026-08-11, fix round (brief BRIEF_INPAINT_STANDALONE_FIXES.md): M5/M6/
+        //     L10 added six net lines to the `inpaint` paragraph above this point; re-derived
+        //     by content, single occurrence confirmed).
         path: "README.md",
-        line: 95,
+        line: 112,
         text: "### Opting out of the default refinement and inpainting",
     },
     Site {
