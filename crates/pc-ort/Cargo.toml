@@ -1,0 +1,18 @@
+[package]
+name        = "pc-ort"
+description = "panel-ocr: the shared ort execution-provider boundary (§16.47 item 3), reused across stage crates that gain a real CUDA path."
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[features]
+default = []
+onnx    = ["dep:ort"]
+cuda    = ["onnx", "ort/cuda", "pc-core/cuda"]
+
+[dependencies]
+pc-core = { path = "../pc-core" }
+ort     = { workspace = true, optional = true }

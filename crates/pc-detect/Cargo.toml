@@ -13,8 +13,8 @@ repository.workspace   = true
 # that every test, and the entire pipeline below this stage, works with mocks and
 # replay fixtures and no model files at all.
 default = []
-onnx    = ["dep:ort"]
-cuda    = ["onnx", "ort/cuda", "pc-core/cuda"]
+onnx    = ["dep:ort", "pc-ort/onnx"]
+cuda    = ["onnx", "ort/cuda", "pc-core/cuda", "pc-ort/cuda"]
 # Exposes MockDetector / ReplayDetector to other crates' tests (§7.2).
 testkit = []
 # Exposes session knobs only to maintainer benchmarks and opt-in real-model tests.
@@ -22,6 +22,9 @@ bench-tuning = []
 
 [dependencies]
 pc-core     = { path = "../pc-core" }
+# The shared `ort` EP-registration boundary (GPU-3 G3-A): extracted out of this crate
+# so `pc-ocr`/`pc-inpaint` can reuse it without a stage-crate-to-stage-crate edge.
+pc-ort      = { path = "../pc-ort" }
 # §16.5 item 1: every stage crate depends on pc-config -- the stage's config travels
 # by value inside its Input (§3).
 pc-config   = { path = "../pc-config" }

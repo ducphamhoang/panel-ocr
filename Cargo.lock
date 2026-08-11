@@ -1111,6 +1111,7 @@ dependencies = [
  "pc-core",
  "pc-detect",
  "pc-imageops",
+ "pc-ort",
  "pc-testkit",
  "rayon",
  "serde",
@@ -1201,6 +1202,14 @@ dependencies = [
  "sha2",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "pc-ort"
+version = "1.2.0"
+dependencies = [
+ "ort",
+ "pc-core",
 ]
 
 [[package]]
