@@ -178,6 +178,15 @@ const DECLARED_BARE_DEFAULTS: &[(&str, usize, &str)] = &[
          requires), and `profile_non_default` needs the shipped config as the thing it diffs \
          against",
     ),
+    (
+        "lama_device_compare.rs",
+        1,
+        "the G4-C producer's `detect_preprocess_mask` uses the session constructor's bare \
+         default (same site as calibrate.rs/mask_sweep.rs — the ONNX session never reads \
+         `mask_refine_mode`), and its `DetectInput` is deliberately not pinned: this producer \
+         runs real detection on committed fixtures and records no artifact, so there is no \
+         recording-mode pin to hold",
+    ),
 ];
 
 /// Occurrences of `TextDetectorConfig::default()` on `line`, **excluding line comments**.

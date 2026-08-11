@@ -13,6 +13,7 @@ mod bench;
 mod calibrate;
 mod device;
 mod env;
+mod lama_device_compare;
 mod mask_sweep;
 mod mode_bench;
 mod model_signature;
@@ -92,6 +93,10 @@ enum Command {
     /// `cuda` feature and real manga-ocr weights; a non-`cuda` build refuses with a
     /// clear message.
     OcrDeviceCompare(ocr_device_compare::Args),
+    /// GPU-4 G4-C: measure LaMa CPU vs CUDA device divergence across three independent
+    /// `inpaint_page` runs sharing one `PageInput`. Needs the `cuda` feature and real
+    /// LaMa weights; a non-`cuda` build refuses with a clear message.
+    LamaDeviceCompare(lama_device_compare::Args),
     /// Measure ONNX detector tuning candidates in fresh child processes.
     BenchDetector {
         /// Detector model, using `onnx:<path>`; falls back to PANEL_OCR_ONNX_MODEL.
@@ -185,6 +190,7 @@ fn main() -> Result<()> {
         Command::MaskSweep(args) => mask_sweep::run(args),
         Command::ModeBench(args) => mode_bench::run(args),
         Command::OcrDeviceCompare(args) => ocr_device_compare::run(args),
+        Command::LamaDeviceCompare(args) => lama_device_compare::run(args),
         Command::BenchDetector {
             detector,
             reps,
