@@ -261,6 +261,43 @@ This does not relax any other rule in this file — a brief-file dispatch to
 transcription still needs `fresh-reader`, and an implementer's own self-report is still
 not verification (re-run the actual checks).
 
+### Standing cmdc dispatch preamble
+
+**Every `cmdc` dispatch prompt includes this preamble** (verbatim or paraphrased, but
+covering all five points), instead of re-typing it into each brief. Codified 2026-08-11
+from a real, recurring pattern across GPU-2's and GPU-3's implementation calls: cmdc's
+self-reports were consistently honest about what they *did* check, but twice under-
+scoped the verification bar (G2-A/B and G2-C both reported "clippy clean" having checked
+only the touched crates, and skipped `cargo fmt --all` entirely) — caught only because
+the Orchestrator re-ran the full bar independently afterward. The preamble moves that
+catch earlier, at the source, rather than relying on a second pass to find it every time.
+
+1. **Run the full four-command verification bar yourself before declaring done, not
+   just the scoped tests named in the brief**: `cargo test --workspace`, `cargo test
+   --workspace --all-targets --features pc-cli/onnx`, `cargo clippy --workspace
+   --all-targets --all-features -- -D warnings`, `cargo fmt --all --check`. If the brief
+   also names a `cuda`-tier command, run that too. Scoped tests during iteration are
+   fine; the full bar is what you report as "done."
+2. **Disclose every deviation from the brief explicitly**, however small (a manifest
+   edit the brief didn't spell out, a clippy-driven rewording of a drafted test) — never
+   silently absorb one, even when the fix is obviously correct.
+3. **For every frozen/untouchable file the brief names, confirm byte-for-byte identity
+   via `git diff <path>` and report that it returned empty** — not just "I didn't edit
+   it." An empty diff is checkable; a claim isn't.
+4. **Respect scope fences literally.** If the brief says a file/module is out of scope
+   for this call, do not touch it even if a fix looks trivially applicable there — name
+   the gap in your report instead.
+5. **Quote the actual red output you observed before the green**, the same way you quote
+   the green output — a real failing-test transcript is harder to fake than a claim of
+   "observed red."
+6. **Report `git diff --stat` output directly** as part of "files touched," not a
+   prose recollection of what you edited.
+
+**This does not relax the Orchestrator's own re-verification duty.** A more complete
+cmdc self-report is not a substitute for independently re-running the bar and re-
+checking the diff before committing — it only reduces how often that independent check
+finds something the report missed.
+
 **Keep briefs surgical, not exhaustive.** A brief should state what changed and what's
 needed for *this* step — pointing at an existing artifact (a prior brief, a spec
 section, a committed file) is cheaper and just as effective as re-deriving or
