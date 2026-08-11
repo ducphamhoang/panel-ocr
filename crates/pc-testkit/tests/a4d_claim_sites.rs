@@ -611,8 +611,18 @@ const PRESENT: &[Site] = &[
         //     unaffected", a false "no other assertion changes" claim, an undisclosed
         //     3-part message rewrite) plus five non-blocking corrections fixed, net lines
         //     added above this point; re-derived by content, single occurrence confirmed).
+        //   → 9485 (2026-08-11, GPU-4 §16.49 ratification inserted above this point —
+        //     the real, measured LaMa CUDA divergence measurement and the deletion of
+        //     Stage/ensure_stage_supports entirely, plus five supersession back-pointers
+        //     added at the §16.47/§16.48 sites it names; re-derived by content, single
+        //     occurrence confirmed).
+        //   → 9495 (2026-08-11, same task, the step-1a fresh-reader pass's one blocking
+        //     finding (§16.47 item 6's own "Replacement sentence, for all four" quote left
+        //     unmarked as superseded, and item 4's enumeration omitted DETECTOR_DEVICE_MECHANISM)
+        //     plus six non-blocking corrections fixed, net lines added above this point;
+        //     re-derived by content, single occurrence confirmed).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 9429,
+        line: 9495,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {

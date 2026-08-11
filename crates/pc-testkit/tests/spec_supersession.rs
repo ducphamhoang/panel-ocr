@@ -36,7 +36,13 @@ const MARKER: &str = "**SUPERSEDES:";
 // falsifies §16.47 item 4's "CUDA has only been measured for the text detector" citation
 // clause; item 4's per-stage-citation mechanism itself is unaffected and carries no
 // marker of its own).
-const EXPECTED_PARSED_CLAIMS: usize = 66;
+// §16.49 raises it from 66 to 71: five new markers (GPU-4's real, measured LaMa CUDA
+// path and the deletion of Stage/ensure_stage_supports entirely falsifies: §16.47 item 1's
+// "without granting it a CUDA path" LaMa-scope clause; §16.47 item 4's typed-API block and
+// message, now superseded in full rather than in part; §16.47 item 6's "inpainter half is
+// untouched" claim; §16.48 item 2's shipped LaMa refusal message, which no longer exists;
+// §16.48 item 3's prediction, now fulfilled).
+const EXPECTED_PARSED_CLAIMS: usize = 71;
 
 /// Claims whose declared sub-item identity must scope the target-side back-pointer independently.
 /// Most historical lettered claims retain §16.26 item 3(a)'s parent-item span. These two are pinned
@@ -412,6 +418,13 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     // detector" clause) — item 4's per-stage-citation mechanism itself is unaffected and
     // carries no marker. Raises EXPECTED_PARSED_CLAIMS from 65 to 66.
     ("16.48", "16.47 item 4"),
+    // §16.49's five markers: GPU-4's real, measured LaMa CUDA path and the deletion of
+    // Stage/ensure_stage_supports entirely. Raises EXPECTED_PARSED_CLAIMS from 66 to 71.
+    ("16.49", "16.47 item 1"),
+    ("16.49", "16.47 item 4"),
+    ("16.49", "16.47 item 6"),
+    ("16.49", "16.48 item 2"),
+    ("16.49", "16.48 item 3"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.
