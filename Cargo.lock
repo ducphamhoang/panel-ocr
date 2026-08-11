@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "pc-cli"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1061,7 +1061,7 @@ dependencies = [
 
 [[package]]
 name = "pc-config"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "pc-core",
  "regex",
@@ -1075,7 +1075,7 @@ dependencies = [
 
 [[package]]
 name = "pc-core"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "image",
  "serde",
@@ -1087,7 +1087,7 @@ dependencies = [
 
 [[package]]
 name = "pc-denoise"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "image",
  "pc-config",
@@ -1103,7 +1103,7 @@ dependencies = [
 
 [[package]]
 name = "pc-detect"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "image",
  "ort",
@@ -1124,7 +1124,7 @@ dependencies = [
 
 [[package]]
 name = "pc-export"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "image",
  "pc-config",
@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "pc-imageops"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "approx",
  "image",
@@ -1149,7 +1149,7 @@ dependencies = [
 
 [[package]]
 name = "pc-inpaint"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "image",
  "ort",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "pc-mask"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "image",
  "pc-config",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "pc-models"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "pc-core",
  "pc-testkit",
@@ -1194,7 +1194,7 @@ dependencies = [
 
 [[package]]
 name = "pc-ocr"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "image",
  "ort",
@@ -1210,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "pc-ort"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "ort",
  "pc-core",
@@ -1218,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "pc-pipeline"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "image",
  "pc-config",
@@ -1242,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "pc-preprocess"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "image",
  "pc-config",
@@ -1258,7 +1258,7 @@ dependencies = [
 
 [[package]]
 name = "pc-testkit"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "approx",
  "image",
@@ -2423,7 +2423,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "1.2.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "clap",
