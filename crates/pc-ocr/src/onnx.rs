@@ -3,7 +3,7 @@
 //! This module owns manga-ocr ONNX session construction and inference.
 
 #[cfg(feature = "onnx")]
-use pc_core::device::{Device, DeviceSupport};
+use pc_core::device::{Device, DevicePolicy, DeviceSupport};
 use pc_core::StageError;
 use std::path::Path;
 
@@ -78,20 +78,26 @@ impl MangaOcrSessions {
     ) -> Result<Self, StageError> {
         let policy = pc_core::device::resolve(device, DeviceSupport::compiled())
             .map_err(|refusal| StageError::Model(refusal.message()))?;
-        // §16.47 item 4: the OCR stage has no ratified CUDA path, so even a build that
-        // CAN register CUDA refuses here — AFTER resolve, so the GPU-1 NotCompiledIn
-        // refusal (and its frozen message) keeps precedence in a non-cuda build.
-        pc_core::device::ensure_stage_supports(&policy, pc_core::device::Stage::Ocr)
-            .map_err(|refusal| StageError::Model(refusal.message()))?;
+        Self::from_paths_with_policy(encoder, decoder, &policy)
+    }
 
+    /// The pre-flight-and-construct primitive for an already-resolved policy (GPU-3).
+    /// Takes the policy directly — there is no stage check left for OCR, so this skips
+    /// `resolve` and any `ensure_stage_supports` gate; registration happens inside
+    /// `build_session` via `pc_ort::apply_device_policy`.
+    pub fn from_paths_with_policy(
+        encoder: &Path,
+        decoder: &Path,
+        policy: &DevicePolicy,
+    ) -> Result<Self, StageError> {
         // Both pre-flights must happen before any ort call. In particular, this preserves the
         // encoder-specific error when both paths are absent and keeps garbage decoder bytes from
         // obscuring a missing encoder.
         ensure_model_file(encoder)?;
         ensure_model_file(decoder)?;
 
-        let encoder_session = build_session(encoder)?;
-        let decoder_session = build_session(decoder)?;
+        let encoder_session = build_session(encoder, policy)?;
+        let decoder_session = build_session(decoder, policy)?;
         let encoder_inputs = collect_metas(encoder_session.inputs())?;
         let encoder_outputs = collect_metas(encoder_session.outputs())?;
         let decoder_inputs = collect_metas(decoder_session.inputs())?;
@@ -305,10 +311,11 @@ fn validate_values_for_shape(
 }
 
 #[cfg(feature = "onnx")]
-fn build_session(path: &Path) -> Result<Session, StageError> {
+fn build_session(path: &Path, policy: &DevicePolicy) -> Result<Session, StageError> {
     let mut builder = Session::builder().map_err(|error| {
         StageError::Model(format!("failed to configure {}: {error}", path.display()))
     })?;
+    builder = pc_ort::apply_device_policy(builder, policy)?;
     builder = builder
         .with_optimization_level(GraphOptimizationLevel::Level3)
         .map_err(|error| {
@@ -320,7 +327,9 @@ fn build_session(path: &Path) -> Result<Session, StageError> {
     builder = builder.with_inter_threads(0).map_err(|error| {
         StageError::Model(format!("failed to configure {}: {error}", path.display()))
     })?;
-    // No execution provider is registered: ONNX Runtime's default CPU provider is used.
+    // GPU-3: `apply_device_policy` above registers a real execution provider when
+    // `policy.provider_requests()` is non-empty; ONNX Runtime's implicit CPU provider
+    // only stays the only one for a CPU policy, not unconditionally.
     builder
         .commit_from_file(path)
         .map_err(|error| StageError::Model(format!("failed to load {}: {error}", path.display())))

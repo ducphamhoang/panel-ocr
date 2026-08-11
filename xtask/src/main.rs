@@ -16,6 +16,7 @@ mod env;
 mod mask_sweep;
 mod mode_bench;
 mod model_signature;
+mod ocr_device_compare;
 mod ocr_model_signature;
 mod paths;
 mod record;
@@ -87,6 +88,10 @@ enum Command {
     MaskSweep(mask_sweep::Args),
     /// Task #16/#6 (§16.43): non-gating Simple/Annotation/LaMa comparison benchmark.
     ModeBench(mode_bench::Args),
+    /// GPU-3 G3-D (§16.36 item 3): measure OCR CPU vs CUDA device divergence. Needs the
+    /// `cuda` feature and real manga-ocr weights; a non-`cuda` build refuses with a
+    /// clear message.
+    OcrDeviceCompare(ocr_device_compare::Args),
     /// Measure ONNX detector tuning candidates in fresh child processes.
     BenchDetector {
         /// Detector model, using `onnx:<path>`; falls back to PANEL_OCR_ONNX_MODEL.
@@ -179,6 +184,7 @@ fn main() -> Result<()> {
         }
         Command::MaskSweep(args) => mask_sweep::run(args),
         Command::ModeBench(args) => mode_bench::run(args),
+        Command::OcrDeviceCompare(args) => ocr_device_compare::run(args),
         Command::BenchDetector {
             detector,
             reps,

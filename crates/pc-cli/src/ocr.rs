@@ -34,11 +34,18 @@ pub fn build_factory_for_device(
     {
         let policy = pc_core::device::resolve(device, pc_core::device::DeviceSupport::compiled())
             .map_err(|refusal| StageError::Model(refusal.message()))?;
-        // §16.47 item 4: the OCR stage has no ratified CUDA path, so even a build that
-        // CAN register CUDA refuses here — AFTER resolve, so the GPU-1 NotCompiledIn
-        // refusal (and its frozen message) keeps precedence in a non-cuda build.
-        pc_core::device::ensure_stage_supports(&policy, pc_core::device::Stage::Ocr)
-            .map_err(|refusal| StageError::Model(refusal.message()))?;
+        // The resolved policy is deliberately discarded here: OCR's own seam
+        // (`MangaOcrSessions::from_paths_for_device`) re-resolves the same requested
+        // device itself. This does NOT mirror `pc-detect`'s precedent -- the detector's
+        // `pc-cli` seam (`crates/pc-cli/src/detector.rs`) binds and threads its resolved
+        // policy through `from_path_with_config_and_policy` rather than discarding it
+        // (§16.47 item 5: "`pc-cli` binds the policy it currently discards"). Threading
+        // the policy through here instead of re-resolving was left as optional by the
+        // GPU-3 G3-B/C implementation brief; re-resolving is correct but independent of
+        // the detector's approach, not a mirror of it. GPU-3 removed the OCR
+        // `ensure_stage_supports` call -- OCR now has a real CUDA path, so there is no
+        // stage check left at this seam.
+        let _ = &policy;
 
         let models_dir = crate::paths::models_dir(cache_root);
         let encoder_path =

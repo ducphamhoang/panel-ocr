@@ -11,6 +11,7 @@
 //! the `onnx` feature — see spec §16.8 item 1 and §16.30/§16.31.
 
 pub mod decode;
+pub mod device_divergence;
 pub mod engine;
 pub mod onnx;
 pub mod post;

@@ -14,12 +14,16 @@ repository.workspace   = true
 # below it run with mocks and no model files at all. Task P7 adds the real backend
 # behind this feature; spec §16.8 item 1.
 default = []
-onnx    = ["dep:ort"]
+onnx    = ["dep:ort", "pc-ort/onnx"]
+# GPU-3: OCR's real, measured CUDA path reuses the shared `pc-ort` boundary G3-A
+# extracted (same boundary `pc-detect` uses), so the feature chain is the same one.
+cuda    = ["onnx", "pc-ort/cuda", "pc-core/cuda"]
 # Exposes MockOcrEngine / MockOcrFactory to other crates' tests (§7.2 pattern).
 testkit = []
 
 [dependencies]
 pc-core = { path = "../pc-core" }
+pc-ort  = { path = "../pc-ort" }
 image   = { workspace = true }
 tracing = { workspace = true }
 ort     = { workspace = true, optional = true }
@@ -31,3 +35,4 @@ pc-ocr = { path = ".", features = ["testkit"] }
 pc-testkit = { path = "../pc-testkit" }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
+toml_edit = { workspace = true }

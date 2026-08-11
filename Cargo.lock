@@ -1198,9 +1198,11 @@ dependencies = [
  "ort",
  "pc-core",
  "pc-ocr",
+ "pc-ort",
  "pc-testkit",
  "sha2",
  "tempfile",
+ "toml_edit",
  "tracing",
 ]
 
@@ -2433,6 +2435,7 @@ dependencies = [
  "pc-inpaint",
  "pc-mask",
  "pc-models",
+ "pc-ocr",
  "pc-pipeline",
  "pc-preprocess",
  "pc-testkit",

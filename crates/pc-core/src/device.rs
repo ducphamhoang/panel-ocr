@@ -140,7 +140,6 @@ impl DevicePolicy {
 /// requested device (§16.47 item 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stage {
-    Ocr,
     Inpaint,
 }
 
@@ -148,7 +147,6 @@ impl Stage {
     /// The lowercase wire spelling used in refusal messages.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Ocr => "ocr",
             Self::Inpaint => "inpaint",
         }
     }
@@ -178,12 +176,22 @@ impl DeviceRefusal {
                 // and LaMa do NOT share one citation) and enabled-flag path, keyed on
                 // `stage` rather than duplicated as a second hard-coded name —
                 // `Stage::as_str()` is the single source for the wire spelling.
-                let (citation, flag, section) = match stage {
-                    Stage::Ocr => ("§16.36 item 3", "ocr_enabled", "[preprocessor]"),
-                    Stage::Inpaint => ("§16.38 item 15(d)", "inpainting_enabled", "[inpainter]"),
-                };
+                //
+                // GPU-3 removed the OCR stage variant (it now has a real, ratified CUDA
+                // path), so this arm's only constructible stage is Inpaint. The
+                // measurement clause names what §16.48 item 2 actually measured —
+                // detector and OCR — and the flag advice names what actually runs on
+                // CUDA once inpainting is disabled: the detector and OCR, not just the
+                // detector. The citation is §16.48 item 2, not §16.47 item 1 — item 1
+                // never said anything about OCR being measured (§16.47 item 4 is marked
+                // SUPERSEDED IN PART on this exact clause).
+                let (citation, flag, section) = (
+                    "§16.38 item 15(d)",
+                    "inpainting_enabled",
+                    "[inpainter]",
+                );
                 format!(
-                    "the cuda execution provider is compiled into this build, but no CUDA path is ratified for the {} stage ({citation} / §16.47 item 1: CUDA has only been measured for the text detector). Set `{flag} = false` under `{section}` to run the detector on CUDA, or set device = \"cpu\" to run every stage on the CPU execution provider.",
+                    "the cuda execution provider is compiled into this build, but no CUDA path is ratified for the {} stage ({citation} / §16.48 item 2: CUDA has now been measured for the text detector and OCR). Set `{flag} = false` under `{section}` to run the detector and OCR on CUDA, or set device = \"cpu\" to run every stage on the CPU execution provider.",
                     stage.as_str()
                 )
             }

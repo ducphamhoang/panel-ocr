@@ -36,6 +36,7 @@ pc-imageops = { path = "../crates/pc-imageops" }
 pc-preprocess = { path = "../crates/pc-preprocess" }
 pc-mask    = { path = "../crates/pc-mask" }
 pc-models  = { path = "../crates/pc-models" }
+pc-ocr     = { path = "../crates/pc-ocr" }
 # §16.43 item 5 (D3, Fable's ruling): mode-bench's LaMa cells reuse
 # `pc_cli::inpainter::build_provider` rather than hand-rolling a second model-acquisition
 # mechanism, and call `pc_pipeline::run_inpaint` directly (item 8's stage sequence).
