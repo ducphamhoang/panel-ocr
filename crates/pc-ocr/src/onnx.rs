@@ -281,6 +281,136 @@ impl MangaOcrSessions {
         let start = (seq_len - 1) * vocab;
         Ok(values[start..start + vocab].to_vec())
     }
+
+    /// Run one decoder forward pass over a whole batch of prefixes (all equal length,
+    /// since beam search advances every live beam by exactly one token per step) and
+    /// return each row's logits for its final sequence position.
+    pub fn decode_step_batch(
+        &self,
+        prefixes: &[&[u32]],
+        encoder: &EncoderOutput,
+    ) -> Result<Vec<Vec<f32>>, StageError> {
+        if prefixes.is_empty() {
+            return Err(StageError::InvalidInput(
+                "decoder prefix batch must contain at least one prefix".into(),
+            ));
+        }
+        let batch = prefixes.len();
+        let seq_len = prefixes[0].len();
+        if seq_len == 0 {
+            return Err(StageError::InvalidInput(
+                "decoder input_ids must contain at least one token".into(),
+            ));
+        }
+        for (index, prefix) in prefixes.iter().enumerate().skip(1) {
+            if prefix.len() != seq_len {
+                return Err(StageError::InvalidInput(format!(
+                    "decoder prefix batch has unequal lengths: prefix 0 has {seq_len} \
+                     tokens but prefix {index} has {}",
+                    prefix.len()
+                )));
+            }
+        }
+        if encoder.shape.len() != 3 {
+            return Err(StageError::Inference(format!(
+                "encoder hidden-state shape is {:?}, expected [batch, seq_len, hidden]",
+                encoder.shape
+            )));
+        }
+        validate_values_for_shape(
+            &encoder.shape,
+            encoder.hidden_states.len(),
+            "encoder hidden states",
+        )?;
+        let encoder_shape = encoder
+            .shape
+            .iter()
+            .map(|&dimension| {
+                usize::try_from(dimension).map_err(|_| {
+                    StageError::Inference(format!(
+                        "encoder hidden-state shape has invalid dimension: {:?}",
+                        encoder.shape
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let ids_tensor = Tensor::<i64>::from_array((
+            [batch, seq_len],
+            prefixes
+                .iter()
+                .flat_map(|prefix| prefix.iter().map(|&id| id as i64))
+                .collect::<Vec<i64>>(),
+        ))
+        .map_err(|error| {
+            StageError::Inference(format!("failed to create decoder input tensor: {error}"))
+        })?;
+        // The recorded decoder signature declares the SAME symbolic `batch_size` on both
+        // `input_ids` and `encoder_hidden_states` (§16.51 item 2), so the encoder output
+        // must be tiled `batch×`.
+        let mut tiled_hidden = Vec::with_capacity(encoder.hidden_states.len() * batch);
+        for _ in 0..batch {
+            tiled_hidden.extend_from_slice(&encoder.hidden_states);
+        }
+        let hidden_tensor =
+            Tensor::<f32>::from_array(([batch, encoder_shape[1], encoder_shape[2]], tiled_hidden))
+                .map_err(|error| {
+                    StageError::Inference(format!(
+                        "failed to create decoder encoder-hidden-state tensor: {error}"
+                    ))
+                })?;
+
+        let (shape, values) = {
+            let mut session = self.decoder.lock().unwrap_or_else(|poisoned| {
+                tracing::warn!(
+                    "a previous ONNX decoder inference panicked inside the session lock; reusing the session"
+                );
+                poisoned.into_inner()
+            });
+            let runtime_outputs = session
+                .run(ort::inputs!["input_ids" => ids_tensor, "encoder_hidden_states" => hidden_tensor])
+                .map_err(|error| {
+                    StageError::Inference(format!("ONNX decoder session run failed: {error}"))
+                })?;
+            let output = runtime_outputs.get("logits").ok_or_else(|| {
+                StageError::Inference("ONNX decoder output `logits` was not returned".into())
+            })?;
+            let (shape, values) = output.try_extract_tensor::<f32>().map_err(|error| {
+                StageError::Inference(format!(
+                    "failed to extract ONNX decoder output `logits` as f32: {error}"
+                ))
+            })?;
+            (shape.to_vec(), values.to_vec())
+        };
+
+        if shape.len() != 3 || shape[0] != batch as i64 {
+            return Err(StageError::Inference(format!(
+                "ONNX decoder output `logits` has shape {shape:?}, expected [{batch}, seq_len, vocab]"
+            )));
+        }
+        let out_seq_len = usize::try_from(shape[1]).map_err(|_| {
+            StageError::Inference(format!(
+                "ONNX decoder output `logits` has invalid sequence dimension: {shape:?}"
+            ))
+        })?;
+        let vocab = usize::try_from(shape[2]).map_err(|_| {
+            StageError::Inference(format!(
+                "ONNX decoder output `logits` has invalid vocabulary dimension: {shape:?}"
+            ))
+        })?;
+        if out_seq_len != seq_len || vocab == 0 {
+            return Err(StageError::Inference(format!(
+                "ONNX decoder output `logits` has shape {shape:?}, expected [{batch}, {seq_len}, vocab > 0]"
+            )));
+        }
+        validate_values_for_shape(&shape, values.len(), "decoder logits")?;
+        let start = (seq_len - 1) * vocab;
+        Ok((0..batch)
+            .map(|row| {
+                values[row * seq_len * vocab + start..row * seq_len * vocab + start + vocab]
+                    .to_vec()
+            })
+            .collect())
+    }
 }
 
 #[cfg(feature = "onnx")]

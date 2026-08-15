@@ -51,6 +51,11 @@ impl OcrEngine for MangaOcrEngine {
             fn logits(&self, prefix: &[u32]) -> Result<Vec<f32>, StageError> {
                 self.sessions.decode_step(prefix, self.encoder_output)
             }
+
+            fn logits_batch(&self, prefixes: &[&[u32]]) -> Result<Vec<Vec<f32>>, StageError> {
+                self.sessions
+                    .decode_step_batch(prefixes, self.encoder_output)
+            }
         }
 
         let source = DecoderLogitsSource {
