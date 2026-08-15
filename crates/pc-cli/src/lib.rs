@@ -14,12 +14,13 @@ pub mod logging;
 pub mod models;
 pub mod ocr;
 pub mod paths;
+pub mod residual_check;
 pub mod setup;
 pub mod standalone_inpaint;
 
 pub use args::{
     CacheCommand, CleanArgs, Cli, Command, DetectorSpec, InpaintArgs, ModelsCommand, OcrArgs,
-    ProfileCommand, ReportFormatArg,
+    ProfileCommand, ReportFormatArg, ResidualCheckArgs, ResidualFormat,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -48,6 +49,7 @@ pub fn run(cli: Cli) -> i32 {
         Command::Clean(args) => run_clean(args),
         Command::Ocr(args) => run_ocr(args),
         Command::Inpaint(args) => standalone_inpaint::run(args),
+        Command::ResidualCheck(args) => residual_check::run(args),
         Command::Profile { command } => run_profile(command),
         Command::Cache { command } => run_cache(command),
         Command::Models { command } => run_models(command),

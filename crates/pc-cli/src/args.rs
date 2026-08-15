@@ -38,6 +38,9 @@ pub enum Command {
     /// Inpaint a user-supplied mask over an image directly — no cache/uuid state (spec-adjacent,
     /// not part of the `clean` pipeline's five stages).
     Inpaint(InpaintArgs),
+    /// Run the text detector over an already-cleaned image and report residual text it still
+    /// finds. Non-gating diagnostic: reports numbers, never fails the process on detections.
+    ResidualCheck(ResidualCheckArgs),
     /// Inspect and manage profiles.
     Profile {
         #[command(subcommand)]
@@ -220,6 +223,55 @@ pub struct InpaintArgs {
     /// never for pipeline checkpoints (this command has none). Hidden like `clean`'s.
     #[arg(long, value_name = "DIR", hide = true)]
     pub cache_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct ResidualCheckArgs {
+    /// The already-cleaned image to check for residual detected text.
+    #[arg(required = true, value_name = "IMAGE")]
+    pub image: PathBuf,
+
+    /// RGBA PNG the same pixel dimensions as IMAGE. Alpha > 0 marks the region that was
+    /// supposed to be erased; only confident blocks overlapping a masked pixel count as
+    /// residual. Omit to check the whole image.
+    #[arg(long, value_name = "FILE")]
+    pub mask: Option<PathBuf>,
+
+    /// Minimum detector confidence for a block to count as residual text found.
+    #[arg(long, value_name = "F32")]
+    pub threshold: Option<f32>,
+
+    /// Report format: `text` (default, human-readable) or `json` (for automated aggregation).
+    #[arg(long, value_enum, default_value_t = ResidualFormat::Text)]
+    pub format: ResidualFormat,
+
+    /// Write the report here instead of to stdout.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<PathBuf>,
+
+    /// Detector backend. Hidden: `onnx` is the documented default and is available when
+    /// pc-cli is built with its non-default `onnx` feature.
+    #[arg(long, value_name = "SPEC", default_value = "onnx", hide = true)]
+    pub detector: DetectorSpec,
+
+    #[arg(long, value_name = "NAME", conflicts_with = "profile_path")]
+    pub profile: Option<String>,
+    #[arg(long, value_name = "FILE")]
+    pub profile_path: Option<PathBuf>,
+
+    /// Override the detector model file.
+    #[arg(long, value_name = "FILE", hide = true)]
+    pub model_path: Option<PathBuf>,
+
+    /// Cache directory override (spec §16.12 item 21).
+    #[arg(long, value_name = "DIR", hide = true)]
+    pub cache_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ResidualFormat {
+    Text,
+    Json,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

@@ -1054,6 +1054,7 @@ dependencies = [
  "pc-ocr",
  "pc-pipeline",
  "pc-testkit",
+ "serde_json",
  "tempfile",
  "tracing",
  "tracing-subscriber",
