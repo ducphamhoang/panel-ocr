@@ -272,12 +272,20 @@ only the touched crates, and skipped `cargo fmt --all` entirely) — caught only
 the Orchestrator re-ran the full bar independently afterward. The preamble moves that
 catch earlier, at the source, rather than relying on a second pass to find it every time.
 
-1. **Run the full four-command verification bar yourself before declaring done, not
-   just the scoped tests named in the brief**: `cargo test --workspace`, `cargo test
-   --workspace --all-targets --features pc-cli/onnx`, `cargo clippy --workspace
-   --all-targets --all-features -- -D warnings`, `cargo fmt --all --check`. If the brief
-   also names a `cuda`-tier command, run that too. Scoped tests during iteration are
-   fine; the full bar is what you report as "done."
+1. **Exactly one party runs the full four-command verification bar per task — never
+   both.** For Spec-sensitive tier, that's still you (the implementer): `cargo test
+   --workspace`, `cargo test --workspace --all-targets --features pc-cli/onnx`, `cargo
+   clippy --workspace --all-targets --all-features -- -D warnings`, `cargo fmt --all
+   --check` (+ the `cuda`-tier command if the brief names one). For Direct/Simple tier,
+   the Orchestrator owns the one full-bar run at the gate instead — run your scoped
+   tests plus `cargo fmt --all --check` during iteration, and say explicitly in your
+   report "scoped only, full bar deferred to the Orchestrator" rather than claiming the
+   full bar. Scoped tests during iteration are fine either way; what changes is who runs
+   the full bar once, not whether it runs. (Decided 2026-08-15, Fable-adjudicated: the
+   G2-A/B and G2-C incidents behind this preamble were a *misreporting* problem, already
+   fixed by points 2–6 below — running the full bar twice on a Simple task was pure
+   duplication, not an added safeguard. Never applies to Spec-sensitive work, where the
+   duplication is the point.)
 2. **Disclose every deviation from the brief explicitly**, however small (a manifest
    edit the brief didn't spell out, a clippy-driven rewording of a drafted test) — never
    silently absorb one, even when the fix is obviously correct.
@@ -293,10 +301,13 @@ catch earlier, at the source, rather than relying on a second pass to find it ev
 6. **Report `git diff --stat` output directly** as part of "files touched," not a
    prose recollection of what you edited.
 
-**This does not relax the Orchestrator's own re-verification duty.** A more complete
-cmdc self-report is not a substitute for independently re-running the bar and re-
-checking the diff before committing — it only reduces how often that independent check
-finds something the report missed.
+**This does not relax the Orchestrator's own re-verification duty for Spec-sensitive
+work**, where both runs still happen: a more complete cmdc self-report there is not a
+substitute for independently re-running the bar and re-checking the diff before
+committing — it only reduces how often that independent check finds something the
+report missed. For Direct/Simple tier, per point 1 above, the Orchestrator's single
+gate-time run **is** the re-verification duty, not an addition to a second implementer
+run — do not also demand the implementer run the full bar there.
 
 **Keep briefs surgical, not exhaustive.** A brief should state what changed and what's
 needed for *this* step — pointing at an existing artifact (a prior brief, a spec
@@ -431,6 +442,12 @@ to grow the same instance's context indefinitely.
 - `docs/WORKSTATE.md` is the canonical live continuation index; update it after each meaningful transition and record observed HEADs plus actual command results.
 - The work-state file is a control document, not the normative source: reconcile it against git, frozen tests, and the ratified spec before acting.
 - Do not silently merge stale `HANDOVER.md` state into the current plan; preserve stale-state corrections in the work-state update log.
+- **Carve-out (2026-08-15):** a Direct-tier task that starts and finishes within one
+  session, ending in a clean commit with no open blocker, may skip the per-transition
+  updates and record a single entry at completion instead — the commit itself is the
+  observed-state record for that kind of task, and the next session reconciles
+  WORKSTATE against git regardless. Anything spanning sessions, worktrees, or leaving a
+  blocker open still gets the full per-transition discipline above.
 
 ## Notes
 
@@ -469,9 +486,42 @@ to grow the same instance's context indefinitely.
   explicitly recorded as a ratified decision (§16.x) rather than left silently open.
   Commit along task/spec boundaries so each commit is reviewable on its own; state in
   the message what was verified.
+  - **Carve-out for diffs touching only `.md` files** (no `.rs`, no manifest, no
+    `tests/fixtures/`): run `cargo test --workspace` only — this repo's prose is a real
+    test input (`crates/pc-testkit/tests/agent_definitions.rs`, `spec_supersession.rs`,
+    `a4d_claim_sites.rs` and others parse `CLAUDE.md`/`docs/PIPELINE_SPEC_V1.md` at
+    runtime, and cookbook rule 6a records a paragraph rewrap turning one of these gates
+    red) — and skip the onnx tier, clippy, and fmt, since those three are functions of
+    Rust source and manifests that a pure-doc diff cannot move. Do not substitute a
+    crate-scoped run (e.g. `-p pc-testkit`) for this — measured slower than the full
+    workspace run on this repo, with no offsetting safety benefit. Any diff that touches
+    even one non-`.md` file gets the full bar, no partial credit.
+  - **Measured cost, so "skip it to save time" isn't the right frame for code diffs**:
+    the full four-command bar runs in ~90s wall-clock on a warm `target/` (test ~27s,
+    onnx ~35s, clippy ~23s, fmt ~6s); the multi-minute numbers people remember are a
+    cold-cache/fresh-worktree cost paid once, not a per-task cost. Keeping a warm
+    `target/` per worktree is the actual lever, not narrowing which commands run.
+  - **Who runs it**: for Spec-sensitive tier, both the implementer and the Orchestrator
+    still run the full bar independently (see the standing cmdc preamble). For
+    Direct/Simple tier, exactly one run is required — the Orchestrator's, at the gate —
+    per the cmdc preamble's point 1; do not also demand a duplicate implementer run
+    there.
 - **Pushing still requires being asked**, per standing repo conventions.
-- One exception to pre-authorized committing: an `insta` snapshot may not be committed
-  until §15.10(a)'s hand-traced review is recorded in `docs/GOLDEN_CALIBRATION.md` with
-  reviewer/date/method. That review needs a human reviewer independent of whoever
-  produced the snapshot — the same self-reference rule as §16.13 item 4. Derive and
-  present the expected values; do not self-attest them.
+- **The `insta` snapshot exception below this line was retired 2026-08-15 (see the
+  entry immediately after) — kept struck through, not deleted, per this file's own
+  supersession convention** (never silently delete a superseded rule; the next reader
+  needs to know it changed and why): ~~an `insta` snapshot may not be committed until
+  §15.10(a)'s hand-traced review is recorded in `docs/GOLDEN_CALIBRATION.md` with
+  reviewer/date/method, by a reviewer independent of whoever produced the snapshot.~~
+  **SUPERSEDED 2026-08-15**: snapshots were dropped project-wide by §16.20 (Fable
+  tie-break) — `insta` is in no crate manifest and `assert_json_snapshot!` in no test,
+  confirmed by direct search, not assumed. Per cookbook rule 12's own ruling, the
+  §15.10(a) gate was aimed at a copy (the snapshot transcription), not the artifact that
+  carries the risk (recorded model/detector output) — the obligation already moved
+  there. **The live version of this rule is: a committed fixture under
+  `tests/fixtures/recorded/` may not be added or changed without an independent human
+  review of the derivation**, same independence requirement as §16.13 item 4, tracked
+  via the recorded-fixture digest gate (§16.13 item 6) and `docs/DETECTOR_ORACLE.md`'s
+  provenance, not via `docs/GOLDEN_CALIBRATION.md`. If `insta` or per-field snapshotting
+  is ever reintroduced, restore the original hand-traced-review requirement rather than
+  assuming this carve-out still applies to it.
