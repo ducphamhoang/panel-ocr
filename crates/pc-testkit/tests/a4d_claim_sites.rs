@@ -659,8 +659,11 @@ const PRESENT: &[Site] = &[
         //     than four clauses; B2: two more "still v1.5 scope" sites found unmarked) plus
         //     five non-blocking corrections fixed, net lines added above this point;
         //     re-derived by content, single occurrence confirmed).
+        //   → 9543 (2026-08-16, §16.51's OCR beam-batching ratification added 20 lines
+        //     before this site; re-derived by grep for the exact claim text, single
+        //     occurrence confirmed, not incremented blindly).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 9523,
+        line: 9543,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {
