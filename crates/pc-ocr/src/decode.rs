@@ -8,6 +8,13 @@ use std::collections::{HashMap, HashSet};
 /// logits row for the last position only.
 pub trait LogitsSource {
     fn logits(&self, prefix: &[u32]) -> Result<Vec<f32>, StageError>;
+
+    /// One logits row per prefix, in order. All prefixes have equal length (beam search
+    /// extends every live beam by exactly one token per step). Default = today's
+    /// one-call-per-prefix behaviour, so no existing impl changes semantics.
+    fn logits_batch(&self, prefixes: &[&[u32]]) -> Result<Vec<Vec<f32>>, StageError> {
+        prefixes.iter().map(|p| self.logits(p)).collect()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -71,12 +78,25 @@ pub fn beam_search(
         }
 
         let mut candidates = Vec::new();
-        for (beam_index, (sequence, cumulative_logprob)) in beams.iter().enumerate() {
-            let logits = source.logits(sequence)?;
+        let prefixes: Vec<&[u32]> = beams
+            .iter()
+            .map(|(sequence, _)| sequence.as_slice())
+            .collect();
+        let rows = source.logits_batch(&prefixes)?;
+        if rows.len() != beams.len() {
+            return Err(StageError::InvalidInput(format!(
+                "logits_batch returned {} rows for {} live beams",
+                rows.len(),
+                beams.len()
+            )));
+        }
+        for (beam_index, ((sequence, cumulative_logprob), logits)) in
+            beams.iter().zip(rows.iter()).enumerate()
+        {
             if logits.is_empty() {
-                return Err(StageError::InvalidInput(
-                    "decoder logits row must not be empty".into(),
-                ));
+                return Err(StageError::InvalidInput(format!(
+                    "decoder logits row {beam_index} must not be empty"
+                )));
             }
 
             let row_max = logits
