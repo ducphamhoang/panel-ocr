@@ -76,6 +76,16 @@ approx   = "0.5.1"
 tempfile = "3.14.0"
 yaml-rust2 = "0.11.0"
 
+[profile.dev]
+# Full debuginfo is why individual test-binary PDBs reach 100+ MiB (measured
+# 2026-08-16: some single PDBs over 124 MiB), and `target/` was measured at 35.75 GiB,
+# growing ~17 GiB/day on this machine -- on track to repeat the 2026-08-11 129 GiB
+# disk-exhaustion incident within about a week. Line-tables-only keeps `file:line` in
+# panic backtraces (the thing this project's tests actually rely on) while dropping the
+# variable/type debuginfo backtraces don't use. Applies to [profile.test] too, since it
+# doesn't override `debug` itself.
+debug = "line-tables-only"
+
 [profile.test]
 opt-level = 1        # the pixel-math tests are slow at opt-level 0
 
