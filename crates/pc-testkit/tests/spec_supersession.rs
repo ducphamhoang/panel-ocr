@@ -49,7 +49,11 @@ const MARKER: &str = "**SUPERSEDES:";
 // pass, not in the original draft; §16.47 item 11's and §16.49 item 7's merge-policy
 // sentences, both corrected to drop the "rest of the v1.5 backlog" precondition) -- the
 // maintainer's direct decision to defer those four items and close v1.5 on GPU-2/3/4 alone.
-const EXPECTED_PARSED_CLAIMS: usize = 76;
+// §16.52 raises it from 76 to 78: two new markers (the denormal-flush fix qualifies
+// §16.21 item 6's unconditional "CLOSED" framing and §16.32 item 2(b)'s worker-thread
+// invariant, both narrowed to the condition the process-wide once-flag steal actually
+// depends on -- neither section's substantive conclusions are reversed).
+const EXPECTED_PARSED_CLAIMS: usize = 78;
 
 /// Claims whose declared sub-item identity must scope the target-side back-pointer independently.
 /// Most historical lettered claims retain §16.26 item 3(a)'s parent-item span. These two are pinned
@@ -442,6 +446,13 @@ const RATIFIED_SUPERSESSIONS: &[(&str, &str)] = &[
     ("16.50", "16.38 item 15(f)"),
     ("16.50", "16.47 item 11"),
     ("16.50", "16.49 item 7"),
+    // §16.52's two markers: the denormal-flush fix qualifies §16.21 item 6's unconditional
+    // "CLOSED" framing (the detector session must win ONNX Runtime's process-wide
+    // once-flag, which is not guaranteed) and §16.32 item 2(b)'s worker-thread invariant
+    // (the flag reaching the worker's own MXCSR reliably needs the new scoped guard, on
+    // top of the existing confinement). Raises EXPECTED_PARSED_CLAIMS from 76 to 78.
+    ("16.52", "16.21 item 6"),
+    ("16.52", "16.32 item 2(b)"),
 ];
 
 /// Every PROSE-form claim in the file today, measured at `87c74c6`. Layer B's pinned set.

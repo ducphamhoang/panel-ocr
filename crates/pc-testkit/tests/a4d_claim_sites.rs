@@ -374,8 +374,10 @@ const ABSENT: &[Site] = &[
         //   → 3831 (2026-08-10, Senior Rust Engineer, mechanical — the §16.46
         //     shipped-defaults ratification plus its ten supersession back-pointers,
         //     inserted above this point). Re-derived by content, not by adding a delta.
+        // → 3841 (2026-08-16, §16.52's QUALIFIED back-pointer at §16.21 item 6 inserted
+        //   above this point, 8 net lines; re-derived by grep, still vacuously absent).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3833,
+        line: 3843,
         text: "`MaskRefineMode::Annotation`; and",
     },
     Site {
@@ -395,8 +397,10 @@ const ABSENT: &[Site] = &[
         //   → 3913 (2026-08-11, §16.50's back-pointer at §16.23 item 1 inserted above
         //     this point; re-derived by content — the ABSENT check still holds vacuously
         //     at the new line, same as the existing note above documents for prior shifts).
+        // → 3921 (2026-08-16, §16.52's QUALIFIED back-pointer at §16.21 item 6 inserted
+        //   above this point, 8 net lines; re-derived by grep, still vacuously absent).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3913,
+        line: 3923,
         text: "**Annotation** last",
     },
 ];
@@ -532,8 +536,10 @@ const PRESENT: &[Site] = &[
         //   → 3822 (2026-08-10, Senior Rust Engineer, mechanical — the §16.46
         //     shipped-defaults ratification plus its ten supersession back-pointers,
         //     inserted above this point). Re-derived by content, not by adding a delta.
+        // → 3832 (2026-08-16, §16.52's QUALIFIED back-pointer at §16.21 item 6 inserted
+        //   above this point, 8 net lines; re-derived by content, single occurrence).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3824,
+        line: 3834,
         text: "§16.39 later ratified and landed that opt-in path",
     },
     Site {
@@ -543,8 +549,10 @@ const PRESENT: &[Site] = &[
         //   → 3834 (2026-08-10, Senior Rust Engineer, mechanical — the §16.46
         //     shipped-defaults ratification plus its ten supersession back-pointers,
         //     inserted above this point). Re-derived by content, not by adding a delta.
+        //   → 3844 (2026-08-16, §16.52's QUALIFIED back-pointer at §16.21 item 6 inserted
+        //     above this point, 8 net lines; re-derived by content, single occurrence).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3836,
+        line: 3846,
         text: "The 2026-07-29 plan recorded these as v1.5 scope",
     },
     Site {
@@ -556,8 +564,10 @@ const PRESENT: &[Site] = &[
         //     inserted above this point). Re-derived by content, not by adding a delta.
         //   → 3856 (2026-08-11, §16.50's back-pointer at §16.23 item 1 inserted above
         //     this point; re-derived by content, single occurrence confirmed).
+        // → 3864 (2026-08-16, §16.52's QUALIFIED back-pointer at §16.21 item 6 inserted
+        //   above this point, 8 net lines; re-derived by content, single occurrence).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3856,
+        line: 3866,
         text: "Historical sequencing (2026-07-29)",
     },
     Site {
@@ -569,8 +579,10 @@ const PRESENT: &[Site] = &[
         //     inserted above this point). Re-derived by content, not by adding a delta.
         //   → 3875 (2026-08-11, §16.50's back-pointer at §16.23 item 1 inserted above
         //     this point; re-derived by content, single occurrence confirmed).
+        // → 3883 (2026-08-16, §16.52's QUALIFIED back-pointer at §16.21 item 6 inserted
+        //   above this point, 8 net lines; re-derived by content, single occurrence).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3875,
+        line: 3885,
         text: "§16.39 subsequently landed the path",
     },
     Site {
@@ -582,8 +594,10 @@ const PRESENT: &[Site] = &[
         //     inserted above this point). Re-derived by content, not by adding a delta.
         //   → 3920 (2026-08-11, §16.50's back-pointer at §16.23 item 1 inserted above
         //     this point; re-derived by content, single occurrence confirmed).
+        // → 3928 (2026-08-16, §16.52's QUALIFIED back-pointer at §16.21 item 6 inserted
+        //   above this point, 8 net lines; re-derived by content, single occurrence).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 3920,
+        line: 3930,
         text: "historical final step; §16.39 subsequently landed it",
     },
     Site {
@@ -662,8 +676,12 @@ const PRESENT: &[Site] = &[
         //   → 9543 (2026-08-16, §16.51's OCR beam-batching ratification added 20 lines
         //     before this site; re-derived by grep for the exact claim text, single
         //     occurrence confirmed, not incremented blindly).
+        //   → 9584 (2026-08-16, §16.52's denormal-fix ratification, its two QUALIFIED
+        //     back-pointers at §16.21 item 6 and §16.32 item 2(b), added 41 net lines
+        //     before this site; re-derived by grep for the exact claim text, single
+        //     occurrence confirmed, not incremented blindly).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 9543,
+        line: 9590,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {
