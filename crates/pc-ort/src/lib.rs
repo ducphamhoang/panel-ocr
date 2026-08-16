@@ -4,6 +4,10 @@
 //! `pc-ocr` (G3-B/C) and later `pc-inpaint` (GPU-4) can reuse it without duplicating
 //! the single most important line in the feature (`.error_on_failure()`) or creating a
 //! forbidden stage-crate-to-stage-crate dependency.
+/// Scoped MXCSR denormal-flush control (§16.52 item 5's D0). Default tier, no `ort`, no
+/// `onnx` feature; `x86_64`-only, matching `crates/pc-ort/tests/denormal_guard.rs`.
+#[cfg(target_arch = "x86_64")]
+pub mod denormal;
 
 /// The explicit execution-provider registrations a resolved [`DevicePolicy`] calls for
 /// (§16.47 item 3).
