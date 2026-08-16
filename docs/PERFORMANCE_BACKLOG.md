@@ -1,5 +1,23 @@
 # CPU performance backlog
 
+## STATUS, 2026-08-16 — OCR beam-batching (B1-B3) shipped; B4 deferred
+
+The decode-loop fix this backlog's headline finding pointed at is **implemented and
+committed**: §16.51 ratified the design, B1 (`db64059`) and B2+B3 (`de99274`) shipped it,
+verified against the real pinned weights (bit-identical batched-vs-single logits, and an
+end-to-end match against real upstream `manga_ocr`'s own decoded text). Real measured
+speedup: ~1.1x-1.6x, degrading with sequence length — not the ~4x this doc originally
+guessed from call-count alone (see §16.51 item 4 for the corrected, measured numbers).
+
+**B4** (the `xtask`/`OCR_DEVICE_DIVERGENCE.md` diagnostic-tooling half of §16.51 item 6/7)
+is **explicitly deferred, not forgotten**, by direct user decision: it only affects the
+accuracy of a non-gating CPU-vs-CUDA comparison document, has zero effect on CPU behavior
+or the shipped production code path, and needs real GPU hardware + cuDNN back on `PATH`
+to attempt — none of which serves the standing "focus on CPU for now" priority. Pick it
+up whenever GPU-side diagnostic accuracy matters again; nothing about B1-B3 depends on it.
+
+**Naive OCR concurrency remains NOT shipped, and its root cause is now RESOLVED (2026-08-16): memory-bandwidth/cache contention, not thread-pool scheduling.** The discriminating experiment this doc named as the next step was run: 3 concurrent decoder sessions with `intra_threads` explicitly capped to 1 each (vs. the default/auto 0) measured **0.37x** — *worse* than the uncapped concurrent control's **0.44x**, both against a 1x sequential baseline. If burst-level ONNX-Runtime thread-pool contention were the cause, capping threads should have helped; it didn't, ruling that hypothesis out directly (not by elimination). **Conclusion: concurrent OCR sessions contend for memory bandwidth/cache, not CPU scheduling — this is not fixable by tuning thread counts, and further concurrency-based OCR speedup attempts on this hardware should not be pursued via that lever.** The speedup that WAS shipped (batching, B1-B3) is a different mechanism entirely — fewer, larger sequential calls, not concurrent execution.
+
 ## Fable advisory consult, 2026-08-15 — READ THIS FIRST, it reorders everything below
 
 Consulted per this project's >5-iteration escalation rule (advisory only, no code — see
