@@ -379,6 +379,12 @@ pub struct OnnxDetector {
     outputs: Vec<OutputMeta>,
     output_names: Vec<String>,
     output_shapes: Vec<Vec<i64>>,
+    /// Observed FTZ/DAZ state of the worker thread immediately before the most recent real
+    /// inference, encoded per §16.52 item 3(a) (one relaxed atomic store per inference — not
+    /// a real cost). The concept is meaningless off x86_64, so the field, its accessor, and
+    /// its wiring are all arch-gated.
+    #[cfg(target_arch = "x86_64")]
+    last_flush_state: std::sync::Arc<std::sync::atomic::AtomicU8>,
 }
 
 #[cfg(feature = "onnx")]
@@ -463,8 +469,12 @@ impl OnnxDetector {
         let worker_model_path = model_path.clone();
         let worker_tuning = tuning.clone();
         let worker_policy = policy.clone();
+        #[cfg(target_arch = "x86_64")]
+        let last_flush_state = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
         let (worker_tx, worker_rx) = mpsc::channel();
         let (init_tx, init_rx) = mpsc::channel::<WorkerInitResponse>();
+        #[cfg(target_arch = "x86_64")]
+        let worker_last_flush_state = last_flush_state.clone();
         let worker_join = thread::Builder::new()
             .name("pc-detect-onnx".into())
             .spawn(move || {
@@ -483,7 +493,19 @@ impl OnnxDetector {
                 match initialization {
                     Ok(Ok((mut session, outputs))) => {
                         if init_tx.send(WorkerInitResponse::Ready(outputs)).is_ok() {
-                            run_worker(&mut session, worker_rx);
+                            #[cfg(target_arch = "x86_64")]
+                            {
+                                run_worker(
+                                    &mut session,
+                                    worker_rx,
+                                    worker_tuning.flush_denormals,
+                                    &worker_last_flush_state,
+                                );
+                            }
+                            #[cfg(not(target_arch = "x86_64"))]
+                            {
+                                run_worker(&mut session, worker_rx, worker_tuning.flush_denormals);
+                            }
                         }
                     }
                     Ok(Err(error)) => {
@@ -529,6 +551,8 @@ impl OnnxDetector {
             outputs,
             output_names,
             output_shapes,
+            #[cfg(target_arch = "x86_64")]
+            last_flush_state,
         };
         Ok(detector)
     }
@@ -547,6 +571,21 @@ impl OnnxDetector {
 
     pub fn outputs(&self) -> &[OutputMeta] {
         &self.outputs
+    }
+
+    /// The observed FTZ/DAZ state of the worker thread immediately before the most recent
+    /// real inference, or `None` before any inference has run. §16.52 item 3(a): this is a
+    /// read-only observation of the actual shipped inference path, deliberately ungated
+    /// (unlike the injection hooks below, which change behaviour and correctly stay
+    /// test-only) — gating it would mean the property "the shipped binary really flushes
+    /// during real inference" is asserted only in a test-feature binary the user never
+    /// runs. Arch-gated, not feature-gated: the concept is meaningless off x86_64.
+    #[cfg(target_arch = "x86_64")]
+    pub fn last_inference_flush_state(&self) -> Option<pc_ort::denormal::FlushState> {
+        decode(
+            self.last_flush_state
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
     }
 }
 
@@ -638,8 +677,35 @@ fn build_session(
     Ok((session, outputs))
 }
 
+/// Encode an observed [`pc_ort::denormal::FlushState`] into the single-byte atomic
+/// storage format (§16.52 item 3(a)): bit 2 (`0b100`) marks "recorded", bit 0 is
+/// `flush_to_zero`, bit 1 is `denormals_are_zero`.
+#[cfg(all(feature = "onnx", target_arch = "x86_64"))]
+fn encode(state: pc_ort::denormal::FlushState) -> u8 {
+    0b100 | (state.flush_to_zero as u8) | ((state.denormals_are_zero as u8) << 1)
+}
+
+/// Decode the single-byte atomic storage format back into an optional observed flush
+/// state (`0` = never recorded).
+#[cfg(all(feature = "onnx", target_arch = "x86_64"))]
+fn decode(raw: u8) -> Option<pc_ort::denormal::FlushState> {
+    if raw & 0b100 == 0 {
+        None
+    } else {
+        Some(pc_ort::denormal::FlushState {
+            flush_to_zero: raw & 1 != 0,
+            denormals_are_zero: raw & 2 != 0,
+        })
+    }
+}
+
 #[cfg(feature = "onnx")]
-fn run_worker(session: &mut Session, requests: mpsc::Receiver<WorkerRequest>) {
+fn run_worker(
+    session: &mut Session,
+    requests: mpsc::Receiver<WorkerRequest>,
+    flush_denormals: bool,
+    #[cfg(target_arch = "x86_64")] last_flush_state: &std::sync::atomic::AtomicU8,
+) {
     while let Ok(request) = requests.recv() {
         match request {
             WorkerRequest::Infer { input, response } => {
@@ -650,7 +716,7 @@ fn run_worker(session: &mut Session, requests: mpsc::Receiver<WorkerRequest>) {
                 // original payload lets the existing caller-side panic boundary render it.
                 let response_value =
                     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        infer(session, input)
+                        infer(session, input, flush_denormals, last_flush_state)
                     })) {
                         Ok(Ok(outputs)) => WorkerInferenceResponse::Outputs(outputs),
                         Ok(Err(error)) => WorkerInferenceResponse::Error(error),
@@ -664,7 +730,25 @@ fn run_worker(session: &mut Session, requests: mpsc::Receiver<WorkerRequest>) {
 }
 
 #[cfg(feature = "onnx")]
-fn infer(session: &mut Session, input: Tensor<f32>) -> Result<WorkerOutputs, StageError> {
+fn infer(
+    session: &mut Session,
+    input: Tensor<f32>,
+    flush_denormals: bool,
+    #[cfg(target_arch = "x86_64")] last_flush_state: &std::sync::atomic::AtomicU8,
+) -> Result<WorkerOutputs, StageError> {
+    // The guard is bound at this function's top level, NOT inside a nested block, so it
+    // stays alive across `session.run(...)` below and only drops at the end of `infer`.
+    // A guard scoped to a block that ends before `session.run` would restore the original
+    // MXCSR before the inference it was meant to cover ever executes -- silently defeating
+    // the fix while still compiling and still "looking" wired up.
+    #[cfg(target_arch = "x86_64")]
+    let _guard = flush_denormals.then(pc_ort::denormal::DenormalFlushGuard::enable);
+    #[cfg(target_arch = "x86_64")]
+    if let Some(state) = pc_ort::denormal::flush_state() {
+        last_flush_state.store(encode(state), std::sync::atomic::Ordering::Relaxed);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = flush_denormals;
     let runtime_outputs = session
         .run(ort::inputs![input])
         .map_err(|error| StageError::Inference(format!("ONNX session run failed: {error}")))?;
