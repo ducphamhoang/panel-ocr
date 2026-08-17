@@ -716,7 +716,14 @@ fn run_worker(
                 // original payload lets the existing caller-side panic boundary render it.
                 let response_value =
                     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        infer(session, input, flush_denormals, last_flush_state)
+                        #[cfg(target_arch = "x86_64")]
+                        {
+                            infer(session, input, flush_denormals, last_flush_state)
+                        }
+                        #[cfg(not(target_arch = "x86_64"))]
+                        {
+                            infer(session, input, flush_denormals)
+                        }
                     })) {
                         Ok(Ok(outputs)) => WorkerInferenceResponse::Outputs(outputs),
                         Ok(Err(error)) => WorkerInferenceResponse::Error(error),
