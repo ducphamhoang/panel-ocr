@@ -805,3 +805,17 @@ heavy item rather than continuing an already-long one.
   been shown to be the specific kind of gap that mechanism addresses. Scratch (10-page
   copies, profile TOMLs, cache/output dirs) deleted after use. Verified: pure-`.md`-diff
   carve-out (`cargo test --workspace`, 200 suites, 0 failed).
+
+- 2026-08-17 (same day, PARKED by explicit user decision): **The §16.54 staged
+  OCR‖LaMa pipeline investigation stops here.** User's reasoning, recorded rather than
+  silently dropped: continuing to distinguish fill/drain from cross-model CPU
+  oversubscription would mean chasing hardware-topology-specific conclusions on one
+  machine (this session's i7-12700KF, whose heterogeneous P-core/E-core split was
+  already flagged as a real confound in §16.21) with no natural stopping point, for a
+  benefit Fable's own Ruling 0 predicted was likely to cancel from the start. Per
+  CLAUDE.md's right-sizing principle, effort should track expected benefit, not run
+  open-ended "to be sure." **`StageGate` implementation stays not started.** Full
+  reasoning: `docs/PERFORMANCE_BACKLOG.md`'s "PARKED" entry. This closes the entire
+  §16.54 thread (ratification + both measurement passes + this parking decision) for
+  now — a future session with a concrete reason to revisit should start from that
+  record, not re-derive it or trust this session's single-machine numbers as an answer.

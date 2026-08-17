@@ -153,6 +153,34 @@ exceeds noise at 10 pages) — but a *new*, more specific open question replaced
 (which mechanism, if any, the gap actually calls for), and `StageGate` implementation
 remains not started pending it.
 
+### PARKED, 2026-08-17 — investigation stops here, by explicit user decision, not silent abandonment
+
+The natural next step (repeat the cumulative-diff at 20-30 pages to distinguish
+fill/drain from cross-model CPU oversubscription) is **not being pursued**, per the
+user's explicit reasoning, recorded so a future session finds a decision rather than an
+abandoned thread: **any conclusion from further measurement on this one machine risks
+being hardware-topology-specific, not general.** This machine's own CPU
+(i7-12700KF) already has a documented heterogeneous P-core/E-core split that this
+project independently flagged as a real confound (§16.21's "oversubscription is real...
+some landing on the i7-12700KF's slower E-cores"). Chasing a precise root-cause
+attribution across batch sizes on this one machine, only to then need to ask whether it
+generalizes to a 4-core laptop, a shared cloud vCPU, or a different vendor's
+core-scheduling behavior, is an open-ended cost with no natural stopping point — and per
+CLAUDE.md's right-sizing principle, effort should be proportional to expected benefit,
+not open-ended "to be sure." That benefit was never solid to begin with: Fable's own
+Ruling 0 (§16.54) predicted, from reasoning alone, that a real measurement would likely
+cancel this redesign; nothing measured since has raised that expectation, only
+sharpened what an eventual "yes" would need to show.
+
+**Disposition: `StageGate` implementation stays not started. This entire investigation
+(§16.54's ratification, both P0/S0 measurement passes, and this parking decision) is
+closed for now, not deleted or hidden** — a future session with a concrete reason to
+revisit (a specific deployment target's hardware, a user report that batch throughput is
+the actual bottleneck, or interest in the fill/drain-vs-oversubscription question for its
+own sake) should start from this record rather than re-deriving it, and should treat the
+20-30-page distinguishing experiment above as the first thing to run, not this session's
+single-machine numbers as an answer.
+
 ## NEW LEVER, 2026-08-17 — cross-image OCR/inpaint overlap: measured promising, not yet designed
 
 **User-proposed optimization: instead of running each image's whole pipeline strictly
