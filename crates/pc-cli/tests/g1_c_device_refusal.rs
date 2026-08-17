@@ -62,10 +62,14 @@ fn cuda_refusal() -> DeviceRefusal {
         .expect_err("the explicit CPU-only capability must refuse cuda")
 }
 
-// GPU-2 (§16.47 item 10): used only by the three `#[cfg(not(feature = "cuda"))]`-gated
-// tests below it; the sixth, ungated test doesn't call it. Gated identically so
-// `cargo clippy --all-features` doesn't see it as dead code once `cuda` exists.
-#[cfg(not(feature = "cuda"))]
+// GPU-2 (§16.47 item 10): used only by the three `#[cfg(all(feature = "onnx", not(feature
+// = "cuda")))]`-gated tests below it; the sixth, ungated test doesn't call it. Gated
+// identically to its call sites -- not just `not(feature = "cuda")` -- so it isn't dead
+// code on the default (non-onnx) tier, where none of its callers compile either
+// (confirmed 2026-08-17: `RUSTFLAGS="-D warnings" cargo check -p pc-cli --test
+// g1_c_device_refusal --all-targets` on the default tier failed with exactly this
+// function reported never used, before this gate was corrected).
+#[cfg(all(feature = "onnx", not(feature = "cuda")))]
 fn assert_exact_cli_refusal(output: &Output) {
     let expected = format!("error: model error: {}\n", cuda_refusal().message());
     assert_eq!(
