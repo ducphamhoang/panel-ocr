@@ -36,6 +36,11 @@ see `docs/WORKSTATE.md` and `docs/PIPELINE_SPEC_V1.md` for that record.
   across runs. Fixed with a scoped guard that reapplies the flag on every inference
   call rather than relying on a process-wide once-flag. Verified bit-identical output
   across every thread count and both flush states against real cached weights.
+- **Fixed a build failure on every non-x86_64 target** (macOS Apple Silicon, aarch64
+  Linux) — a `#[cfg(target_arch = "x86_64")]` mismatch between a function's signature
+  and one of its call sites, introduced alongside the denormal-flush fix above. Caught
+  by this release's own build matrix before publishing; x86_64 builds (including the
+  ones most people run) were never affected.
 
 ### Internal
 - Build config: `[profile.dev] debug = "line-tables-only"` to curb `target/` disk
