@@ -1,5 +1,55 @@
 # CPU performance backlog
 
+## STATUS, 2026-08-17 — denormal-flush fix (§16.52 D0-D2) shipped, bit-exact; D3's residual-growth diagnostic found a real but different, unexplained pattern; D4 stays deferred
+
+The detector's denormal-flush regression (batch-mode CPU, 1.66x-5.3x slower than separate
+single-page processes) is **root-caused, fixed, and verified bit-exact**: §16.52 ratified
+the design (a scoped RAII MXCSR guard, `pc_ort::denormal`, reapplied on every single
+inference rather than relying on ONNX Runtime's process-wide once-flag). D0 (`4f4f36b`),
+D1 (`1be086f`), D2 (`1bf7b52`) are implemented and committed. D2's real-weights re-
+measurement found **bit-identical output across every thread count (0/1/8) and both
+flush states**, against the actual committed fixture, not just self-consistency — closing
+the exact evidence gap §16.52 item 1 flagged (that the pre-fix tests may have compared
+FTZ against FTZ due to test-execution ordering).
+
+**D3 (residual ~8x slowdown diagnosis, 2026-08-17): the original theory doesn't survive,
+and a real but different, unexplained growth pattern is now confirmed instead.** With
+D1's fix genuinely reapplying the flush guard on every call (not just once at
+construction, and confirmed leak-free by D2), the caller-thread-denormal-leak explanation
+for any residual growth no longer applies at all — so if growth still appears, it isn't
+that. A throwaway diagnostic (10 consecutive real `detect()` calls, same detector
+instance, real cached weights) measured:
+  - `intra_threads=0`: `[0.57, 0.48, 0.45, 0.47, 0.46, 0.63, 1.68, 1.55, 1.55, 1.62]`
+    (seconds) — a genuine step-function jump after ~5-6 calls, **2.85x** growth
+    (last/first), not noise (the jump is consistent across calls 7-10, not a single
+    outlier).
+  - `intra_threads=1`: `[4.68, 4.45, 4.60, 4.44, 4.40, 4.40, 4.47, 4.46, 4.40, 5.89]` —
+    essentially flat except one outlier at the very last call, **1.26x** nominal growth
+    but not a real trend.
+
+  **This is the opposite of what the original "residual is unexplained, possibly the
+  intra-op pool" framing predicted ruling out**: growth is real specifically where a
+  thread pool exists (`intra_threads=0`) and largely absent where it doesn't
+  (`intra_threads=1`) — but this does NOT revive the pool-contention theory as originally
+  stated (architect already showed, by reading ONNX Runtime's pinned source, that the
+  pool's own denormal flag is unconditioned by the once-flag and was never the leak
+  mechanism). What's growing here is unrelated to denormal correctness (D2 already proved
+  zero bits move) — candidate causes not yet distinguished: ONNX Runtime's intra-op pool
+  warming up its spin-then-block behavior differently over repeated calls, CPU frequency
+  scaling/turbo-boost throttling down under sustained multi-core load, or some other
+  session-lifetime state that only accumulates when multiple pool threads are active.
+  **Left open, not closed** — this is a maintainer-local measurement (no gate, no frozen
+  test), not required to close §16.52, and the throwaway test file was deleted after use
+  per this project's convention.
+
+**D4 (pc-ocr/pc-inpaint denormal exposure) is NOT newly motivated by D3's finding.**
+Fable's ruling 3(b) deferred D4 specifically to its own future denormal-exposure
+measurement; D3's finding is a different phenomenon (a thread-pool/thermal growth
+pattern, not a denormal-flag leak), so it provides no new evidence either for or against
+whether `pc-ocr`/`pc-inpaint` are exposed to the *denormal* issue specifically. D4 stays
+deferred exactly as ruled, on its own merits, not accelerated or further delayed by this
+finding.
+
 ## STATUS, 2026-08-16 — OCR beam-batching (B1-B3) shipped; B4 deferred
 
 The decode-loop fix this backlog's headline finding pointed at is **implemented and
