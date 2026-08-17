@@ -10,22 +10,36 @@
 //! `git diff --stat` over `crates/pc-mask/tests/` and `crates/pc-denoise/tests/` to be
 //! empty at the end of L1, which putting the new file here satisfies by construction.
 //!
-//! WHAT THIS FILE IS FOR, and why it has two halves rather than one.
+//! WHAT THIS FILE IS FOR. It once had two halves; it now has one.
 //!
-//! * The **agreement** half (`mask_and_denoise_*_agree_*`) is the pre-hoist baseline:
-//!   before L1, `pc_mask::grow::{Kernel, kernel, dilate}` and
-//!   `pc_denoise::morph::{Kernel, kernel, dilate}` are two separate verbatim copies
-//!   (§16.10 item 2), and these tests prove they agree cell-for-cell and pixel-for-pixel
-//!   rather than merely "both existing". **After** the hoist they are two re-exports of
-//!   one item, so this half degrades to a tautology on its own -- it can then only fail
-//!   if a future edit re-forks one of the two paths, which is exactly the regression it
-//!   is left in place to catch.
-//! * The **oracle** half (`*_match_a_hand_derived_*_oracle`) is what keeps this file
-//!   non-vacuous after the hoist, per cookbook rules 7 and 13: every expected value below
-//!   is hand-derived from OpenCV's documented `getStructuringElement(MORPH_ELLIPSE)`
-//!   formula and from §10.3 step 6's small-diameter branch, written out as literals, and
-//!   asserted against **both** crates' public paths. Nothing here is read back out of the
-//!   code under test.
+//! * The **oracle** half (`*_match_a_hand_derived_*_oracle`, plus the three
+//!   `both_crates_dilate_*` footprint tests) is what keeps this file non-vacuous after
+//!   the hoist, per cookbook rules 7 and 13: every expected value below is hand-derived
+//!   from OpenCV's documented `getStructuringElement(MORPH_ELLIPSE)` formula and from
+//!   §10.3 step 6's small-diameter branch, written out as literals, and asserted against
+//!   **both** crates' public paths. Nothing here is read back out of the code under test.
+//! * The **agreement** half (`pc_mask_and_pc_denoise_*_agree_*`) was the pre-hoist
+//!   baseline: before L1, `pc_mask::grow::{Kernel, kernel, dilate}` and
+//!   `pc_denoise::morph::{Kernel, kernel, dilate}` were two separate verbatim copies
+//!   (§16.10 item 2), and those two tests proved they agreed cell-for-cell and
+//!   pixel-for-pixel rather than merely "both existing". After the hoist they compared
+//!   one item reached by two paths, and were kept only as re-fork tripwires.
+//!   **Both were removed 2026-08-17** (Fable tie-break, after a joint architect +
+//!   Senior Rust Engineer planning pass in which the two disagreed). This paragraph is
+//!   kept rather than deleted, per this project's supersession convention: a future
+//!   reader who finds those two names cited elsewhere needs to know where they went.
+//!   `pc_mask_and_pc_denoise_kernels_agree_cell_for_cell_...` was undisputed by both
+//!   sides -- it is logically subsumed by the two per-path kernel oracles below, and
+//!   neither side's probes ever saw it fire alone. `pc_mask_and_pc_denoise_dilate_agree_
+//!   pixel_for_pixel_...` was the disputed one, and it was removed only after the
+//!   structural re-fork class it guarded was **measured** to be caught by
+//!   `crates/pc-testkit/tests/composite_morph_source_sites.rs`'s source-set gate: a
+//!   re-fork of `pc_denoise::morph::dilate` diverging at thickness >= 3 turns both halves
+//!   of that gate red, plus `crates/pc-denoise/tests/n3_noise_mask.rs`'s
+//!   `fade_mask_grows_then_fades_a_single_dot`. Note what that gate does **not** do: it
+//!   catches a re-fork *structurally* (a new definition site, or a dropped `pub use`), not
+//!   a behavioural edit inside `pc_imageops::morph` itself -- the two per-path oracles
+//!   below remain the only thing covering that, which is why they stay.
 //!
 //! Independent corroboration of the oracle table, so it is not merely self-consistent:
 //! the counts it predicts for thicknesses 1, 2, 3, 4 are the same 5 / 21 / 33 / 57 that
@@ -294,83 +308,5 @@ fn both_crates_dilate_with_the_thickness_0_kernel_as_the_identity() {
     assert_eq!(
         pc_denoise::morph::dilate(&probe, &pc_denoise::morph::kernel(0)),
         probe
-    );
-}
-
-// -------------------------------- the agreement half (the pre-hoist baseline proof)
-
-#[test]
-fn pc_mask_and_pc_denoise_kernels_agree_cell_for_cell_for_thickness_0_through_7() {
-    // The §16.10 item 2 drift check, stated as the identity of the whole cell matrix
-    // rather than as equal counts. Before L1 this compares two independent copies; after
-    // L1 it compares one item reached by two paths, and fails only if someone re-forks
-    // them. Also asserts the summed anti-vacuity literal so an empty loop cannot pass.
-    let mut total = 0_usize;
-    for thickness in 0..=MAX_THICKNESS {
-        let from_mask = pc_mask::grow::kernel(thickness);
-        let from_denoise = pc_denoise::morph::kernel(thickness);
-        assert_eq!(
-            from_mask.as_cells(),
-            from_denoise.as_cells(),
-            "kernel({thickness}) cells differ between pc_mask::grow and pc_denoise::morph"
-        );
-        assert_eq!(
-            from_mask.diameter(),
-            from_denoise.diameter(),
-            "kernel({thickness}) diameter differs between the two crates"
-        );
-        assert_eq!(
-            from_mask.radius(),
-            from_denoise.radius(),
-            "kernel({thickness}) radius differs between the two crates"
-        );
-        assert_eq!(
-            from_mask.count(),
-            from_denoise.count(),
-            "kernel({thickness}) set-cell count differs between the two crates"
-        );
-        total += from_mask.count();
-    }
-    assert_eq!(
-        total, ORACLE_TOTAL_CELLS,
-        "set cells summed over kernel(0..=7); the loop must have visited all eight"
-    );
-}
-
-#[test]
-fn pc_mask_and_pc_denoise_dilate_agree_pixel_for_pixel_for_thickness_0_through_7() {
-    // Same drift check for the dilation itself, over a probe mask whose dots sit on all
-    // four clipped edges as well as in the interior, so a divergence in the
-    // out-of-bounds-drop rule is reachable and not just the interior arithmetic.
-    // Compares the *set* of lit pixels, so a swap of two dots cannot hide behind a count.
-    let probe = probe_mask();
-    let mut total = 0_usize;
-    for thickness in 0..=MAX_THICKNESS {
-        let from_mask = pc_mask::grow::dilate(&probe, &pc_mask::grow::kernel(thickness));
-        let from_denoise = pc_denoise::morph::dilate(&probe, &pc_denoise::morph::kernel(thickness));
-        assert_eq!(
-            set_pixels(&from_mask),
-            set_pixels(&from_denoise),
-            "dilate(probe, kernel({thickness})) differs between pc_mask::grow and pc_denoise::morph"
-        );
-        assert_eq!(
-            from_mask.dimensions(),
-            (16, 16),
-            "dilation must preserve the canvas size"
-        );
-        total += set_pixels(&from_mask).len();
-    }
-    // Hand-derived floor, not a computed value: thickness 0 is the identity, so it alone
-    // lights the probe's 8 dots. Any thickness >= 1 lights strictly more. Eight
-    // thicknesses therefore light strictly more than 8 * 8 = 64 pixels in total, and this
-    // bound fails if the loop is empty or if dilation starts returning blank masks.
-    assert!(
-        total > 64,
-        "expected the eight dilations to light more than 64 pixels in total, got {total}"
-    );
-    assert_eq!(
-        set_pixels(&pc_mask::grow::dilate(&probe, &pc_mask::grow::kernel(0))).len(),
-        8,
-        "the identity dilation must light exactly the probe's eight dots"
     );
 }

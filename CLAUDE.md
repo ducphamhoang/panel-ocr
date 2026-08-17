@@ -471,7 +471,7 @@ to grow the same instance's context indefinitely.
   process failures and the decisions that resolved them — the dominant defect class (a test
   whose name claims more than its assertion verifies), how to classify per-image vs
   run-fatal failures from a function signature, why upstream PanelCleaner is the tiebreak
-  oracle, the three legitimate exits from a frozen test, and a running list of over-claims
+  oracle, the four legitimate exits from a frozen test, and a running list of over-claims
   to check yourself against. Add to it whenever a pattern recurs or a costly mistake is
   resolved; it is process memory, not a changelog.
 - When the spec is ambiguous or two readings conflict, consult the upstream implementation

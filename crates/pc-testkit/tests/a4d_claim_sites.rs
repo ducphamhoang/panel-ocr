@@ -680,8 +680,12 @@ const PRESENT: &[Site] = &[
         //     back-pointers at §16.21 item 6 and §16.32 item 2(b), added 41 net lines
         //     before this site; re-derived by grep for the exact claim text, single
         //     occurrence confirmed, not incremented blindly).
+        //   → 9902 (2026-08-17, §16.53's vacuous-cross-crate-tests ratification, plus
+        //     its own step-1a fresh-reader corrections, added 312 net lines before this
+        //     site; re-derived by grep for the exact claim text, single occurrence
+        //     confirmed, not incremented blindly).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 9590,
+        line: 9902,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {

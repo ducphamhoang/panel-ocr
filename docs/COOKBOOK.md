@@ -362,10 +362,10 @@ record confidence as a diagnostic and say so.
 
 ---
 
-## 8. Tests are frozen — but know the three exits
+## 8. Tests are frozen — but know the four exits
 
 Once written, a test is not edited to make it pass. Only the implementation is iterated.
-There are exactly three legitimate ways out, and picking the wrong one is how a suite
+There are exactly four legitimate ways out, and picking the wrong one is how a suite
 rots:
 
 1. **Additive strengthening** — adding a *new* assertion or test alongside the existing
@@ -380,6 +380,27 @@ rots:
 3. **A deliberate deviation from upstream** — gets a `DEVIATION(n)` comment at the
    implementation site plus a §14 register entry. §16-only deviations use the qualified
    form `DEVIATION(§16.11 item 5)`.
+4. **A ratified structural change discharges the test's protective purpose** — a prior
+   ratified decision (a hoist, a consolidation, a de-duplication) lands underneath a test
+   that was written to guard against exactly the drift the decision now performs on
+   purpose, so the test's "agree" comparison becomes an identity comparison it can never
+   fail. This is exit 2's machinery (joint architects → adjudication on disagreement →
+   §16.x ratification transcription, reviewed by `fresh-reader` before commit) without
+   exit 2's literal "spec contradiction" wording — nothing in the spec is being
+   contradicted, the test's *subject* has been removed by a change the spec already
+   authorized elsewhere. The forcedness test from below still applies before reaching for
+   this exit: does the ratified change actually make the comparison an identity (checked
+   by grep/measurement, not assumed from the change's description), and does deleting the
+   test lose no coverage nothing else in the workspace now provides (checked by running a
+   real re-fork/mutation probe against the tree, not by reasoning about it)? Real instance:
+   §16.53, where §16.42's composite/morph hoist made 8 of `l1_morph_equivalence.rs`'s and
+   `l4_composite_equivalence.rs`'s cross-crate "agree" tests compare two `pub use`
+   re-exports of the one real implementation — a joint architect/rust-engineer pass
+   measured which ones were still each the sole workspace detector of some regression
+   class (real mutation probes, not inspection) before any were deleted, and a replacement
+   structural tripwire (a source-set gate asserting the real implementation and re-export
+   sites match a pinned list) was built and demonstrated red-on-mutation before the
+   sole-detector tests it replaced were removed.
 
 Keep the §14 register and the code in sync **in both directions** — it has desynced each
 way: entries present in the register with no comment at the implementation site, and

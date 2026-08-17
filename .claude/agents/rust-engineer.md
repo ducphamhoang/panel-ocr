@@ -29,7 +29,7 @@ Rules that decide the quality of a drafted test here:
 - **Prefer an anti-vacuity literal** — a hard-coded expected number that cannot be computed from the tree — so the gate cannot pass by finding zero of everything.
 - **A gate must point at the artifact carrying the risk** (rule 12). Gating a copy proves nothing about the original.
 
-Once written, **tests are frozen**. Only the implementation is iterated. If a test is later found to contradict the spec, that goes back to both architects jointly — never a unilateral edit by you, Codex, or the Orchestrator. Cookbook rule 8 records the three legitimate exits from a frozen test.
+Once written, **tests are frozen**. Only the implementation is iterated. If a test is later found to contradict the spec, that goes back to both architects jointly — never a unilateral edit by you, Codex, or the Orchestrator. Cookbook rule 8 records the four legitimate exits from a frozen test.
 
 ## Job 2 — post-implementation review against the spec
 

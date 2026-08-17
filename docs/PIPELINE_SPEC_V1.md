@@ -9574,6 +9574,318 @@ this characterization, not a pointer to a retrievable transcript.
 
 7. **What this entry does NOT decide or establish, enumerated rather than summarized (§16.38's and §16.47's convention)**: it does not attribute the residual ~8x slowdown (item 4, explicitly open); it does not decide whether `pc-ocr`/`pc-inpaint` should ever flush denormals (ruling 3(b), deferred to its own future measurement and its own §16.x entry if positive); it does not decide whether the workspace accepts its first `unsafe` (item 6, the maintainer's call); and it does not itself implement anything — items 5's D0 through D4 are what remains, against this entry as their ratified reference.
 
+## 16.53 The vacuous cross-crate "agree" tests §16.42's hoist created: measured which ones a source-set gate could replace, built the gate, demonstrated it red-on-mutation, then disposed of each test on its own evidence (joint architect + Senior Rust Engineer plan pass, converging on facts, diverging on 3 points; Fable tie-break on all 3 plus a follow-up correction; 2026-08-17)
+
+**Provenance.** Implemented, then this transcription was reviewed by a fresh `fresh-reader`
+spawn before commit per this project's step-1a rule; its pass found five blocking
+corrections (two prose-vs-gate collisions this entry's own text caused — see the
+supersession-gate and A4-d-gate notes at the end of this Provenance paragraph — one
+factual over-claim about which tests are and are not identity comparisons, one count
+error, and this paragraph's own tense) plus one non-blocking cookbook heading left
+inconsistent with its body; all six are applied in the text below rather than left as a
+separate errata list, since none of them change what was ruled, only how accurately it is
+stated. The full verification bar (`cargo test --workspace`, the `onnx` tier,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+`cargo fmt --all --check`) was re-run and confirmed green after those corrections,
+immediately before this entry was committed — not before, per the fresh reader's finding
+that an earlier draft of this sentence had claimed a completed verification the tree
+did not yet support. A 2026-08-16 test-suite audit (solo `architect` dispatch) found
+that §16.42's composite/morph hoist (the composite-helper consolidation into
+`pc_imageops::{morph, composite}`, all other crates re-exporting via `pub use`) had made
+8 of the "X and Y agree" tests in `crates/pc-pipeline/tests/l1_morph_equivalence.rs` and
+`l4_composite_equivalence.rs` compare two `pub use` re-exports of the one real
+implementation — an identity comparison that can never fail. A joint `architect` +
+`rust-engineer` planning pass (both Opus, dispatched together against
+`docs/BRIEF_vacuous_crosscrate_tests_plan.md`) converged on the vacuity finding itself
+and on two citation corrections to the original audit, and diverged on three points, each
+tie-broken by `fable-adjudicator` per the standing disagreement rule. Both plan halves
+were required to and did measure rather than reason: real re-fork/mutation probes,
+checking which tests in the whole workspace actually went red, not inspection of what
+"should" catch a regression. Full positions preserved verbatim at
+`docs/BRIEF_vacuous_tests_architect_position.md` /
+`docs/BRIEF_vacuous_tests_rust_engineer_position.md`; the tie-break brief and ruling are
+summarized in `docs/HANDOVER.md`'s 2026-08-17 entry (the session that received Fable's
+ruling); the follow-up correction brief and ruling are at
+`docs/BRIEF_fable_group_d_reexam.md`. Implementation dispatched to a fresh `rust-engineer`
+Agent-tool spawn against `docs/BRIEF_vacuous_tests_implementation.md`, independent of the
+planning-pass instances; its report is the source for items 3–5 below. This entry is the
+`fresh-reader`-reviewed transcription of both rulings plus the implementation's
+gate-demonstration measurement.
+
+**Does NOT supersede, narrow, or qualify §16.42 item 10.** Item 10's own words — quoted
+here rather than paraphrased, per this project's transcription rule — remain accurate as
+a historical statement of what that entry did and did not authorize when it was written:
+*"It does not authorize any edit to `crates/pc-pipeline/tests/l4_composite_equivalence.rs`'s
+**existing** assertions — but item 9 *does* authorize, and expects, an **additive-only**
+extension of that same file... that file legitimately shows a diff once item 9's work
+lands, and the diff being purely additive (no `-` lines against its current content) is
+precisely what this entry does and does not permit there."* That was true of the
+pre-hoist sequencing item 10 was written to protect. This entry does not claim item 10
+lapsed by itself, was wrong, or licenses today's deletions under its own authority — a
+claim like that is exactly the kind of paraphrase-widening `CLAUDE.md` warns against.
+Instead, this entry is **independent, separate authority**, reached through the
+ratification pipeline itself (joint architect + rust-engineer positions → `fable-adjudicator`
+tie-break → this transcription → `fresh-reader` review), for the deletions and
+strip-and-renames below — the cookbook's newly-codified **fourth exit from a frozen
+test** (see item 6). Two different mechanisms can both be true at once: item 10 never
+authorized this on its own terms, and this entry supplies authorization on different
+terms.
+
+1. **Two citation corrections to the original audit, confirmed by architect reading the
+   actual spec text (not disputed by rust-engineer, independently useful regardless of
+   how items 2–5 land).**
+   - §16.38 item 16(a), quoted by the original audit brief as ratifying
+     `l1_morph_equivalence.rs`'s transition from "drift check" to "value lock," is **not
+     about that file**. Its subject is `crates/pc-denoise/tests/n3_noise_mask.rs`'s
+     11×11 cell-matrix test, and its acceptance gate names only `crates/pc-mask/tests/`
+     and `crates/pc-denoise/tests/` — `l1_morph_equivalence.rs` is in neither and did not
+     exist yet at the time item 16(a) was written. **No ratified clause anywhere
+     disposes of `l1_morph_equivalence.rs`'s tests at all** — the only prior disposition
+     on record was the file's own header prose, not a ratified artifact. The
+     implementation's independent re-check (per its brief's instruction to verify rather
+     than copy this finding) confirmed `l1_morph_equivalence.rs`'s own citations of item
+     16(a) are, separately, accurate on their own terms — the file cites it for its own
+     acceptance-gate wording, which does match — so no in-code citation edit was needed;
+     the mis-citation was in the audit brief, not in the test file.
+   - `docs/PIPELINE_SPEC_V1.md:8333` (§16.42 item 6) is about `pc-export`'s *pre-hoist*
+     value lock and predicts the post-hoist vacuity correctly but disposes of nothing
+     itself — it is evidence cited in this entry's Provenance history, not a ratification
+     this entry supersedes.
+
+2. **RULING (Fable tie-break) — the three per-call-path "sole detector" tests are KEPT,
+   pending the gate-demonstration measurement in item 4, which is what actually
+   discharges them.** `pc_mask_and_pc_denoise_dilate_agree_pixel_for_pixel_for_thickness_0_through_7`,
+   `composite_rgb_agrees_across_pc_mask_pc_denoise_and_pc_inpaint`, and
+   `alpha_composite_over_agrees_across_pc_denoise_and_pc_inpaint_including_the_offset_clip`
+   were each measured, by rust-engineer's per-call-path re-fork probes, to be the **sole**
+   workspace detector of their regression class at the time of the joint planning pass.
+   architect's own probes, using a different mutation shape (whole-module wrapper
+   re-forks of `pc-mask/src/combine.rs`, `pc-denoise/src/composite.rs`,
+   `pc-inpaint/src/compose.rs`), found the same regression classes caught elsewhere
+   (`m2_grow`, `n3_noise_mask`, `l4_compose`) and recommended deleting these three
+   outright. Fable's ruling: **both measurements are real, and are each correct for their
+   own mutation shape — this is not a disagreement to pick a side on, it is two probes of
+   different granularity**, and re-running both shapes independently confirmed the
+   reconciliation rather than accepting either side's framing. rust-engineer's
+   present-tense fact governs pending a real replacement: KEEP for now, contingent on the
+   gate-demonstration step (item 4) actually measuring a replacement live against the
+   post-implementation tree, not argued in the abstract.
+
+3. **RULING (Fable tie-break) — Group D, the three `pc_export_*` "agree" tests, disposed
+   of per-test rather than as one bloc; one correction to Fable's own first pass, made in
+   a follow-up re-examination.**
+   - The original audit's "duplicates `crates/pc-export/tests/composite_value_lock.rs`"
+     premise is **measured false**, not merely outweighed by runtime cost as
+     rust-engineer's first position argued: architect measured only 2 of 8 rows overlap
+     between `pc_export_blend_channel_agrees_with_the_hand_computed_lerp_and_pc_mask`'s
+     hand-derived table and `composite_value_lock.rs`'s, and the resize test pins a
+     different downscale case entirely (`(3,2)` here vs `(3,1)` there). Fable ruled for
+     architect's position on both: **STRIP** the now-identity cross-crate comparison
+     loop/line from each, **KEEP + RENAME** the hand-derived assertions, since deleting
+     them outright would lose real, non-duplicated coverage (e.g. near-boundary rounding
+     cases neither `composite_value_lock.rs` nor anything else pins). Renamed
+     `pc_export_blend_channel_agrees_with_the_hand_computed_lerp_and_pc_mask` →
+     `pc_export_blend_channel_matches_the_hand_computed_lerp`, and
+     `pc_export_resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mapping` →
+     `pc_export_resize_nearest_rgba_matches_the_hand_derived_floor_mapping`. Both landed
+     exactly as ruled; each test's own doc comment now records the measured non-overlap.
+   - **`pc_export_alpha_composite_over_agrees_with_pc_denoise_including_the_offset_clip`
+     was, by contrast, deleted outright — not strip-and-renamed — correcting an error in
+     Fable's own first-pass Group D membership.** The implementer, executing the original
+     ruling, escalated rather than guessed: this test's entire body is the four-offset
+     `pc_export`-vs-`pc_denoise` identity loop plus one `assert_ne!(changed, make_base())`
+     control — it has **no hand-derived assertions to keep**, so "strip the loop, keep
+     the hand-derived rows" is literally unexecutable for it, and executing it as
+     literally as possible would have left a test asserting only "something changed"
+     (cookbook rule 1's named defect). Neither the original audit, neither Opus position,
+     nor Fable's own stated Group D grounds (which cite measurements only for the blend
+     and resize members) ever argued this test belonged in the strip-and-rename group —
+     the architect's *original* position had placed it in "Group C: DELETE outright," on
+     measured grounds (a full §16.45 alpha-formula revert turns nothing in `l4` red;
+     `composite_value_lock.rs` measured to catch the same regression 3×). Fable's Group D
+     inclusion of it was a transcription slip carrying the brief's "three `pc_export_*`
+     tests" framing forward without checking that this one differs in kind. A narrow
+     follow-up re-examination (`docs/BRIEF_fable_group_d_reexam.md`) confirmed directly
+     (reading the live test body and both replacement files) that no unique coverage is
+     lost: `composite_value_lock.rs` already hand-derives the `pc_export` path's clip
+     behavior (`alpha_composite_over_fully_outside_bounds_is_a_complete_noop`,
+     `alpha_composite_over_opaque_layer_partial_overlap_lands_exact_pixels`), and the new
+     `crates/pc-mask/tests/m5_alpha_composite_value_lock.rs` (item 5 below) hand-derives
+     the shared implementation's clip rule and alpha-out formula. **RULED: Group C's
+     disposition governs — DELETE outright, no rebuild**, since a rebuilt hand-derived
+     table for this test would triplicate coverage already present in two other files,
+     against this project's recorded test-minimalism preference. Cookbook-8 exit: the
+     fourth exit (item 6), same as the sole-detector deletions in item 4 — nothing new is
+     added for this specific test, so exit 1 does not apply.
+   - **One further now-identity cross-crate comparison in `l4_composite_equivalence.rs`
+     was out of scope for this ruling and remains untouched**, and one test the
+     implementation's report named alongside it is not actually in this class —
+     corrected here after `fresh-reader` read both bodies directly. The real case:
+     `resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mapping` still
+     carries a live `pc_denoise`-vs-`pc_inpaint` identity loop (its `for size in [...]`
+     block) alongside its own real hand-derived floor-mapping assertions; only its
+     "agrees" naming over-claims, and its residue is not a rename-only cleanup — the
+     loop itself would still need removing. **`the_blend_matches_the_hand_computed_lerp_in_all_three_crates`
+     is NOT in this class at all**: it contains no cross-crate comparison — each of its
+     three `assert_eq!`s compares one crate's `blend_channel` against the same
+     hand-derived literal from its own 8-row table, never against another crate's
+     output. It is a triplicated hand-derived value lock, not an identity comparison,
+     and cannot become vacuous under the hoist; only its "in all three crates" naming
+     over-claims what it checks. Flagged here rather than silently left, per the
+     implementation's report — corrected in scope by `fresh-reader`'s review.
+
+4. **RULING (Fable tie-break) — Q3, a source-set gate is built (architect's position),
+   and its correctness is demonstrated, not assumed, before it is relied on for any
+   deletion.** rust-engineer's position: no replacement tripwire is warranted; the
+   brief's own proposed `const _: fn(u32) -> Kernel = pc_mask::grow::kernel;` and runtime
+   function-pointer equality were each disproven by direct compilation against a live
+   re-fork (the const-assertion compiled clean while 6 of 7 `l1` tests went red; the
+   pointer-equality check is unsound under identical-code folding). Fable adopted
+   architect's alternative — a **source-set gate** in `pc-testkit`
+   (`crates/pc-testkit/tests/composite_morph_source_sites.rs`), file-scanning every
+   `crates/*/src/**/*.rs` for (a) every `fn kernel|dilate|blend_channel|
+   resize_nearest_rgba|alpha_composite_over|composite_rgb` **definition** site and (b)
+   every direct `pub use pc_imageops::{morph::…, composite::…}` **re-export** site,
+   asserting each set against a hard-coded pinned literal (same anti-emptying-hole
+   pattern as `spec_supersession.rs`'s `EXPECTED_PARSED_CLAIMS`) — with two corrections
+   Fable specified over architect's first draft:
+   - **(a) the real re-export set has 7 rows, not 6.** Both the original audit and
+     architect's first draft enumerated six `pub use` lines; the implementation
+     re-derived the set by scanning rather than copying and found a seventh:
+     `crates/pc-denoise/src/lib.rs:54`'s whole-module `pub use pc_imageops::morph;`,
+     missed by both prior counts because it names no individual function. The gate's
+     `EXPECTED_REEXPORT_SITES = 7` and `EXPECTED_REEXPORTS` constant record this; the
+     definition-site scan is likewise pinned at 7 (the six real `pc_imageops`
+     definitions plus the one exemption below), `EXPECTED_DEFINITION_SITES = 7`.
+   - **(b) `pc-testkit`'s unrelated `PixelSet::dilate` is explicitly pinned as an expected
+     row, not path-filtered out of the scan.** `crates/pc-testkit/src/metrics.rs`'s
+     `PixelSet::dilate` is an inherent method on a test-metric type, sharing a name with
+     `pc_imageops::morph::dilate` and nothing else. Filtering it out by path would make
+     it invisible if `pc-testkit` ever grew a *second* `dilate`, or if this one moved;
+     pinning it as a named, commented exemption keeps the gate red for either case.
+   - **Gate correctness, checked, not assumed.** Before relying on the gate for any
+     deletion below: adding a stray `pub fn composite_rgb` to
+     `crates/pc-export/src/composite.rs` turned the definition-site half red; narrowing
+     one re-export list turned the re-export half red. Both transcripts captured during
+     implementation.
+
+5. **T1 — additive, landed first, per the fourth-exit precondition that a replacement
+   must exist and be measured before a sole detector is retired.** Three new hand-derived
+   tests in `crates/pc-mask/tests/m5_alpha_composite_value_lock.rs`:
+   `pc_mask_composite_rgb_matches_the_hand_derived_branch_table` (closing the gap both
+   plan halves found — **no test anywhere in the workspace hand-derived a `composite_rgb`
+   expected value**; the existing cross-crate tests only compared re-exports of one item
+   to each other) and `pc_mask_alpha_composite_over_matches_the_hand_derived_real_source_over`
+   plus `pc_mask_alpha_composite_over_drops_a_layer_that_lands_outside_the_destination`
+   (closing the coverage gap rust-engineer's probe found: a `pc_mask::combine::
+   alpha_composite_over` re-fork to §16.45's replaced `max(base_a, layer_a)` rule
+   turned nothing in the workspace red). Each hand-derived value is worked out from
+   §16.45 item 4's formula and §16.9 item 15's formula respectively, written as a literal
+   in the test's own doc comment, nothing read back from the implementation
+   (cookbook rules 7, 13). Cookbook-8 exit: 1 (additive strengthening). No ratification
+   needed on its own; recorded here because item 2's KEEP-for-now ruling was contingent
+   on this landing.
+
+6. **RULING (this entry, transcribing the architect's proposal Fable adopted implicitly
+   by using its mechanism) — the cookbook's three exits are now four.** Neither exit 1
+   (additive-only) nor exit 2 (spec contradiction) nor exit 3 (`DEVIATION(n)`) literally
+   fits a deletion whose grounds are "a ratified structural change (§16.42's hoist)
+   landed underneath this test and discharged its protective purpose, turning its
+   comparison into an identity." architect proposed treating this as a **fourth exit in
+   substance**, using exit 2's machinery (joint architect + rust-engineer positions →
+   `fable-adjudicator` on disagreement → §16.x ratification transcription →
+   `fresh-reader` review before commit) without exit 2's literal "spec contradiction"
+   wording, citing precedent in how §16.20's snapshot removal was handled. Fable's
+   ruling used exactly this machinery without separately naming it; this entry names it
+   and codifies it in `docs/COOKBOOK.md` rule 8 as exit 4, with this section as its
+   worked real instance. The exit's own discipline, stated because it is easy to invoke
+   loosely: **the forcedness test still applies** — does the ratified change actually
+   make the comparison an identity (checked by grep/scan, not assumed), and does a
+   deletion under this exit lose no coverage nothing else in the tree now provides
+   (checked by a real re-fork/mutation probe against the post-implementation tree, per
+   item 7 below, not reasoned about)?
+
+7. **The gate-demonstration matrix — the measurement that actually converts "the gate
+   replaces the sole detectors" from argument to fact, run by the implementer against the
+   T1+T2 tree before any T3 deletion, then re-confirmed against the final tree.** Six
+   probes, each followed by `cargo test --workspace --no-fail-fast`, each reverted after
+   (`git diff --stat` empty on every touched source file, confirmed per-file):
+
+   | # | Probe | Detected by (T1+T2 tree, T3 not yet applied) |
+   |---|---|---|
+   | P1 | `pc_denoise::morph::dilate` re-forked to no-op at `radius >= 3` (per-call-path) | T2 both halves; `n3_noise_mask::fade_mask_grows_then_fades_a_single_dot`; †`pc_mask_and_pc_denoise_dilate_agree_...` |
+   | P2 | `pc_inpaint::compose::alpha_composite_over` reverted to §16.45's replaced `max(base_a, layer_a)` | T2 both halves; †`alpha_composite_over_agrees_across_...` |
+   | P3 | `pc_inpaint::compose::composite_rgb`, `a == 0` branch returns the layer | T2 both halves; †`composite_rgb_agrees_across_...` |
+   | P4 | `pc-mask/src/combine.rs` whole-module wrapper re-fork (all 4 helpers wrong) | T2 both halves; both new T1 tests; `m56_run` ×3; `l4` ×3; 13 tests total |
+   | P5 | `pc-denoise/src/composite.rs` whole-module wrapper re-fork | T2 both halves; `n3`/`n4`/`n5`/`a8`/`a10` chain; `l4` ×4; 12 tests total |
+   | P6 | `pc-inpaint/src/compose.rs` whole-module wrapper re-fork | T2 both halves; `the_blend_matches_the_hand_computed_lerp_in_all_three_crates`; `resize_nearest_rgba_agrees_...`; †×2 |
+
+   († marks the four tests item 8 then deletes.) **Post-T3 re-confirmation** of P1–P3
+   against the actual final tree: P1 → T2 both halves + `fade_mask_grows_then_fades_a_single_dot`;
+   **P2 → T2 both halves only; P3 → T2 both halves only.**
+
+   **Two corrections this measurement makes to what the implementation brief predicted,
+   stated because a wrong prediction that happened to reach the right conclusion is still
+   worth recording precisely.** First, the brief assumed the source-set gate "is not
+   expected to catch a behavioural re-fork," reasoning it only detects structural changes.
+   **Measured false, and this is the load-bearing result, not a footnote**: every one of
+   the six probes tripped the gate, because you cannot re-fork a re-export without a
+   structural change underneath it — either a new definition appears somewhere the gate
+   doesn't expect, or a `pub use` list narrows. T2 is not a weaker sibling of the tests it
+   replaces; it is a strict superset of the re-fork class they covered. Second, the brief
+   guessed T1's new tests plus existing crate-local tests would together cover all six
+   probes once the sole detectors were gone. **False for P2 and P3**: T1 covers
+   `pc-mask`'s implementation, not `pc-inpaint`'s call path, and no crate-local test
+   caught either — after T3, **T2 alone** is what catches a re-fork of
+   `pc_inpaint::compose::{alpha_composite_over, composite_rgb}`. The demonstration Fable's
+   ruling asked for succeeds, but by T2, not by the mechanism guessed at.
+
+8. **T3 — the deletions and strip-and-renames, applied only after item 7's
+   demonstration, per the fourth exit's discipline in item 6.**
+   - **DELETED** (cookbook-8 exit 4, T2's gate-demonstration is the measured
+     replacement): `pc_mask_and_pc_denoise_kernels_agree_cell_for_cell_for_thickness_0_through_7`
+     (undisputed on both sides — logically subsumed by the two per-path kernel oracles;
+     neither side's probes ever saw it fire alone), `pc_mask_and_pc_denoise_dilate_agree_pixel_for_pixel_for_thickness_0_through_7`,
+     `composite_rgb_agrees_across_pc_mask_pc_denoise_and_pc_inpaint`,
+     `alpha_composite_over_agrees_across_pc_denoise_and_pc_inpaint_including_the_offset_clip`,
+     and (item 3's correction) `pc_export_alpha_composite_over_agrees_with_pc_denoise_including_the_offset_clip`.
+   - **STRIPPED-AND-RENAMED** (cookbook-8 exit 4 for the removed comparison; the kept
+     rows were never frozen-test edits in the sense exit 4 governs, since no assertion
+     value changed): `pc_export_blend_channel_agrees_with_the_hand_computed_lerp_and_pc_mask`
+     → `pc_export_blend_channel_matches_the_hand_computed_lerp`;
+     `pc_export_resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mapping` →
+     `pc_export_resize_nearest_rgba_matches_the_hand_derived_floor_mapping`.
+   - **KEPT, untouched** (both sides independently found the original audit misread
+     these): `pc_denoise_kernel_matches_the_hand_derived_opencv_ellipse_oracle_for_thickness_0_through_7`
+     (not a byte-identical duplicate — 8 diff hunks against its `pc_mask` sibling; it is
+     `pc-denoise`'s own per-path value lock and the probe matrix shows it firing on a
+     `pc-denoise`-specific re-fork) and the three `both_crates_dilate_*` tests (each
+     already asserts *both* call paths against the same hard-coded literal — there was no
+     separable cross-crate "agree" half to begin with).
+   - Net, per file, observed: `l1_morph_equivalence.rs` 7 → 5 tests;
+     `l4_composite_equivalence.rs` 7 → 4 tests (5 after the implementation's own pass,
+     minus 1 more from item 3's Group D correction). Workspace passing-test-line count:
+     1498 (recorded at base HEAD `6c809bb`) → 1499 (net +5 T1/T2, −4 T3 at the
+     implementation's report) → net unchanged after the one additional deletion, since
+     that test contributed no line the earlier count needed to re-derive from (verify
+     against a fresh `cargo test --workspace` run before citing a specific number; this
+     entry does not re-derive it a second time beyond the verification bar below).
+
+9. **What this entry does NOT decide or establish, enumerated rather than summarized
+   (§16.38's and §16.47's convention).** It does not re-open the KEEP dispositions for
+   the kernel-oracle test or the three `both_crates_dilate_*` tests — undisputed on both
+   sides, not reached by either ruling. It does not touch the two remaining
+   over-claiming-but-still-correct names flagged in item 3's last bullet
+   (`resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mapping`,
+   `the_blend_matches_the_hand_computed_lerp_in_all_three_crates`) — flagged, not
+   resolved, a future rename-only cleanup if picked up. It does not extend the fourth
+   exit (item 6) to any test outside this section's own worked instance; a future
+   invocation of it needs its own forcedness check per item 6's discipline, not a
+   citation of this entry as blanket precedent. It does not touch
+   `crates/pc-export/tests/composite_value_lock.rs`, `crates/pc-mask/tests/m56_run.rs`,
+   `crates/pc-denoise/tests/n3_noise_mask.rs`, or `crates/pc-inpaint/tests/l4_compose.rs`
+   — confirmed by empty `git diff` on each before commit.
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

@@ -67,8 +67,58 @@
 //! 2026-08-09, named this sentence specifically): it too is now stale -- three tests in this file
 //! and the whole of `composite_value_lock.rs` reference it -- and is likewise left as historical
 //! record rather than edited, per the same item 10 discipline.
+//!
+//! **2026-08-17 (Fable tie-break, after a joint architect + Senior Rust Engineer planning pass
+//! in which the two disagreed): two tests deleted, two stripped-and-renamed.** Recorded here
+//! rather than silently applied, so a reader who finds the old names cited elsewhere can see
+//! where they went.
+//!
+//!   * DELETED `composite_rgb_agrees_across_pc_mask_pc_denoise_and_pc_inpaint` and
+//!     `alpha_composite_over_agrees_across_pc_denoise_and_pc_inpaint_including_the_offset_clip`.
+//!     Both compared three (resp. two) re-exports of one `pc_imageops::composite` item against
+//!     each other; after §16.42's hoist neither comparison could fail, and neither test pinned
+//!     a value (the `alpha_composite_over` one said so in its own doc comment). They were kept
+//!     as re-fork tripwires until that tripwire role was **measured** to be discharged: with
+//!     both deleted, a per-call-path re-fork of `pc_inpaint::compose::composite_rgb` (the
+//!     `a == 0` branch returning the layer) and of `pc_inpaint::compose::alpha_composite_over`
+//!     (reverted to §16.45's superseded `max(base_a, layer_a)` rule) each turn **both** halves
+//!     of `crates/pc-testkit/tests/composite_morph_source_sites.rs`'s source-set gate red.
+//!     `composite_rgb`'s replacement *value* coverage — which nothing in the workspace had —
+//!     landed first as `crates/pc-mask/tests/m5_alpha_composite_value_lock.rs`.
+//!   * STRIPPED-AND-RENAMED `pc_export_blend_channel_agrees_with_the_hand_computed_lerp_and_pc_mask`
+//!     -> `pc_export_blend_channel_matches_the_hand_computed_lerp`, and
+//!     `pc_export_resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mapping`
+//!     -> `pc_export_resize_nearest_rgba_matches_the_hand_derived_floor_mapping`. Only the
+//!     now-identity cross-crate comparison was removed from each; every hand-derived row is
+//!     kept, because those rows were measured NOT to duplicate
+//!     `crates/pc-export/tests/composite_value_lock.rs` (2 of 8 blend rows overlap; the resize
+//!     downscale case differs, `(3, 2)` here vs `(3, 1)` there). See each test's own comment.
+//!   * **DELETED** `pc_export_alpha_composite_over_agrees_with_pc_denoise_including_the_offset_clip`
+//!     (Fable re-examination, 2026-08-17). It was listed in the strip-and-rename group, but
+//!     had **no hand-derived assertions to keep** — its whole body was the now-identity
+//!     `pc_export` vs `pc_denoise` comparison plus an `assert_ne!` control, which the
+//!     strip instruction would have reduced to asserting only "something changed" (cookbook
+//!     rule 1's named defect). Its inclusion in the strip-and-rename group was a transcription
+//!     slip: no position anywhere in the record (not the audit, not either Opus side's
+//!     original position, not Fable's own stated grounds) argued for that disposition for
+//!     this specific test; the architect's own original position placed it in the DELETE
+//!     group, on measured grounds (0-red under a full §16.45 alpha-formula revert;
+//!     `crates/pc-export/tests/composite_value_lock.rs` measured to catch that same
+//!     regression). Fable's re-examination confirmed no unique coverage is lost:
+//!     `composite_value_lock.rs` already hand-derives the `pc_export` path's clip behavior
+//!     (`alpha_composite_over_fully_outside_bounds_is_a_complete_noop`,
+//!     `alpha_composite_over_opaque_layer_partial_overlap_lands_exact_pixels`), and
+//!     `crates/pc-mask/tests/m5_alpha_composite_value_lock.rs` hand-derives the shared
+//!     implementation's clip rule and alpha-out formula. No rebuild-with-a-new-table
+//!     alternative was adopted, to avoid triplicating that coverage.
+//!   * Two further now-identity cross-crate comparisons in this file were **out of scope** for
+//!     that ruling and are untouched: the `pc_denoise` vs `pc_inpaint` loop inside
+//!     `resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mapping`, and the
+//!     three-crate loop inside `the_blend_matches_the_hand_computed_lerp_in_all_three_crates`.
+//!     Both still carry real hand-derived assertions; only their "agrees"/"in all three
+//!     crates" naming over-claims.
 
-use image::{Rgb, RgbImage, Rgba, RgbaImage};
+use image::{Rgba, RgbaImage};
 
 /// §16.9 item 15: `round(base * (1 - alpha) + color * alpha)`, computed by hand.
 ///
@@ -113,71 +163,6 @@ fn the_blend_matches_the_hand_computed_lerp_in_all_three_crates() {
             "pc_inpaint::compose::blend_channel({base}, {color}, {a}/255)"
         );
     }
-}
-
-/// The three `composite_rgb` implementations must agree pixel-for-pixel on a canvas that exercises
-/// every branch: `a == 0` (skip), `a == 255` (replace), and a partial alpha (blend).
-///
-/// What would turn this red: any edit to one crate's rounding, clamping or branch order.
-#[test]
-fn composite_rgb_agrees_across_pc_mask_pc_denoise_and_pc_inpaint() {
-    let canvas = RgbImage::from_fn(8, 4, |x, y| Rgb([(x * 30) as u8, (y * 60) as u8, 128]));
-    let layer = RgbaImage::from_fn(8, 4, |x, y| {
-        let alpha = match (x + y) % 4 {
-            0 => 0,
-            1 => 1,
-            2 => 128,
-            _ => 255,
-        };
-        Rgba([255, 16, 200, alpha])
-    });
-
-    let via_mask = pc_mask::combine::composite_rgb(&canvas, &layer);
-    let via_denoise = pc_denoise::composite::composite_rgb(&canvas, &layer);
-    let via_inpaint = pc_inpaint::compose::composite_rgb(&canvas, &layer);
-
-    assert_eq!(via_mask, via_denoise);
-    assert_eq!(via_mask, via_inpaint);
-    assert_ne!(
-        via_inpaint, canvas,
-        "the layer must actually have changed something, or the agreement above is vacuous"
-    );
-}
-
-/// The three `alpha_composite_over` implementations must agree, including on `alpha_out` — which
-/// §16.45 item 4 fixed as real (Porter-Duff) source-over's `sa + da*(1 - sa)`, superseding the
-/// `max(base_a, layer_a)` rule this comment used to cite to §16.9 item 15 — and on dropping pixels
-/// that land outside the destination. This test compares the implementations against each other, so
-/// it does not pin the formula's value; `crates/pc-export/tests/composite_value_lock.rs` does.
-#[test]
-fn alpha_composite_over_agrees_across_pc_denoise_and_pc_inpaint_including_the_offset_clip() {
-    let make_base = || {
-        RgbaImage::from_fn(8, 6, |x, y| {
-            Rgba([
-                (x * 20) as u8,
-                (y * 20) as u8,
-                90,
-                if x < 4 { 0 } else { 200 },
-            ])
-        })
-    };
-    let layer = RgbaImage::from_fn(5, 5, |x, y| Rgba([250, 5, 30, ((x * 5 + y) * 11) as u8]));
-
-    for at in [(0_i32, 0_i32), (5, 3), (-2, -1), (7, 5)] {
-        let mut denoise_base = make_base();
-        let mut inpaint_base = make_base();
-        pc_denoise::composite::alpha_composite_over(&mut denoise_base, &layer, at);
-        pc_inpaint::compose::alpha_composite_over(&mut inpaint_base, &layer, at);
-        assert_eq!(denoise_base, inpaint_base, "at offset {at:?}");
-    }
-
-    let mut changed = make_base();
-    pc_inpaint::compose::alpha_composite_over(&mut changed, &layer, (0, 0));
-    assert_ne!(
-        changed,
-        make_base(),
-        "the layer must actually have changed something"
-    );
 }
 
 /// §16.9 item 13 / §16.10 item 13: `src = floor(dst * src_len / dst_len)`.
@@ -229,12 +214,23 @@ fn resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mapping() {
 // unaffected. These are NEW tests; nothing above this line was edited.
 // ---------------------------------------------------------------------------------------------
 
-/// Same hand-derived table as `the_blend_matches_the_hand_computed_lerp_in_all_three_crates`
-/// (§16.9 item 15), now also checked against `pc_export::composite::blend_channel` and against
-/// `pc_mask::combine::blend_channel` as the cross-crate anchor. What would turn this red: any
-/// divergence between `pc-export`'s rounding/clamping and `pc-mask`'s, or a wrong literal.
+/// `pc_export::composite::blend_channel` against the hand-computed §16.9 item 15 lerp table.
+///
+/// **Renamed and stripped 2026-08-17** (Fable tie-break), from
+/// `pc_export_blend_channel_agrees_with_the_hand_computed_lerp_and_pc_mask`. The old name's
+/// "and pc_mask" half was backed by an `assert_eq!(via_export, pc_mask::combine::blend_channel(..))`
+/// that became an identity comparison once §16.42's hoist made both paths re-exports of
+/// `pc_imageops::composite::blend_channel` — it could no longer fail, so the name claimed
+/// more than the assertion verified (cookbook rule 1). That one line is removed; every
+/// hand-derived row below is kept unchanged.
+///
+/// The rows are **not** redundant with `crates/pc-export/tests/composite_value_lock.rs`: only
+/// 2 of these 8 rows appear there, measured row-by-row during the 2026-08-17 planning pass —
+/// the near-boundary cases `(200, 0, 1, 199)` and `(200, 0, 254, 1)` are pinned here and
+/// nowhere else. What would turn this red: a wrong literal, or `blend_channel` swapping
+/// `round` for a truncating cast (rows `a = 1` and `a = 254` both discriminate).
 #[test]
-fn pc_export_blend_channel_agrees_with_the_hand_computed_lerp_and_pc_mask() {
+fn pc_export_blend_channel_matches_the_hand_computed_lerp() {
     let table: &[(u8, u8, u8, u8)] = &[
         (200, 0, 0, 200),
         (200, 0, 1, 199),
@@ -253,53 +249,25 @@ fn pc_export_blend_channel_agrees_with_the_hand_computed_lerp_and_pc_mask() {
             via_export, *expected,
             "pc_export::composite::blend_channel({base}, {color}, {a}/255)"
         );
-        assert_eq!(
-            via_export,
-            pc_mask::combine::blend_channel(*base, *color, alpha),
-            "pc_export must agree with pc_mask at ({base}, {color}, {a}/255)"
-        );
     }
 }
 
-/// Extends `alpha_composite_over_agrees_across_pc_denoise_and_pc_inpaint_including_the_offset_clip`
-/// to `pc_export::composite::alpha_composite_over`, same base/layer construction and same offsets
-/// (including the two that clip and the one that is fully outside bounds).
+/// `pc_export::composite::resize_nearest_rgba` against §16.9 item 13's hand-derived
+/// `src = floor(dst * src_len / dst_len)` mapping.
+///
+/// **Renamed and stripped 2026-08-17** (Fable tie-break), from
+/// `pc_export_resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mapping`. The
+/// `for size in [...]` loop comparing `pc_export` against `pc_inpaint` became an identity
+/// comparison once §16.42's hoist made both re-exports of one function, so the "agrees" in
+/// the old name named something that could no longer fail (cookbook rule 1). That loop is
+/// removed; every hand-derived assertion is kept unchanged.
+///
+/// **Not** redundant with `crates/pc-export/tests/composite_value_lock.rs`: that file's
+/// downscale case is `(3, 1)`, this one is `(3, 2)` — a different mapping on the y axis —
+/// measured during the 2026-08-17 planning pass. What would turn this red: `floor` becoming
+/// `ceil` or `round` on either axis, or the identity fast path resampling anyway.
 #[test]
-fn pc_export_alpha_composite_over_agrees_with_pc_denoise_including_the_offset_clip() {
-    let make_base = || {
-        RgbaImage::from_fn(8, 6, |x, y| {
-            Rgba([
-                (x * 20) as u8,
-                (y * 20) as u8,
-                90,
-                if x < 4 { 0 } else { 200 },
-            ])
-        })
-    };
-    let layer = RgbaImage::from_fn(5, 5, |x, y| Rgba([250, 5, 30, ((x * 5 + y) * 11) as u8]));
-
-    for at in [(0_i32, 0_i32), (5, 3), (-2, -1), (7, 5)] {
-        let mut export_base = make_base();
-        let mut denoise_base = make_base();
-        pc_export::composite::alpha_composite_over(&mut export_base, &layer, at);
-        pc_denoise::composite::alpha_composite_over(&mut denoise_base, &layer, at);
-        assert_eq!(export_base, denoise_base, "at offset {at:?}");
-    }
-
-    let mut changed = make_base();
-    pc_export::composite::alpha_composite_over(&mut changed, &layer, (0, 0));
-    assert_ne!(
-        changed,
-        make_base(),
-        "the layer must actually have changed something"
-    );
-}
-
-/// Extends `resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mapping` to
-/// `pc_export::composite::resize_nearest_rgba`, same source image and same hand-derived floor
-/// mapping (§16.9 item 13), plus cross-crate agreement against `pc_inpaint::compose`.
-#[test]
-fn pc_export_resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mapping() {
+fn pc_export_resize_nearest_rgba_matches_the_hand_derived_floor_mapping() {
     let source = RgbaImage::from_fn(4, 2, |x, y| Rgba([(x * 10) as u8, (y * 10) as u8, 0, 255]));
 
     let up = pc_export::composite::resize_nearest_rgba(&source, (8, 4));
@@ -322,13 +290,6 @@ fn pc_export_resize_nearest_rgba_agrees_and_matches_the_hand_derived_floor_mappi
         "floor(x * 4 / 3) for x = 0,1,2 is 0,1,2"
     );
 
-    for size in [(8_u32, 4_u32), (3, 2), (4, 2), (1, 1)] {
-        assert_eq!(
-            pc_export::composite::resize_nearest_rgba(&source, size),
-            pc_inpaint::compose::resize_nearest_rgba(&source, size),
-            "pc_export vs pc_inpaint at {size:?}"
-        );
-    }
     assert_eq!(
         pc_export::composite::resize_nearest_rgba(&source, (4, 2)),
         source,
