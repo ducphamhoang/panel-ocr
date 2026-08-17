@@ -717,8 +717,11 @@ const PRESENT: &[Site] = &[
         //   → 345 (2026-08-11, fix round (brief BRIEF_INPAINT_STANDALONE_FIXES.md): M5/M6/
         //     L10 added six net lines to the `inpaint` paragraph above this point; re-derived
         //     by content, single occurrence confirmed).
+        //   → 357 (2026-08-17, v1.6.0 release: added a "### v1.6 — done" roadmap section
+        //     above this point, +12 net lines; re-derived by content, single occurrence
+        //     confirmed).
         path: "README.md",
-        line: 345,
+        line: 357,
         text: "### v2",
     },
     Site {

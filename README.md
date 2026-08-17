@@ -330,6 +330,18 @@ build-from-source only, on any platform `ort` ships a CUDA distribution for.
   release** by direct maintainer decision (§16.50) — see [Deferred backlog](#deferred-backlog)
   below.
 
+### v1.6 — done
+- [x] `panel-ocr inpaint` — standalone LaMa inpainting from a user-supplied mask, no
+      cache/uuid state, no dependency on the detector or OCR
+- [x] `panel-ocr residual-check` — non-gating diagnostic reporting text the detector
+      still finds on an already-cleaned page
+- [x] OCR beam-search decode now batches all 4 beams per step instead of one call per
+      beam — real, measured ~1.1×–1.6× CPU speedup, bit-identical output
+- [x] Fixed a real batch-mode CPU regression (1.66×–5.3× slower than it should have
+      been) — an order-dependent denormal-float-flag bug, now a scoped guard reapplied
+      on every inference call
+- See [`CHANGELOG.md`](CHANGELOG.md) for the full, dated write-up
+
 ### Deferred backlog
 Originally scoped to v1.5, now unscheduled — moved here rather than dropped, so the scope
 and citations aren't lost:
