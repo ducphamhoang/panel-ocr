@@ -784,3 +784,24 @@ heavy item rather than continuing an already-long one.
   scratchpad, deleted after use — nothing touched the repo except the two `.md` files
   and the pre-registered brief. Verified: pure-`.md`-diff carve-out per CLAUDE.md
   (`cargo test --workspace`, 200 suites, 0 failed) — no `.rs`/manifest/fixture touched.
+
+- 2026-08-17 (same day, second follow-up): **Re-measured P0/S0 at 10 real pages with 3
+  repeats (user-requested, after the 4-page run's noise-vs-signal ambiguity), per
+  `PERFORMANCE_BACKLOG.md`'s "FOLLOW-UP" entry — noise floor drops to ~6.4% (vs 4-page's
+  17%), and the observed ~30% gap between actual wall-clock (mean 24.03s) and the
+  analytic `max(stage_cost)` bound (~16.75s, LaMa-dominated) now clearly exceeds it (~5x
+  margin).** Criteria (a) and (b) are therefore not cancelled by this data — this is a
+  real, update, not just noise. **But criterion (c) is unresolved and newly sharpened,
+  not newly satisfied**: the 30% gap has (at least) two untested, distinct candidate
+  causes — fill/drain (a real batch-boundary cost `StageGate` cannot fix, only the
+  deferred/unauthorized full staged-executor "S4" design would) vs. cross-model CPU
+  oversubscription (all three model stages use `intra_threads=0`/all-cores per call;
+  `StageGate` doesn't bound concurrent calls *across* different models either). Neither
+  ruled out. Distinguishing test identified but not run: repeat at a larger batch size
+  (20-30 pages) and see whether the percentage gap shrinks (→ fill/drain) or stays flat
+  (→ oversubscription) — recorded as the next step, not executed this pass. **Net
+  effect: the earlier "inconclusive due to noise" verdict is resolved (signal is real),
+  but `StageGate` implementation remains NOT started**, since the newly-clear gap hasn't
+  been shown to be the specific kind of gap that mechanism addresses. Scratch (10-page
+  copies, profile TOMLs, cache/output dirs) deleted after use. Verified: pure-`.md`-diff
+  carve-out (`cargo test --workspace`, 200 suites, 0 failed).

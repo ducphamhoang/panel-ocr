@@ -75,6 +75,84 @@ this up next should not treat this pass's single-sample numbers as evidence eith
 only as a demonstration that the noise floor must be characterized before the pre-
 registered criteria can be evaluated at all.
 
+### FOLLOW-UP, same day — larger batch (10 real pages, 3 repeats): the noise floor drops and a real gap now clearly exceeds it, but the CAUSE of the gap is still open — this is an update, not a revised final verdict
+
+Re-ran the same cumulative-diff method on 10 real Choujin Locke v02 pages (010-019,
+matching the architect's original "≥8 images" suggestion this pass had shortened), with
+the full-pipeline stage repeated **3 times** instead of 2, specifically to characterize
+the noise floor the 4-page run couldn't.
+
+| Stage (cumulative) | Wall-clock, 10 pages, default threads |
+|---|---:|
+| Detect + mask | 5.014s |
+| + OCR | 7.621s (OCR alone ≈ 2.6s) |
+| + Denoise | 7.282s (denoise alone ≈ **-0.3s** — noise, same shape as every prior denoise measurement) |
+| + Inpaint (= full), run 1 | 23.027s |
+| + Inpaint (= full), run 2 | 24.510s |
+| + Inpaint (= full), run 3 | 24.562s |
+| `--threads 1` | 93.796s |
+
+**The noise floor is now much tighter**: the 3 full-pipeline repeats span 23.03-24.56s,
+a **~6.4%** spread around their mean (24.03s) — well under the 4-page run's 17%. This
+confirms the expected effect of a larger batch: fixed per-process overhead and
+run-to-run variance amortize over more work, shrinking *relative* noise. This alone is a
+useful, disclosed correction to the earlier entry's implicit assumption that batch size
+wouldn't matter to the noise question.
+
+**The gap now clearly exceeds the noise.** LaMa's aggregate cost (mean full − stage-C
+value) ≈ 24.03 − 7.282 ≈ 16.75s. The analytic bound (perfect staging, bounded only by
+the single largest stage) is therefore ≈16.75s. Actual mean wall-clock (24.03s) exceeds
+it by **≈30%** — roughly 5× the ≈6.4% noise band. Unlike the 4-page run, this signal is
+not plausibly just noise. **Criterion (a) (real headroom against the analytic bound) is
+therefore not cancelled by this data — a real gap this batch's own repeats can't explain
+away.** Raising `--threads` further cannot close it either (default threads already
+equals `min(20 cores, 10 images) = 10`, the image-count ceiling, not a core ceiling) —
+**criterion (b) is also not cancelled.**
+
+**But criterion (c) — that the gap is attributable to per-stage admission/scheduling,
+the specific thing `StageGate` (§16.54 Ruling 1's approved mechanism) would fix — is
+NOT yet confirmed, and this matters more than it might look.** Two distinct, untested
+explanations for the same 30% number, neither ruled out:
+
+- **Fill/drain.** The first image's LaMa call can't start until that image's own
+  detect+OCR+denoise are done, and the last image's LaMa call has no later image's
+  earlier-stage work left to hide behind it. This is a real cost on *any* finite batch,
+  and it is specifically the cost the rejected/deferred full staged-executor design
+  ("S4" in the joint plans, explicitly left unauthorized by §16.54) would address — a
+  plain admission gate (`StageGate`) does **not** touch it, because it doesn't change
+  *when* the pipeline starts or ends, only how many calls are admitted concurrently.
+- **CPU oversubscription across different models.** Detect, OCR, and LaMa are each
+  configured `intra_threads = 0` (use all logical cores) per call
+  (`crates/pc-detect/src/onnx.rs`, `pc-ocr/src/onnx.rs:454`,
+  `pc-inpaint/src/onnx.rs:420`). With 10 rayon workers in flight, several
+  all-core-hungry calls from *different* models can genuinely be running at once,
+  competing for the same 20 logical cores — the same mechanism already confirmed to cost
+  ~1.76x for 3 concurrent *same-model* OCR sessions, here potentially recurring across
+  different models. `StageGate` does not fix this either: it only bounds how many calls
+  of *one* model run concurrently (already 1, via the existing mutex) — it says nothing
+  about calls from *different* models competing for cores at the same instant.
+
+**Distinguishing test, not yet run** (the natural next step, not yet executed — time
+budget for this pass went to the batch-size/repeat-count re-measurement instead):
+re-run this same 10-page cumulative-diff at a **larger** batch size (e.g. 20-30 pages).
+If the percentage gap **shrinks** as batch size grows, that points to fill/drain (a
+roughly fixed one-time cost, amortizing over more images) — and would mean `StageGate`
+is the wrong fix regardless of what P0/S0's other criteria say, since fill/drain needs
+the deferred S4 design instead. If the percentage gap stays **roughly constant**
+regardless of batch size, that points to CPU oversubscription (a per-call, not
+one-time, cost) — which `StageGate` also does not fix, but which might respond to
+per-model `intra_threads` tuning instead (a config change, not an architecture change,
+and not something either Opus plan proposed touching). Either outcome argues *against*
+proceeding straight to `StageGate` on the current evidence; **this update sharpens what
+"real headroom" means without yet identifying a fix `StageGate` would actually deliver.**
+
+**Status, restated so it isn't over-read**: this is an **update to the P0/S0 record**,
+not a revised final verdict superseding the "not started" recommendation above. The
+noise-vs-signal question this entry's own worry was about is now resolved (signal
+exceeds noise at 10 pages) — but a *new*, more specific open question replaced it
+(which mechanism, if any, the gap actually calls for), and `StageGate` implementation
+remains not started pending it.
+
 ## NEW LEVER, 2026-08-17 — cross-image OCR/inpaint overlap: measured promising, not yet designed
 
 **User-proposed optimization: instead of running each image's whole pipeline strictly
