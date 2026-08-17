@@ -120,6 +120,29 @@ fn run_level_a(intra_threads: usize, tuning: &SessionTuning, label: &str) -> Str
     let ordinary = TextDetector::detect(&detector, &base).expect("ordinary detector path");
     assert_eq!(ordinary.blocks, expected_blocks());
     assert_eq!(ordinary.mask, committed_mask());
+
+    // §16.52 item 5 D2, ADDITIVE (cookbook rule 8 exit 1 -- strengthens, changes no
+    // existing assertion): re-measure the actual observed flush state on the real
+    // worker thread for this arm's most recent inference, rather than inheriting the
+    // pre-D1 evidence. §16.52 item 1 found this file's own test-ordering could have let
+    // one arm's inference silently poison another's (whichever of this file's 3 tests
+    // wins cargo's concurrent-test race first can consume ONNX Runtime's process-wide
+    // once-flag) -- this assertion makes the actual per-arm state explicit and
+    // self-verifying regardless of which test ran first, instead of assuming it.
+    #[cfg(target_arch = "x86_64")]
+    {
+        let observed = detector
+            .last_inference_flush_state()
+            .expect("a real inference on x86_64 must record an observed flush state");
+        assert_eq!(
+            (observed.flush_to_zero, observed.denormals_are_zero),
+            (tuning.flush_denormals, tuning.flush_denormals),
+            "{label} intra_threads={intra_threads}: the worker's actual observed flush \
+             state did not match the requested tuning -- D1's guard must make this hold \
+             regardless of which ONNX Runtime session initialized first in this process"
+        );
+    }
+
     let digest = digest(&values);
     println!("{label} intra_threads={intra_threads} raw_f32_count={count} sha256={digest}");
     digest
