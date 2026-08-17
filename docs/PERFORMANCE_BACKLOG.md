@@ -42,6 +42,34 @@ instance, real cached weights) measured:
   test), not required to close §16.52, and the throwaway test file was deleted after use
   per this project's convention.
 
+**D3 follow-up (2026-08-17, same day): tested whether forcing `SessionTuning::
+intra_op_spinning = Some(true)` (never let ONNX Runtime's intra-op pool block/sleep)
+eliminates the growth. Result: inconclusive in the hoped-for direction, and the tradeoff
+is bad enough that it argues against pursuing this lever further.** `SessionTuning`
+already exposes `intra_op_spinning: Option<bool>` (currently `None`, deferring to ORT's
+own default), so this was a config-only experiment, no code change. Same 10-call
+methodology, same real cached weights, `intra_threads=0`:
+  - Baseline (`intra_op_spinning=None`): `[0.48, 0.43, 0.42, 0.42, 0.43, 0.44, 1.23, 1.69,
+    1.55, 1.54]` — reproduces the step-function growth, **3.21x**.
+  - Forced spin (`intra_op_spinning=Some(true)`): `[3.26, 3.15, 3.10, 3.16, 3.14, 3.09,
+    3.47, 3.90, 4.31, 4.10]` — **every single call is 7-10x slower in absolute terms**
+    (3.1-4.3s vs. 0.4-1.7s), and growth is NOT eliminated — it's smoother (no sharp
+    mid-run step) but still real (3.09s → 4.30s across the run), **1.26x**.
+
+  **This does not confirm the pool's spin-vs-block transition is the (sole) cause, and it
+  rules out `intra_op_spinning = Some(true)` as a viable fix regardless of cause** — the
+  absolute-time cost is far larger than any growth-smoothing benefit. The fact that growth
+  persists even under forced spinning (just smoother) is if anything mildly more
+  consistent with the CPU-frequency-throttling candidate than the thread-pool-warmup one
+  (sustained spin-waiting keeps the CPU busier for longer, which would produce more
+  thermal throttling, not less) — but this is not a confirmed mechanism, only a
+  plausibility note. **Not pursuing this lever further**: the config knob that could have
+  been a cheap fix turned out to be a bad trade, and distinguishing CPU throttling from
+  ORT-internal state now needs real-time frequency/thermal tooling (Intel Power Gadget,
+  HWiNFO, or `Get-Counter '\Processor Information(_Total)\% Processor Performance'`) that
+  this investigation has twice now deferred rather than attempted. Throwaway test file
+  deleted after use, no code changes, no commits.
+
 **D4 (pc-ocr/pc-inpaint denormal exposure) is NOT newly motivated by D3's finding.**
 Fable's ruling 3(b) deferred D4 specifically to its own future denormal-exposure
 measurement; D3's finding is a different phenomenon (a thread-pool/thermal growth
