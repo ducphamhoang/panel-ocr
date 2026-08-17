@@ -1,5 +1,47 @@
 # CPU performance backlog
 
+## NEW LEVER, 2026-08-17 — cross-image OCR/inpaint overlap: measured promising, not yet designed
+
+**User-proposed optimization: instead of running each image's whole pipeline strictly
+sequentially, overlap "part A" (detect+mask+OCR) of image N+1 with "part B" (LaMa-inpaint)
+of image N, since they're independent once part A's output for image N is already
+consumed.** Before any architecture work, the real prerequisite question was measured
+directly: does running OCR and LaMa-inpaint CONCURRENTLY (two different real ONNX
+sessions, two different models) contend for memory bandwidth the way three concurrent
+*same-model* OCR sessions were already measured to (2026-08-15: 0.57x, ~1.76x slower) —
+or is that finding specific to identical sessions competing for the same memory
+footprint?
+
+**Measured (throwaway test, real cached weights, deleted after use): overlap is nearly
+free — the opposite of the same-model finding.**
+```
+SEQUENTIAL: ocr_alone=3.919s inpaint_alone=27.253s total=31.172s
+CONCURRENT: total=27.579s (ideal overlap = max(ocr_alone, inpaint_alone) = 27.253s)
+speedup_vs_sequential = 1.13x
+```
+Concurrent wall-clock (27.579s) is within ~1.2% of the theoretical best case (27.253s,
+running OCR entirely "for free" inside inpaint's larger cost) — essentially no
+contention penalty. This is the opposite of the OCR-vs-OCR case: two *different* models
+(different weight sets, different memory access patterns) apparently don't compete for
+the same cache lines/bandwidth the way three copies of the *same* model do.
+
+**Why this could matter in practice**: LaMa-inpaint dominates per-image cost (27.25s vs.
+3.9s OCR here, consistent with the 2026-08-11 per-stage breakdown finding inpaint is the
+single largest pipeline stage on both CPU and GPU). If a real batch pipeline could
+genuinely overlap image N+1's detect+mask+OCR inside image N's inpaint window, the OCR
+(and likely mask) cost could be nearly hidden for every image except the first/last in a
+batch — a real, additive lever on top of the already-shipped denormal-flush fix and OCR
+beam-batching.
+
+**Not yet designed, not yet scoped.** This is a real architecture change to
+`crates/pc-pipeline` (currently whole-image, data-parallel-across-images via
+`rayon::par_iter` per DEVIATION(11) in `batch.rs`, not a staged/overlapped pipeline) —
+would need a producer-consumer handoff between stages, touches `BatchSummary`'s frozen
+input-order guarantee, and needs the same joint architect+rust-engineer planning this
+project's Spec-sensitive tier requires for anything touching core pipeline architecture
+and frozen tests. This entry records the measured prerequisite only; the design itself is
+the next step if picked up.
+
 ## STATUS, 2026-08-17 — denormal-flush fix (§16.52 D0-D2) shipped, bit-exact; D3's residual-growth diagnostic found a real but different, unexplained pattern; D4 stays deferred
 
 The detector's denormal-flush regression (batch-mode CPU, 1.66x-5.3x slower than separate
