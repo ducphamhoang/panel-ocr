@@ -95,6 +95,28 @@ compound further as the batch grows longer. This resolves the open question the
 original 10-call measurement couldn't answer on its own (whether the plateau seen there
 was real steady-state or just a shorter window that hadn't found a second climb yet).
 
+**D3, final assessment (2026-08-17): every code-level explanation is now ruled out by
+direct evidence; CPU-level behavior (most likely thermal/frequency throttling) is the
+leading candidate, but not yet confirmed by direct measurement — stated at that
+confidence level, not higher.** What's actually been eliminated, each by a real
+experiment rather than by reasoning: a denormal-flag leak (D1 reapplies the guard every
+call, D2 confirms zero bits move); the ORT thread-pool spin-vs-block transition as a fix
+(forcing `intra_op_spinning=true` made things worse, not better); unbounded/compounding
+growth (30-call run plateaus, doesn't climb further). What points toward CPU-level
+causes specifically, all from real experiments already run: the pattern appears only
+with multiple cores active (`intra_threads=0`) and is largely absent on a single core
+(`intra_threads=1`); forcing more sustained core activity (spin=true) made the pattern
+worse, the opposite of what a software-only cause would predict; and it settles into a
+stable plateau rather than growing without bound, consistent with a CPU finding a lower
+sustained clock and holding there. **What would close this out, not yet done**:
+real-time CPU frequency/thermal measurement during a live repeated-call run (Intel Power
+Gadget, HWiNFO, or `Get-Counter '\Processor Information(_Total)\% Processor
+Performance'` on Windows) — every prior attempt in this investigation to reach for that
+tooling stopped short of it. Until that measurement exists, "CPU throttling" is the
+best-supported working hypothesis, not a proven conclusion — and it does not change
+anything about §16.52's correctness or the real ~3.38x speedup already measured against
+upstream, which already reflects whatever this pattern costs in practice.
+
 **D4 (pc-ocr/pc-inpaint denormal exposure) is NOT newly motivated by D3's finding.**
 Fable's ruling 3(b) deferred D4 specifically to its own future denormal-exposure
 measurement; D3's finding is a different phenomenon (a thread-pool/thermal growth
