@@ -1,5 +1,80 @@
 # CPU performance backlog
 
+## §16.54 P0/S0 MEASUREMENT, 2026-08-17 — inconclusive: real headroom is comparable to run-to-run noise; `StageGate` implementation NOT started
+
+Per §16.54 Ruling 0's binding requirement, the three cancel criteria were pre-registered
+(`docs/BRIEF_p0_stagegate_measurement.md`) before any timed run. Result: **the
+measurement cannot confidently clear or fail its own criteria — the signal and the noise
+floor are the same size.** This is reported as the honest outcome, per Ruling 0's own
+instruction to report even "cancel" or "inconclusive" rather than a forced verdict.
+
+**Setup**: 4 real Choujin Locke v02 pages (010-013, smaller than the architect's
+suggested "≥8 images," disclosed as a deviation for wall-clock cost — the first thing to
+redo if this measurement is picked back up), real cached ONNX weights (all four models
+confirmed present via `panel-ocr models path`), CPU device, 20 logical cores, cumulative-
+diff progressive-stage-disabling (the same trusted, no-new-code method used 2026-08-11),
+one warm-up run discarded per that entry's cold-start lesson.
+
+**Hazard check (Ruling 3 graft), clean**: `grep -rn "MXCSR|flush_denormals|_MM_SET_FLUSH_ZERO|_MM_SET_DENORMALS_ZERO|denormal" crates/pc-ocr/src crates/pc-inpaint/src`
+— zero hits. Neither engine crate touches any denormal/MXCSR flag the way the detector's
+`flush_denormals` does; there is no analogous hazard for §16.32's confinement pattern to
+guard against here.
+
+**Timed results, single run each (repeat below shows why these are not to be trusted to
+more than ~1 significant figure)**:
+
+| Stage (cumulative) | Wall-clock, 4 pages, default threads |
+|---|---:|
+| Detect + mask | 2.609s |
+| + OCR | 8.978s (OCR alone ≈ 6.4s) |
+| + Denoise | 6.879s (denoise alone ≈ **-2.1s** — noise, not a real negative cost; swamped by OCR run-to-run variance, same shape as the 2026-08-11 denoise finding) |
+| + Inpaint (= full) | 30.495s (LaMa alone ≈ 23.6s) |
+| Full, repeated | **35.801s** — 17% higher than the first full run, same config, same input, same process |
+| Full, `--threads 1` | 50.698s (1.66x slower than default-threads' first sample) |
+
+**Why this is inconclusive against the pre-registered criteria, not a clean pass or
+fail**: criterion (a)'s cancel bar was "actual wall-clock within ~15% of the analytic
+`max(stage_cost)` bound." The first full-run sample (30.5s) against the LaMa-dominated
+bound (23.6s) is ~23% over — above the cancel threshold, i.e. "don't cancel" by the
+letter of the pre-registered rule. **But the very next identical run (35.8s) shows 17%
+run-to-run noise on its own**, comparable in size to the 23% gap the first sample showed
+against the bound. A measurement whose noise floor is the same size as the effect it's
+trying to detect cannot honestly be reported as clearing or failing a 15% bar — the
+15% figure itself is now known to be inside the noise band, which was not known when it
+was written into the pre-registered brief (a real limitation of pre-registering a
+threshold before the first sample, disclosed rather than quietly using a different
+threshold after the fact).
+
+**One real, useful byproduct**: this measurement's OCR aggregate (≈6.4s / 4 pages ≈
+1.6s/page) sits much closer to the "high" historical figure (~2.1s/box,
+`docs/PERFORMANCE_BACKLOG.md`'s "OCR is the dominant cost" entry) than to the "low"
+2026-08-11 per-stage table's 7.387s-for-a-whole-10-page-batch figure — informally
+supporting, though not proving with a controlled re-derivation, that document's own
+standing working theory that the low number understated real cost rather than today's
+CPU being regressed. Not a substitute for the controlled re-derivation that entry itself
+says is the real way to close the question.
+
+**Also not completed this pass, disclosed rather than silently skipped**: the OCR
+`intra_threads=1`-while-LaMa-runs experiment both Opus passes named. `intra_threads` is
+hard-coded in `pc-ocr`'s construction code, not profile-configurable (confirmed: only
+`[text_detector]` exposes `intra_threads`/`inter_threads` in
+`crates/pc-config/src/default_profile.toml`) — running it needs a temporary source patch
+plus rebuild plus revert, a real but larger time cost than this pass budgeted for.
+
+**Recommendation, not a unilateral decision**: given (1) the observed gap and the noise
+floor are the same order of magnitude, (2) Fable's own prior (reasoning-only) expectation
+was that this measurement would likely cancel the redesign, and (3) building `StageGate`
+is real implementation effort for a benefit this measurement cannot confidently show
+clears the bar — **`StageGate` implementation is not started.** This is not the same as
+"cancel per Ruling 0" — that requires actually clearing/failing the criteria, which this
+measurement's noise floor prevented. The honest state is: **undecided, pending a properly
+powered re-measurement** (larger batch, ≥3-5 repeats per configuration, a real confidence
+interval instead of single samples, the intra_threads=1 experiment, and per-stage timing
+if `pc-pipeline` ever grows one instead of relying on cumulative-diff). Whoever picks
+this up next should not treat this pass's single-sample numbers as evidence either way —
+only as a demonstration that the noise floor must be characterized before the pre-
+registered criteria can be evaluated at all.
+
 ## NEW LEVER, 2026-08-17 — cross-image OCR/inpaint overlap: measured promising, not yet designed
 
 **User-proposed optimization: instead of running each image's whole pipeline strictly

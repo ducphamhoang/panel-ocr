@@ -753,3 +753,34 @@ heavy item rather than continuing an already-long one.
   - **No implementation exists yet and, per Ruling 0, most of it may never be built.**
     Next step, per the ruling itself, is a pre-registered measurement task (P0/S0) with
     its three cancel criteria written into its own brief *before* it runs — not code.
+
+- 2026-08-17 (same day, follow-up): **P0/S0 measurement run — inconclusive, `StageGate`
+  implementation NOT started.** Cancel criteria pre-registered before any timed run
+  (`docs/BRIEF_p0_stagegate_measurement.md`, per §16.54 Ruling 0's binding requirement).
+  Real 4-page batch (Choujin Locke v02 010-013, real cached ONNX weights, CPU, 20
+  logical cores), cumulative-diff progressive-stage-disabling (2026-08-11's trusted
+  method, no new code). Hazard check (Ruling 3 graft) clean: zero denormal/MXCSR touches
+  in `pc-ocr`/`pc-inpaint`, unlike the detector's `flush_denormals` — no analogous hazard
+  exists. Timed: detect+mask 2.6s, +OCR 9.0s (OCR≈6.4s), +denoise 6.9s (denoise≈-2.1s,
+  noise, not real), +inpaint=full 30.5s (LaMa≈23.6s, the dominant stage); full run
+  repeated identically measured 35.8s — **17% run-to-run noise on the same input/config**;
+  `--threads 1` measured 50.7s. **Reported as inconclusive rather than forced to a
+  verdict**: criterion (a)'s pre-registered 15% bar would read "don't cancel" against the
+  first sample's ~23% gap, but the very next identical run showed 17% noise on its own —
+  the pre-registered threshold turned out to sit inside the measurement's own noise band,
+  which wasn't known until the second sample. Useful byproduct: this run's OCR aggregate
+  (~1.6s/page) sits much closer to the historical "~2.1s/box" figure than to
+  2026-08-11's disputed "7.387s/10-page-batch" number, informally supporting (not
+  proving) `PERFORMANCE_BACKLOG.md`'s standing theory that the low number understated
+  real cost. Not completed: the OCR `intra_threads=1`-while-LaMa-concurrent experiment
+  (hard-coded in `pc-ocr`, not profile-configurable — needs a temporary source patch,
+  more time than this pass budgeted). **Recommendation, not a unilateral decision**: do
+  not start `StageGate` implementation on this evidence — the gap and the noise floor are
+  the same order of magnitude — but this is explicitly "undecided pending a properly
+  powered re-measurement" (larger batch, ≥3-5 repeats, real confidence interval), not
+  "cancelled per Ruling 0," since the criteria were never actually cleared or failed.
+  Full write-up: `docs/PERFORMANCE_BACKLOG.md`'s "§16.54 P0/S0 MEASUREMENT" entry.
+  Throwaway profile TOMLs/copied pages/cache/output dirs lived under the session
+  scratchpad, deleted after use — nothing touched the repo except the two `.md` files
+  and the pre-registered brief. Verified: pure-`.md`-diff carve-out per CLAUDE.md
+  (`cargo test --workspace`, 200 suites, 0 failed) — no `.rs`/manifest/fixture touched.
