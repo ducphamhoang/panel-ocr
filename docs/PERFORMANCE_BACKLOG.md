@@ -70,6 +70,31 @@ methodology, same real cached weights, `intra_threads=0`:
   this investigation has twice now deferred rather than attempted. Throwaway test file
   deleted after use, no code changes, no commits.
 
+**D3 follow-up #2 (2026-08-17, same day): extended to 30 consecutive calls to answer
+directly whether a realistic 20-30 image batch keeps getting progressively slower, or
+plateaus. It plateaus — real, measured, not extrapolated.** Same detector instance, same
+methodology, `intra_threads=0`, real cached weights, 30 calls instead of 10:
+```
+0.50, 0.44, 0.43, 0.44, 0.43, 0.44, 1.19, 1.59, 1.54, 1.72, 1.70, 1.59, 1.73, 1.62, 1.92,
+1.93, 1.81, 1.80, 1.78, 1.55, 1.50, 1.51, 1.52, 1.50, 1.51, 1.52, 1.50, 1.52, 1.52, 1.52
+```
+The same step-up appears at call ~6-7. Calls 6-18 wobble (1.19s-1.93s, noisier than the
+first 10-call measurement suggested, peaking at call 15). **From call ~19 onward it
+settles into a tight, stable plateau (1.50-1.52s for the last 10 consecutive calls)** —
+not a continued climb, and not the earlier measurement's apparent stability either
+(that was itself mid-wobble, just sampled at a quieter point). Growth against the first
+call: 3.05x by the last call, 3.88x at the noisy peak (call 15) — but the peak is a
+transient, not the steady state.
+
+**Direct answer to the practical question this follow-up exists for: no, a 20-30 image
+batch does NOT keep getting progressively slower.** There is one step-up early (after
+~6 calls), a noisy transition period for the next ~12 calls, then a stable, flat
+steady-state that holds for the remainder of the batch. A large batch pays the same
+one-time "warm-up" cost a 10-image batch does and then stabilizes — it does not
+compound further as the batch grows longer. This resolves the open question the
+original 10-call measurement couldn't answer on its own (whether the plateau seen there
+was real steady-state or just a shorter window that hadn't found a second climb yet).
+
 **D4 (pc-ocr/pc-inpaint denormal exposure) is NOT newly motivated by D3's finding.**
 Fable's ruling 3(b) deferred D4 specifically to its own future denormal-exposure
 measurement; D3's finding is a different phenomenon (a thread-pool/thermal growth
