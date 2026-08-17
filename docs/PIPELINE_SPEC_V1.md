@@ -9886,6 +9886,221 @@ terms.
    `crates/pc-denoise/tests/n3_noise_mask.rs`, or `crates/pc-inpaint/tests/l4_compose.rs`
    — confirmed by empty `git diff` on each before commit.
 
+## 16.54 Staged OCR‖LaMa pipeline: the redesign is conditional on an unrun measurement, and if it proceeds the admission gate lives in `pc-pipeline`, not inside `pc-ocr`/`pc-inpaint` (joint architect + Senior Rust Engineer plan pass, converging on facts, diverging on where the concurrency-control mechanism should live; Fable tie-break on both the mechanism and one spec-text reading, 2026-08-17)
+
+**Provenance.** User-proposed lever (a real staged pipeline where OCR-stage and
+LaMa-inpaint-stage each run as independent, continuously-fed workers, rather than the
+"which stage is faster" framing an earlier session round briefly mistook it for — the
+user corrected this explicitly). Brief: `docs/BRIEF_staged_ocr_inpaint_pipeline.md`.
+Independent joint `architect` + `rust-engineer` Opus passes were dispatched against it in
+parallel; both read the actual code rather than trusting the brief, both converged
+heavily on the facts and on a measurement-first sequencing, and both proposed a
+different mechanism and placement for the one thing they disagreed on. Per this
+project's disagreement rule, dispatched to a `fable-adjudicator` tie-break rather than
+resolved unilaterally (brief: `docs/BRIEF_fable_stagegate_tiebreak.md`). Fable read the
+actual source files itself (`pc-pipeline/src/batch.rs`, `ctx.rs`; `pc-detect/src/onnx.rs`;
+`pc-ocr/src/onnx.rs`, `manga.rs`, `decode.rs`; `pc-inpaint/src/onnx.rs`; this spec's §4.5
+and §16.32) rather than trusting either side's summary, and disclosed explicitly that it
+ran no benchmark — every throughput claim in this entry, on both sides and in the
+ruling, is reasoning from reading the code, not a measurement. This entry transcribes
+that ruling; no implementation exists yet, and per the ruling itself most of it may never
+be built.
+
+1. **What both independent passes converged on before any disagreement, so this isn't
+   re-litigated later as if it were contested.** `pc-pipeline`'s only *work-distribution*
+   primitive is `run_batch`'s `rayon::par_iter` over whole images (`DEVIATION(11)`) — its
+   other synchronization, `fail_fast`'s two `AtomicBool`s and a `Mutex<()>` start gate at
+   `batch.rs:74-76`, distributes no work, and is named here so it isn't mistaken for a
+   `pc-pipeline` that holds zero locks (relevant to item 3's "no lock-order cycle with the
+   engine mutexes" ground below: `pc-pipeline` already holds one, just not one a
+   `StageGate` would ever contend with). `run_stages` is one straight-line synchronous
+   function per image, confirmed by direct search (`single.rs` contains no
+   `par_iter`/`spawn`/`thread::`/`rayon` reference at all). Every model-backed
+   stage is already serialized at capacity 1 by its own lock — detect by a dedicated
+   worker thread (§16.32), OCR by two `Mutex<Session>` (`DEVIATION(15)`), LaMa by one
+   `Mutex<Session>`. Both sides independently derived, from reading this structure, that
+   **the current architecture already approaches `max(stage_cost)` throughput today**
+   under default config (`threads > 1`, `images > 1`) — N rayon workers each committed to
+   one whole image causes stages to overlap across images as an incidental side effect of
+   lock contention, not by design. Neither side ran a benchmark to confirm this; both
+   treat it as the reason a measurement must come first. Neither proposes reversing
+   `DEVIATION(11)`. Both want any mechanism device-agnostic — CPU-measured only, default
+   unbounded/no-op, so CUDA behavior is unchanged unless a capacity is later measured and
+   configured for it. Both want a new additive determinism gate that varies scheduling/
+   capacity at a *fixed* thread count, since the existing gate (§5.7/§16.12 item 17,
+   `g2_batch.rs`) only varies thread count and cannot reach this axis.
+
+   Labels used below, defined once here since neither is defined elsewhere in this
+   spec (both come from the untracked tie-break brief, `docs/BRIEF_fable_stagegate_tiebreak.md`):
+   **"Design B"** = the architect's rejected proposal, generalizing §16.32's detect
+   worker-thread pattern into a `StageServer` hidden inside `pc-ocr`/`pc-inpaint`.
+   **"Option A"** = rust-engineer's adopted proposal, an explicit `StageGate` owned by
+   `pc-pipeline`'s `PipelineCtx`, described in Ruling 1 below.
+
+2. **RULING 0 (measurement gates everything else): the plan's only unconditionally
+   committed task is a real measurement (P0/S0); the mechanism rulings below take effect
+   only if it clears pre-registered criteria.** Fable, quoted:
+
+   > The plan's only unconditionally committed task is the P0/S0 measurement. The
+   > mechanism rulings below take effect **only if** that measurement shows headroom
+   > that is (a) real against the analytic `max(stage_cost)` bound, (b) not already
+   > capturable by raising `--threads`, and (c) attributable to per-stage admission/
+   > scheduling at fixed thread count. The cancel criteria must be pre-registered in the
+   > measurement task's brief before it runs, not judged after.
+   >
+   > Both sides independently derived — and I confirmed from `batch.rs` plus the three
+   > lock structures — that the current architecture already forms an incidental
+   > pipeline... Critically, **neither proposed mechanism raises any stage's capacity
+   > above 1 as written**: [the rejected design] replaces a mutex (capacity 1) with a
+   > worker thread (capacity 1); [the adopted design] adds a default-unbounded gate *in
+   > front of* an untouched capacity-1 mutex, which can only throttle, never exceed it.
+   > So on paper both mechanisms are throughput-neutral. That equivalence rests on
+   > reasoning, not measurement — it is the load-bearing unrun experiment, and P0/S0 is
+   > the experiment. My expectation (reasoning only) is that P0/S0 cancels the redesign,
+   > additionally because both engine crates set `with_intra_threads(0)` — one CPU
+   > inference already saturates cores (§16.38 item 1(f) measured ~1.6s/tile all-core vs
+   > ~4.7s single-threaded), so there is little idle CPU for extra per-stage concurrency
+   > to harvest.
+
+   Binding consequence: whoever picks up the measurement task must write the three
+   cancel criteria into its own brief *before running it*, and must report the result
+   against them honestly even if the result is "cancel the redesign" — a measurement
+   task whose criteria are written after seeing the number is not evidence, per this
+   project's own standing discipline on not deriving an expectation from the thing being
+   measured.
+
+3. **RULING 1: if the mechanism survives measurement, the admission gate is
+   pipeline-owned (`pc_pipeline::gate::StageGate` on `PipelineCtx`), not a worker-thread
+   server hidden inside `pc-ocr`/`pc-inpaint`.** Fable, quoted, grounds only
+   (decision restated in this item's heading; full quoted grounds preserved because each
+   is independently load-bearing and a paraphrase would lose which one does the work):
+
+   > 1. Design B does not fix the deficiency the redesign exists to fix, by its own
+   >    accounting. The disputed property is "capacity is unexpressible, hard-coded at
+   >    exactly 1, untestable from pipeline level." A `StageServer` inside `pc-ocr`/
+   >    `pc-inpaint` with one worker thread keeps capacity hard-coded at exactly 1 and
+   >    keeps it private to another crate. [The rejected design]'s headline argument —
+   >    zero `pc-pipeline` lines — is an argument about cost, not about delivering the
+   >    goal.
+   > 2. Design B's cost accounting is wrong for OCR specifically, verified against
+   >    source. Detect's §16.32 shape fits a single request/response `detect()` call.
+   >    OCR is not that shape: `manga.rs`/`decode.rs` run encode-once then a per-token-
+   >    step loop of `decode_step_batch` calls with caller-side beam logic between
+   >    steps. A worker-thread server there is either chatty (one channel round-trip per
+   >    beam step) or holds the worker for an entire recognition (changing interleaving/
+   >    fairness versus today's per-step mutex interleaving) — a real protocol design
+   >    problem inside a crate with recorded fixtures and frozen tests, hidden entirely
+   >    by "zero pipeline lines."
+   > 3. §16.32's worker thread is a ratified remedy for a detect-specific hazard, not a
+   >    house style. The confinement exists to contain ONNX Runtime's DAZ/FTZ register
+   >    side effect from `flush_denormals` (§16.32 item 1, qualified by §16.52). No such
+   >    hazard has been shown for the OCR/LaMa sessions, which don't take that flag.
+   >    Generalizing the catch-forward-resume panic protocol into two more crates
+   >    without the motivating hazard is complexity for zero measured benefit; the
+   >    existing mutex poison-recovery in both crates already handles panics.
+
+   *[Transcriber's note, not part of Fable's quoted text: the ratified marker
+   itself — the exact bracketed phrase spec line 6609 opens with, naming §16.52 as the
+   qualifier — sits at item **2(b)**, one sub-item below where ground 3 above points.
+   Item 1, the one ground 3 cites, is where the DAZ/FTZ-hazard/confinement rationale
+   Fable is describing is actually stated, so the substance of ground 3 is unaffected;
+   a reader chasing the marker text itself down from ground 3's citation should look one
+   sub-item further, at 2(b), instead of item 1.]*
+
+   > 4. Option A is additive, default no-op, and testable where the property is
+   >    claimed. Defaults unbounded means CPU and CUDA behavior are bitwise unchanged
+   >    until configured; permits are acquired around each stage call and not held
+   >    across stages (`run_stages` is sequential per image — verified), so no
+   >    lock-order cycle with the engine mutexes; the agreed new determinism gate ...
+   >    has a pipeline-level property it can actually assert, which Design B cannot
+   >    offer without new cross-crate API.
+   > 5. The hybrid is strictly dominated. Exposing capacity/`in_flight()` from a
+   >    `StageServer` satisfies [the observability requirement] only by adding public
+   >    API to two engine crates *and* still paying cost (2). Its only unique benefit —
+   >    thread confinement — answers a hazard nobody has demonstrated for these stages.
+   >    Refused as an implementation; see [the graft item] for the condition under which
+   >    its shape becomes right.
+
+   **Scope, quoted verbatim so it isn't widened by a future reader**: "This ruling holds
+   for the OCR and inpaint stages under the current architecture (DEVIATION(11)
+   whole-image rayon parallelism retained, engine-internal `Mutex<Session>` retained). It
+   does **not** decide: detect's mechanism (§16.32 stays exactly as ratified — if
+   `StageGates` includes a detect gate it defaults unbounded and does not touch the
+   worker); whether capacity >1 sessions per stage should ever exist (neither position
+   proposed it; if [the measurement] shows headroom capturable *only* by multiple
+   sessions, that is a new design question for the two architects, not something this
+   ruling authorizes); and nothing about CUDA capacity."
+
+4. **RULING 2: §4.5's "semaphore-free bound" is narrow — it describes the image-level
+   pool-sizing bound only, and does not forbid a `StageGate` in the batch path.**
+   Fable, quoted in full:
+
+   > "[…with] a semaphore-free bound: `min(config.max_threads_or_cpus, images.len())`"
+   > is an appositive — the adjective attaches to that one bound and describes its mechanism
+   > (parallelism bounded by sizing the rayon pool rather than by a semaphore around a
+   > larger pool). It is not a constraint against semaphore-shaped constructs elsewhere
+   > in the batch path.
+   >
+   > Grounds. (a) Grammar: the colon binds "semaphore-free" to the specific `min(...)`
+   > bound of that sentence. (b) Reductio, from the same paragraph: the broad reading
+   > would render the already-ratified architecture non-compliant — the detect worker's
+   > `mpsc` channel is a capacity-1 queue and `DEVIATION(15)`'s `Mutex<Session>` is a
+   > binary semaphore in effect, both in the batch execution path with explicit spec
+   > blessing (§4.5's own detect-exception sentence, §16.32, §16.38's OCR-mirroring
+   > note in `pc-inpaint`). A reading under which the spec's own ratified mechanisms
+   > violate the spec is not a viable reading. (c) Empirical: `semaphore` appears
+   > exactly once in the entire spec (grep, line 442), so there is no broader doctrine
+   > this clause could be an instance of.
+
+   Fable's ground (c) was measured against the spec at the commit this ruling was made
+   against, before this entry itself existed to add more occurrences by discussing the
+   word — re-running that grep after this entry lands will correctly return more than
+   one hit (this section's own discussion of the clause), which does not refute the
+   ground; it describes the state of the document being ruled on, not a standing
+   invariant of the corpus.
+
+   **This ruling interprets that one clause only** — quoted verbatim so a future
+   transcription of it stays scoped: "This ruling interprets that one clause of §4.5,
+   and holds for the question asked: a `StageGate` in `pc-pipeline` does not violate
+   §4.5 as written. It does **not** waive the transcription obligation: if Option A
+   proceeds, that clause should be revised (spec-sensitive tier, fresh-reader on the
+   transcription) to state that the image-level bound remains pool-sizing and that
+   stage-level admission gates (default unbounded) are a separate, later-ratified
+   mechanism — a clarifying revision for a future reader, not because the clause
+   forbids the gate." **The clause's current text is therefore NOT revised by this
+   entry** — that revision is deferred to whichever future entry actually lands
+   `StageGate` in code, per the ruling's own instruction, and is recorded here only as
+   an owed follow-up, not performed now.
+
+5. **Grafts from the rejected design (Fable's Ruling 3), binding on whatever
+   implementation follows, not optional cleanup:**
+
+   - **The hazard trigger.** Fable, quoted: "The pre-registered measurement task must
+     include one cheap check for thread-state side effects from concurrent OCR/LaMa
+     sessions (the §16.52 multi-session MXCSR finding makes this non-hypothetical for
+     detect's flag; confirm OCR/LaMa sessions don't exhibit an analogous
+     constructing-thread side effect under concurrency). If such a hazard is ever
+     measured for these stages, §16.32's confinement pattern is the ratified remedy for
+     *that hazard specifically*, not a reason to prefer it generally — record this
+     condition in the plan so [Design B]'s insight isn't lost."
+   - **The frozen-surface discipline.** Fable, quoted: "Option A's implementation must
+     be held to [Design B]'s standard on blast radius: `Inpainter`/`OcrEngine` trait
+     signatures unchanged, `BatchSummary` contract unchanged, no frozen `pc-pipeline`
+     test edited. Note one concrete hazard I verified: `PipelineCtx` is currently
+     `#[derive(Clone, Copy)]` (`ctx.rs` line 53) — adding gates must not silently drop
+     `Copy` or it will ripple; a borrowed `&'a StageGates` field or equivalent preserves
+     it. The plan should call this out explicitly."
+
+6. **What this entry does NOT decide or establish.** Whether the redesign happens at all
+   (item 2's measurement decides that — this entry ratifies a conditional design, not a
+   commitment to build it). Any capacity-greater-than-1 session pooling for any stage.
+   Any CUDA capacity claim. Any change to detect's §16.32 mechanism. The revision to
+   §4.5's own text that item 4 defers to a future entry is likewise not performed here.
+   Any implementation — no `src/` file is touched by this entry; the only code change
+   is the mechanical `crates/pc-testkit/tests/a4d_claim_sites.rs` line re-pin this
+   entry's own insertion forced. This is a planning-stage ratification only, and the
+   next step per the ruling is the pre-registered measurement task, not code.
+
 ## 16. Summary of what v1 is NOT
 
 Global out-of-scope list, so Codex has one place to check before building anything speculative:

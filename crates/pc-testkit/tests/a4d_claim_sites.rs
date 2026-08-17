@@ -684,8 +684,15 @@ const PRESENT: &[Site] = &[
         //     its own step-1a fresh-reader corrections, added 312 net lines before this
         //     site; re-derived by grep for the exact claim text, single occurrence
         //     confirmed, not incremented blindly).
+        //   → 10086 (2026-08-17, §16.54's staged-OCR‖LaMa-pipeline tie-break
+        //     ratification, added 184 net lines before this site; re-derived by grep
+        //     for the exact claim text, single occurrence confirmed, not incremented
+        //     blindly).
+        //   → 10117 (2026-08-17, same entry's own step-1a fresh-reader fixes, added 31
+        //     further net lines before this site; re-derived by grep for the exact
+        //     claim text, single occurrence confirmed, not incremented blindly).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 9902,
+        line: 10117,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {

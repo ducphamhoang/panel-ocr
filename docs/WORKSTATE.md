@@ -672,3 +672,84 @@ heavy item rather than continuing an already-long one.
   - **`docs/HANDOVER.md` deleted this entry**, fully consumed into this file, per its own
     "delete once consumed" instruction and this project's standing rule against letting
     it accumulate as a second, silently stale source of truth.
+
+- 2026-08-17: **New task, planning stage only, ratified as §16.54 — staged OCR‖LaMa
+  pipeline.** User-proposed lever, re-scoped mid-investigation after the Orchestrator
+  initially mis-framed it as an "OCR vs LaMa speed" question (user corrected: the real
+  concept is genuine stage-level pipelining, not a speed comparison). Investigated
+  directly (not delegated) that `pc-pipeline`'s architecture has no stage-decoupled
+  worker/queue abstraction — only whole-image rayon parallelism (`DEVIATION(11)`),
+  confirmed by reading `single.rs`/`batch.rs`/`ctx.rs` and cross-checked against a
+  graphify AST rebuild (scoped to `crates/`+`xtask/`, 4,781 nodes/11,905 edges/227
+  communities, outputs in `graphify-out/`) showing `run_stages`/`process_image`/
+  `PipelineCtx` all in one tightly-coupled community. Also surfaced, on request, that
+  `pc_inpaint::inpaint_page` is already fully standalone-callable (`panel-ocr inpaint`)
+  while `pc_ocr` still requires Detect's output first (a real data dependency).
+  - **Brief written** (`docs/BRIEF_staged_ocr_inpaint_pipeline.md`), dispatched to joint
+    `architect` + `rust-engineer` Opus passes in parallel. Both converged heavily,
+    independently, on: the current architecture already approaches `max(stage_cost)`
+    throughput today via incidental lock contention (detect's §16.32 worker thread,
+    OCR's two `Mutex<Session>`, LaMa's one `Mutex<Session>`); `DEVIATION(11)` should not
+    be reversed; any mechanism must be device-agnostic/CPU-measured-only with an
+    unbounded/no-op default; a measurement task must run **before** any code, and is
+    explicitly allowed to cancel the whole redesign. They diverged on **where** the
+    concurrency-control mechanism should live: architect proposed generalizing §16.32's
+    ratified detect-worker-thread pattern into `pc-ocr`/`pc-inpaint` internals
+    ("Design B", zero `pc-pipeline` lines); rust-engineer proposed an explicit
+    `StageGate` owned by `pc-pipeline`'s `PipelineCtx` ("Option A"), and separately
+    self-escalated a possible spec-text conflict (§4.5's "semaphore-free bound" clause)
+    rather than resolving it in their own design's favor.
+  - **Escalated to `fable-adjudicator`** (brief: `docs/BRIEF_fable_stagegate_tiebreak.md`)
+    per standing disagreement rule. Fable read the actual source files itself rather
+    than trusting either summary, disclosed it ran no benchmark (neither did either
+    Opus pass), and ruled: (0) the measurement task is the only unconditional
+    commitment — the mechanism rulings below take effect only if pre-registered cancel
+    criteria are cleared, and Fable's own (reasoning-only) expectation is that the
+    measurement cancels the redesign entirely; (1) if it survives, Option A wins —
+    Design B doesn't fix the actually-disputed deficiency (capacity stays hard-coded at
+    1, untestable from pipeline level) and under-costs OCR specifically (a per-token
+    beam-search loop, not detect's single request/response shape); (2) §4.5's
+    "semaphore-free bound" is narrow (image-level pool-sizing only), confirmed partly by
+    reductio — the broad reading would make the already-ratified detect worker/OCR
+    mutex non-compliant with the spec that ratified them. Plus grafts from the rejected
+    design (a hazard-trigger check folded into the measurement task; a frozen-surface
+    discipline requirement, including not silently dropping `PipelineCtx`'s `Copy`).
+  - **Transcribed as §16.54** in `docs/PIPELINE_SPEC_V1.md` (before `## 16.`), quoting
+    Fable verbatim per standing practice. `crates/pc-testkit/tests/a4d_claim_sites.rs`'s
+    recurring line-pin re-derived (9902→10086→10117, two rounds as the drafting and
+    fix-up passes each shifted lines below the insertion point).
+  - **Dispatched `fresh-reader`** (brief: `docs/BRIEF_fresh_reader_16_54.md`) before
+    commit. Returned **2 blocking + 6 non-blocking**. Blocking: **B1** — item 1 claimed
+    `pc-pipeline`'s "only concurrency primitive" is the rayon `par_iter`, which is false
+    against `batch.rs:74-76`'s `fail_fast`/`run_fatal` `AtomicBool`s and a `Mutex<()>`
+    start gate (a *faithful* transcription of an error already present in the source
+    brief) — fixed by narrowing the claim to "work-distribution primitive" and naming
+    the other synchronization explicitly. **B2** — the two brief files §16.54's
+    provenance cites were untracked; this project's own precedent (§16.51-§16.53's
+    cited briefs) is to track them — staged both. Non-blocking, all applied: N1 (a
+    non-verbatim inner quote of §4.5, missing "with"/wrong capitalization) fixed; N2
+    (Fable's "semaphore appears exactly once" ground would read as false once this
+    entry's own discussion adds occurrences) — added an as-of caveat; N3 (the §16.32
+    item citation for the qualification marker pointed at item 1, the marker is actually
+    at item 2(b)) — added a transcriber's note, carefully worded to avoid a second
+    accidental supersession-token collision this fix itself first introduced (caught by
+    re-running the gate, not assumed clean); N4 (Design B/Option A used undefined in the
+    spec) — defined both at first use; N5 (item 5's grafts were paraphrased while items
+    2-4 quote Fable verbatim) — converted to direct quotes; N6 process notes (the diff
+    touches a `.rs` file so the full bar is required, not the doc-only carve-out; this
+    WORKSTATE entry; item 6's "no `src/` file touched" sharpened to name the a4d re-pin
+    as the actual code change) — all applied. Fresh-reader independently re-derived the
+    a4d re-pin number and re-implemented the supersession gate's Layer-B logic in Python
+    as a fidelity control, confirming both gates can genuinely fail on this section's
+    real content, not just pass by construction.
+  - **Second round of fixes introduced one new supersession-gate false positive**
+    (N3's fix placed "§16.32" and "QUALIFIED" on the same physical line while quoting
+    the real marker text) — caught immediately by re-running the gate rather than
+    assuming the fix was clean, reworded to separate them across lines.
+  - **Full verification bar green before commit**: `cargo test --workspace` (200
+    suites, 0 failed), onnx tier, clippy (`-D warnings`, clean), fmt (clean); both
+    targeted gates (`spec_supersession` 15/15, `a4d_claim_sites` 1/1) green after every
+    fix round, not just the final one.
+  - **No implementation exists yet and, per Ruling 0, most of it may never be built.**
+    Next step, per the ruling itself, is a pre-registered measurement task (P0/S0) with
+    its three cancel criteria written into its own brief *before* it runs — not code.
