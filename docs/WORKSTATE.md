@@ -819,3 +819,65 @@ heavy item rather than continuing an already-long one.
   §16.54 thread (ratification + both measurement passes + this parking decision) for
   now — a future session with a concrete reason to revisit should start from that
   record, not re-derive it or trust this session's single-machine numbers as an answer.
+
+- 2026-08-17 (same day): **v1.6.0 released, with a real build-matrix bug caught and
+  fixed before publishing.** User-requested: "commit and push current, put it in
+  release as new label (make a proper changelog from last release)."
+  - Wrote `CHANGELOG.md` (new file, Keep-a-Changelog style, starting from `v1.5.0`
+    forward) curating only user-facing changes since that tag: `panel-ocr inpaint` and
+    `panel-ocr residual-check` (both already shipped, §16.51's OCR beam-batching
+    (~1.1x-1.6x measured speedup), and §16.52's denormal-flush regression fix
+    (1.66x-5.3x slower before the fix). Internal-only work (spec ratifications, the
+    §16.53/§16.54 investigations) explicitly excluded, with a pointer to
+    `docs/WORKSTATE.md`/`docs/PIPELINE_SPEC_V1.md` instead. Bumped workspace version
+    1.5.0→1.6.0 (`Cargo.toml` + regenerated `Cargo.lock`, 27 external deps unchanged),
+    added a "### v1.6 — done" section to `README.md`'s Roadmap. Forced re-pin:
+    `crates/pc-testkit/tests/a4d_claim_sites.rs`'s `"### v2"` claim (345→357, the new
+    roadmap section's +12 lines), re-derived by content. Full bar green (`cargo test
+    --workspace` 200/0, onnx tier 185/0, clippy clean, fmt clean). Committed (`ed7fcb0`),
+    pushed to `origin/claude/codex-plugin-install-jxirxa`.
+  - **Tagged and pushed `v1.6.0` (annotated) — first release-workflow attempt (run
+    `32017332425`) FAILED on a real, pre-existing bug**, not something this session's
+    own commits introduced: `aarch64-apple-darwin`+`onnx` (a leg the project's own
+    policy does NOT allow to fail, unlike the Windows+onnx leg) hit `E0425`/`E0061` — a
+    `#[cfg(target_arch = "x86_64")]` mismatch between `infer()`'s signature and the one
+    call site inside `run_worker` that invokes it, introduced in `1be086f` (§16.52's D1,
+    2026-08-16) and never caught locally because this dev machine only ever compiles
+    x86_64, and the regular CI matrix doesn't cover this target+feature combination —
+    only the release workflow's platform matrix does. The `publish GitHub Release` job
+    was correctly skipped; **no release was ever published under the broken tag**
+    (confirmed via `gh release view v1.6.0` returning "release not found" before the
+    fix). Root-caused by reading the exact failure log
+    (`gh run view --job=... --log-failed`), not guessed: `run_worker`'s own call site
+    three lines above (line ~496-508) already had the correct two-branch
+    `#[cfg(target_arch = "x86_64")]`/`#[cfg(not(...))]` split; the `infer()` call at
+    line 719 was missing the same split. Fixed by applying the identical pattern.
+    **Verified against the exact failing configuration** (not assumed fixed): added the
+    `aarch64-apple-darwin` target via `rustup target add`, ran `cargo check -p pc-detect
+    --target aarch64-apple-darwin --features onnx` — clean. (`cargo check -p pc-cli` for
+    the same target hit an unrelated, expected environment limitation — no cross `cc`
+    toolchain on this Windows machine for a build-script dependency — not the same bug;
+    GitHub's macOS runners have their own real `cc`.) Full bar re-verified locally on
+    the native x86_64 path too (200/0, 185/0, clippy clean, fmt clean). Committed
+    (`31a9385`), pushed. Since no release had ever been published under the broken tag,
+    **moved the `v1.6.0` tag forward** (deleted + recreated + pushed) to the fixed
+    commit rather than bumping to a new version — the original tag was never a real
+    release in any public sense.
+  - **Second release-workflow run (`32018918031`): all 7 platform legs green, `publish
+    GitHub Release` succeeded.** Verified directly (`gh release view v1.6.0`), not
+    assumed from the workflow's own "success" status: confirmed all 7 platform archives
+    present as release assets. Folded the cfg-fix into `CHANGELOG.md`'s existing v1.6.0
+    entry (same tag, same release — not a new version) rather than leaving it
+    undocumented; committed (`c055642`), pushed (does not need to move the tag again,
+    since it's documentation of what already shipped, not a code change). **Replaced
+    the release's auto-generated commit-dump notes with the curated `CHANGELOG.md`
+    section** via `gh release edit v1.6.0 --notes-file ...` (extracted the `## [1.6.0]`
+    section with `sed`, confirmed clean extraction before applying) — verified the
+    live release page shows the curated notes, not GitHub's auto-generated list.
+  - **Not done this pass, disclosed rather than silently skipped**: `main` (the literal
+    branch, previously kept fast-forwarded to match `claude/codex-plugin-install-jxirxa`
+    per the 2026-08-12 entry above) was not re-synced — the user's request didn't ask
+    for it, and past practice treated that sync as its own explicit-request action, not
+    an automatic side effect of a release. `main` is now stale relative to this branch
+    by all of this session's commits (§16.53 through the v1.6.0 release) if that matters
+    to a future session.
