@@ -11,3 +11,6 @@
 # Personal/local test images -- never commit (copyright: not license-clean; see
 # docs/PIPELINE_SPEC_V1.md §16.24 item 17 for why vendored fixtures must be license-clean)
 /tests/fixtures/local/
+
+# Personal Claude Code permission overrides -- never commit
+/.claude/settings.local.json
