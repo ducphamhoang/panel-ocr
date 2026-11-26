@@ -366,3 +366,20 @@ section, and `docs/PIPELINE_SPEC_V1.md`'s `§16.x` subsections are the running l
 design decision and deviation from upstream PanelCleaner, with rationale. Read the spec
 section for the area you're touching before changing behavior — most "obvious" choices
 (rounding rules, rect inclusivity, float precision) were already litigated there.
+
+## Optional profile: also clean tiny text and punctuation-only bubbles
+
+By default a text box smaller than 20×20 px (`box_min_size = 400`) and any box whose OCR text
+is only dots, `!`, `?` or digits (`ocr_blacklist_pattern`) are left on the page. Those are the
+spec's defaults and are unchanged. If you want them cleaned too, use
+[`profiles/20261126_panel-ocr_profile_small-text-and-punct-bubbles_v01.toml`](profiles/20261126_panel-ocr_profile_small-text-and-punct-bubbles_v01.toml),
+which differs from the default in exactly those two keys:
+
+```
+panel-ocr clean --profile-path profiles/20261126_panel-ocr_profile_small-text-and-punct-bubbles_v01.toml <paths>
+```
+
+Measured on 9 pages of a single manga series, this roughly halved the text blocks left behind
+(18 → 9 by `panel-ocr residual-check`) and changed only the affected boxes. It has not been tried
+on other material, so treat it as an opt-in, not a recommendation. A third filter (a fixed 0.1
+minimum mask coverage) also drops some real text and cannot be changed from a profile.

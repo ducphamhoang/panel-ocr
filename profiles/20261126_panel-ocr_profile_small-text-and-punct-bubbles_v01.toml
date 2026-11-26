@@ -1,0 +1,94 @@
+# Optional profile: also clean very small text boxes and bubbles that contain only
+# punctuation ("!", "...", "?"), which the default profile deliberately leaves alone.
+#
+# Differs from the shipped default profile in exactly two keys, both under [preprocessor]:
+#   box_min_size          400 -> 100   (default drops boxes under 20x20 px, e.g. a lone "ふ")
+#   ocr_blacklist_pattern default "[～．ー！？０-９~.!?0-9-]*" -> ""   (default drops any box whose
+#                         OCR text is only dots/!/?/digits; "" drops only boxes whose OCR text is empty)
+#
+# NOT the default: both defaults are pinned by the spec (§9.3) and by frozen tests.
+# Measured on 9 pages of one manga series (residual text blocks found by `residual-check`):
+# 18 with the default profile -> 9 with this one, and the pixels that changed were only the
+# affected "!"/dots/tiny-text boxes. Not measured: other series, or whether a dot pattern that is
+# part of the artwork can be erased by mistake with the blacklist emptied.
+#
+# Use:  panel-ocr clean --profile-path profiles/20261126_panel-ocr_profile_small-text-and-punct-bubbles_v01.toml <paths>
+
+[general]
+preferred_file_type          = ""        # empty = keep original suffix
+preferred_mask_file_type     = ".png"
+input_height_lower_target    = 1000
+input_height_upper_target    = 4000
+split_long_strips            = true
+preferred_split_height       = 2000
+split_tolerance_margin       = 500
+long_strip_aspect_ratio      = 0.33
+merge_after_split            = true
+max_threads                  = 0         # 0 = all cores
+always_cache_masks           = false
+device                       = "cpu"     # cpu | cuda (needs a build with the `cuda` feature: §16.22, §16.36)
+
+[text_detector]
+model_path                   = ""        # empty = use managed cache
+concurrent_models            = 1
+intra_threads                = 0         # 0 = let ONNX Runtime choose
+inter_threads                = 0         # 0 = let ONNX Runtime choose
+mask_refine_mode             = "annotation"  # simple | annotation (Annotation is the shipped default; `simple` is the opt-out)
+
+[preprocessor]
+box_min_size                 = 100       # 20*20
+suspicious_box_min_size      = 40000     # 200*200
+box_overlap_threshold        = 20.0
+ocr_enabled                  = true
+ocr_language                 = "detect_box"   # detect_box | detect_page | jpn | eng
+reading_order                = "auto"         # auto | manga | comic
+ocr_max_size                 = 3000      # 30*100
+ocr_blacklist_pattern        = ""
+ocr_strict_language          = false
+box_padding_initial          = 2
+box_right_padding_initial    = 3
+box_padding_extended         = 5
+box_right_padding_extended   = 5
+box_reference_padding        = 20
+
+[masker]
+mask_growth_step_pixels      = 2
+mask_growth_steps            = 11
+min_mask_thickness           = 4
+allow_colored_masks          = true
+off_white_max_threshold      = 240
+mask_max_standard_deviation  = 15.0
+mask_improvement_threshold   = 0.1
+mask_selection_fast          = false
+mask_fallback_to_lowest_deviation = true  # §10.3 step 10 / §16.35; DEVIATION(21)
+debug_mask_color             = [108, 30, 240, 127]
+
+[denoiser]
+denoising_enabled            = true
+noise_min_standard_deviation = 0.25
+noise_outline_size           = 5
+noise_fade_radius            = 1
+colored_images                = false
+filter_strength               = 10
+color_filter_strength         = 10
+template_window_size          = 7
+search_window_size            = 21
+
+[inpainter]                               # v1.5, ratified by §16.38 item 13. Values are
+                                          # `config.py:817-824`'s dataclass defaults, which
+                                          # §16.38 item 7(b) established are upstream's runtime
+                                          # authority -- NOT `media/default.conf`'s, which
+                                          # disagrees on two keys and is read by no upstream code.
+inpainting_enabled            = true
+inpainting_min_std_dev        = 15.0
+inpainting_max_mask_radius    = 6         # INERT, in this port and upstream: the gate its own
+                                          # comment describes is `inpainting.py:89`'s
+                                          # `thickness <= min_inpainting_radius`. Parsed and
+                                          # validated, never read by the eligibility filter;
+                                          # setting it away from this default emits a one-time
+                                          # WARN, which is DEVIATION(26). §16.38 item 7.
+min_inpainting_radius         = 7
+max_inpainting_radius         = 20
+inpainting_radius_multiplier  = 0.2
+inpainting_isolation_radius   = 5
+inpainting_fade_radius        = 4
