@@ -935,3 +935,69 @@ Observed HEAD of the working branch at close: `a4fa267` (see the branch table ab
 - **Full-bar status of the 2026-11-26 commits**: `cargo test --workspace` = 1497 passed /
   1 failed (the `denormal_guard` test above); onnx tier, clippy and fmt not run for them (diffs
   were one `.gitignore` line, one TOML file and README prose).
+
+### 2026-11-26 follow-up: joint `architect` + `rust-engineer` position on the `denormal_guard` test (consumed brief deleted)
+
+Two independent reports from one brief (`docs/BRIEF_denormal_guard_thread_inheritance.md`, now
+deleted, kept in git history at `bdce557`). **They agree on the approach, so Fable was not
+convened.** This is the two roles' *position*; it is **not yet ratified** and nothing in the
+spec, the frozen test or `pc_ort::denormal` has been changed.
+
+- **Agreed:** the test's premise is wrong, not the guard and not the spec (§16.52 makes no claim
+  about new threads). On Linux a new thread copies its creator's *whole* MXCSR word (both roles
+  measured: child of a `0x9fc0` parent reads `0x9fc0`; child of a rounding-mode-only parent reads
+  `0x3f80`; the child keeps it after the parent restores). No guard implementation can satisfy the
+  assertion on Linux (the first test in the file forbids not flushing the caller), and
+  `.github/workflows/ci.yml:48` runs the default tier on `ubuntu-latest`, so the `ubuntu-latest`
+  `test` leg should be deterministically red since `4f4f36b` (inferred, CI not inspected).
+  No production impact: the only guard use is `pc-detect/src/onnx.rs:752` around `session.run`,
+  and neither the detector worker (`onnx.rs:478`) nor the batch rayon pool
+  (`pc-pipeline/src/batch.rs:82`) is created inside a guard scope.
+- **Agreed recommendation: do not gate or pin per-OS behaviour; replace the assertion with a
+  test of *our* code that holds on every OS, and document the spawn-in-scope hazard in
+  `denormal.rs`.** Removing the old assertion claims less than before, so by the forcedness rule
+  it is an **amendment needing both architects + a short §16.x entry checked by a fresh
+  `fresh-reader`** (cookbook exit 2 machinery; adding the replacement is exit 1).
+  The §16.x entry must quote verbatim: the removed message ("MXCSR is per-thread on x86_64 -- a
+  freshly spawned thread must start with the ABI default state regardless of what the spawning
+  thread's guard set"); §16.52 item 5's D0/T1 scope ("the `DenormalFlushGuard` RAII type plus the
+  two independent-probe MXCSR tests", i.e. this test was added outside the ratified list); and the
+  measurement scoped to "Linux 6.18.44 / x86_64 / glibc 2.39 / `std::thread::spawn`" — never widened
+  to "all Linux" or "all OSes". It must **not** use SUPERSEDED/amended wording against §16.52
+  (its text is not wrong; `spec_supersession.rs` would demand a back-pointer).
+  Per the unified-spec rule it is transcribed on the main/integration line, not on a feature branch.
+- **Over-claim sites found beyond the test message** (both roles): the test *name*;
+  `crates/pc-ort/src/denormal.rs:13-14` ("per-thread ... is already all the isolation the design
+  needs" — true only if no thread is spawned inside a guard scope);
+  `docs/BRIEF_denormal_architect_position.md:155-157` (a measurement that may be vacuous because
+  its `child` line prints after `restored=`; the probe source is not committed); WORKSTATE:579
+  (describes it as "thread-locality"; a record, not normative).
+- **Not agreed (design detail, not approach):** the replacement test body.
+  *Architect*: `guards_on_two_threads_are_independent_even_when_their_scopes_interleave` — the child
+  overwrites its own word to a known non-default value, both threads hold a guard, the parent's
+  drops first while the child's is live; asserts parent restored and child restored independently.
+  Measured: it fails a process-global depth-counter guard that **passes** the existing nesting test.
+  *Rust engineer*: `enabling_the_guard_does_not_change_the_flush_state_of_an_already_running_thread`
+  — a thread spawned *before* the guard exists must be unaffected while the parent's guard is live
+  (two barriers); catches a no-op guard and a guard whose effect crosses threads. Both pass on
+  Linux (engineer: 20/20) and were validated by mutation out-of-tree only. They are
+  complementary; adopting both is possible. The final text is a ratification decision.
+  **Whichever lands must first be shown red in-repo** by a temporary mutation of
+  `DenormalFlushGuard` (then reverted), per the cookbook's "can it fail" check.
+- **Doc fix (not frozen; both roles):** in `denormal.rs:13-14` state that a thread spawned *while a
+  guard is live* starts from an OS-defined word and on Linux inherits FTZ/DAZ, and that code inside
+  a guard scope must not spawn threads expecting default float semantics.
+- **Minor disagreement, out of scope:** the engineer flags
+  `crates/pc-detect/tests/perf2_mxcsr_hygiene.rs:128-131` ("DAZ/FTZ leaked into a freshly spawned
+  thread") as unable to fail independently of line ~124; the architect says it does not carry the
+  false premise. Not touched.
+- **Unverified (neither role could settle it):** Windows and Intel-macOS new-thread behaviour
+  (WORKSTATE:581 records a 6/6 pass of this test on 2026-08-16 on what appears to be the
+  maintainer's Windows machine — consistent with Windows starting threads at the default, not
+  proof; one run of an out-of-repo probe on Windows and on an Intel Mac would settle it);
+  the actual state of the `ubuntu-latest` CI leg (`gh run list --workflow ci.yml`);
+  that ORT creates no threads during `Run` (read from code structure; irrelevant to the ruling
+  because §16.52 item 1 records ORT overwriting pool-thread MXCSR itself).
+- **Still owed, in order:** (1) §16.55 ratification entry on the main/integration line + a fresh
+  `fresh-reader` over the *transcription*; (2) swap the test and edit the `denormal.rs` docs, with
+  the in-repo mutation run; (3) the full verification bar. Task size: one simple task after ratification.
