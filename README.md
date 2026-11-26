@@ -383,3 +383,31 @@ Measured on 9 pages of a single manga series, this roughly halved the text block
 (18 → 9 by `panel-ocr residual-check`) and changed only the affected boxes. It has not been tried
 on other material, so treat it as an opt-in, not a recommendation. A third filter (a fixed 0.1
 minimum mask coverage) also drops some real text and cannot be changed from a profile.
+
+### Make a profile your own default
+
+You don't have to pass `--profile-path` every time. The app config can name a default profile,
+used whenever `--profile` is absent. This changes the default **for your user only**; the
+built-in defaults (and every release binary on another machine) are unchanged.
+
+Create or edit `config.toml` in the app config directory:
+
+| OS | Path |
+|---|---|
+| Windows | `%APPDATA%\panel-ocr\config.toml` |
+| Linux | `~/.config/panel-ocr/config.toml` (or `$XDG_CONFIG_HOME/panel-ocr/config.toml`) |
+| macOS | `~/Library/Application Support/panel-ocr/config.toml` |
+
+```toml
+default_profile = "small-text-and-punct-bubbles"
+
+[saved_profiles]
+small-text-and-punct-bubbles = '/absolute/path/to/20261126_panel-ocr_profile_small-text-and-punct-bubbles_v01.toml'
+```
+
+The path must be absolute, so copy the profile somewhere that won't move (next to `config.toml`
+works). On Windows use a single-quoted string or forward slashes so `\` isn't read as an escape.
+`default_profile` must name a key of `saved_profiles`, otherwise the config fails validation.
+
+Check it with `panel-ocr profile list`, then run `panel-ocr clean <paths>` without `--profile`.
+Delete the `default_profile` line to go back to the built-in defaults.
