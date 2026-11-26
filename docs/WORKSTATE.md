@@ -1025,3 +1025,42 @@ frozen test and `pc_ort::denormal` are **not yet changed**.
   (implementer role, not the Orchestrator), with the in-repo mutation runs shown red then reverted;
   (2) an independent review of that diff; (3) the full verification bar; (4) the `main` fast-forward,
   which needs the maintainer's permission. Task size: one simple task.
+
+### 2026-11-26 implementation of §16.55 items 3-4 (done on `claude/zealous-keller-zg8la1`; both briefs deleted as consumed)
+
+- **Implemented** by the `rust-engineer` role from a brief (Orchestrator did not write the tests): in
+  `crates/pc-ort/tests/denormal_guard.rs` the old `a_thread_spawned_inside_an_active_guard_scope_…` test
+  is removed and `guards_on_two_threads_are_independent_even_when_their_scopes_interleave` and
+  `enabling_the_guard_does_not_change_the_flush_state_of_an_already_running_thread` added; in
+  `crates/pc-ort/src/denormal.rs` the hazard is documented (module docs and the `DenormalFlushGuard`
+  doc comment), comments only. Both drafted bodies were used as ratified; one rustfmt reflow in (a).
+- **In-repo red evidence** (implementer, then independently reproduced by the reviewer on a scratch copy):
+  a `Mutex<(depth, saved)>` guard turns (a) red while `nested_guards_restore_each_layers_own_saved_word_in_order`
+  stays green (`--test-threads=1`; run in parallel the mutation's process-global state also breaks other
+  tests — a property of the mutation, not a mis-shaped one); a no-op `enable()` turns (b) red via
+  `parent_flushes` (and four other tests). Reviewer extras: a last-wins global saved word is caught
+  by (a) and the nesting test; a `Drop` that clears FTZ/DAZ instead of restoring the exact word is caught
+  only by the nesting test.
+- **Orchestrator's independent verification** (not taken from the report): `git diff --stat` = 2 files;
+  `denormal.rs` changes filtered for non-comment lines = none; the frozen-file diff removes only the one
+  old test. After the final edits `cargo test --workspace`, the `pc-cli/onnx` tier, clippy `-D warnings`
+  and `fmt --check` were re-run (results in the commit message); `denormal_guard` passed 10/10 consecutive
+  runs (7 tests).
+- **Independent review** (a new `fresh-reader`, adversarial): nothing blocking. Applied: test comments no
+  longer say "whole MXCSR"/"on Linux x86_64" (now FTZ/DAZ + rounding mode, one platform); (a)'s message says
+  "third and/or fourth element"; (b)'s second barrier is documented as redundant with `join`.
+  **Not a code change, recorded here — decision for the maintainer:** the reviewer showed the child half of
+  test (b) can never go red for *any* guard (the probe thread never calls into the guard; each thread's MXCSR
+  is its own by hardware/OS), so (b) only gates `parent_flushes` (a no-op guard) — which the file's first
+  test already gates. §16.55 item 3 and the maintainer's "adopt both" selection described (b) as catching a
+  guard whose effect reaches other threads; that over-describes it. The test comment now says so. Options:
+  keep (b) as a documented platform-guarantee check (current), or drop it, or correct §16.55 item 3's
+  wording (needs a fresh-reader again). Nothing has been changed in the spec.
+- **Extra measurement by the reviewer (this container only):** children spawned from parents holding
+  `0x1f80`, `0x1fbf` (all status flags), `0x1d80` (one exception mask cleared), `0x9fe1` and `0x0000` read the
+  same word. This closes, for this container, the gap §16.55 item 1 left open for the exception-mask bits,
+  and shows item 1's "status flags measured" had rested on parents with zero flags. The spec text is not
+  edited for this; the probe is scratch (`…/scratchpad/m/base/examples/probe.rs`, not committed).
+- **Still owed:** the `main` fast-forward (needs the maintainer's permission); `perf2_mxcsr_hygiene.rs:128-131`
+  and the decorative-assertion question are untouched per §16.55 item 5(d); Windows/Intel-macOS behaviour and the
+  `ubuntu-latest` CI state remain unverified.

@@ -10,8 +10,18 @@
 //! rely on ORT to flush its own denormals. The ratified fix is this RAII guard: save the
 //! calling thread's full MXCSR word on construction, set FTZ (bit 15) and DAZ (bit 6)
 //! (Intel SDM Vol.1 §10.2.3), and restore the exact saved word on drop — including across
-//! an unwind. MXCSR is per-thread on x86_64, so `stmxcsr`/`ldmxcsr` on the calling thread
-//! is already all the "isolation" the design needs; no `static`/`thread_local!` is used.
+//! an unwind. MXCSR is per-thread on x86_64, so for threads that already exist,
+//! `stmxcsr`/`ldmxcsr` on the calling thread is already all the "isolation" the design
+//! needs; no `static`/`thread_local!` is used.
+//!
+//! That isolation does NOT extend to a thread created while a guard is live (§16.55): what
+//! a new thread's MXCSR starts as is defined by the OS, not by this guard. On the one
+//! platform measured (Linux 6.18.44 / x86_64 / glibc 2.39, `std::thread::spawn`), a new
+//! thread starts with a copy of its creator's MXCSR — rounding mode, FTZ, DAZ and the status
+//! flags were checked; the exception-mask bits were not — so a thread spawned inside a
+//! guard's scope starts out flushing denormals. Other platforms are unmeasured. Code
+//! inside a guard scope must therefore not spawn threads that expect default float
+//! semantics.
 //!
 //! This is the workspace's first `unsafe` (§16.52 item 6): the whole module is fenced
 //! with a single `#[allow(unsafe_code)]`, and the two asm blocks below are its only
@@ -95,6 +105,12 @@ pub fn flush_state() -> Option<FlushState> {
 /// RAII scope: on construction, saves the calling thread's current MXCSR word and sets
 /// FTZ and DAZ; on `Drop` — including during an unwind — restores the EXACT saved word,
 /// not a hard-coded default. x86_64 only.
+///
+/// Affects only the calling thread's MXCSR. Do not spawn threads inside the guard's scope
+/// expecting default float semantics: a new thread's starting MXCSR is OS-defined, and on
+/// the measured platform (Linux 6.18.44 / x86_64 / glibc 2.39, `std::thread::spawn`) it is
+/// a copy of the creator's, FTZ/DAZ included (§16.55; the module docs say which bits were
+/// checked).
 pub struct DenormalFlushGuard {
     saved: u32,
 }

@@ -126,15 +126,86 @@ fn nested_guards_restore_each_layers_own_saved_word_in_order() {
 }
 
 #[test]
-fn a_thread_spawned_inside_an_active_guard_scope_does_not_inherit_the_flush_state() {
+fn guards_on_two_threads_are_independent_even_when_their_scopes_interleave() {
+    let original = pc_ort::denormal::read_mxcsr_for_test();
+    let (child_armed_tx, child_armed_rx) = std::sync::mpsc::channel::<()>();
+    let (parent_dropped_tx, parent_dropped_rx) = std::sync::mpsc::channel::<()>();
+
+    let parent_guard = DenormalFlushGuard::enable();
+    let parent_inside = pc_ort::denormal::read_mxcsr_for_test();
+    let child = std::thread::spawn(move || {
+        // The child's STARTING word is OS-defined and deliberately NOT asserted: on the one
+        // platform measured (Linux 6.18.44 / x86_64 / glibc 2.39, std::thread::spawn,
+        // 2026-11-26) a new thread starts with a copy of its creator's MXCSR, FTZ/DAZ and
+        // rounding mode included; the guard cannot influence it. Overwrite it with a known
+        // non-default word so every expectation is OS-independent.
+        pc_ort::denormal::write_mxcsr_for_test(ABI_DEFAULT_MXCSR | ROUND_TOWARD_NEG_INF);
+        let child_entry = pc_ort::denormal::read_mxcsr_for_test();
+        let child_guard = DenormalFlushGuard::enable();
+        child_armed_tx.send(()).expect("parent must be waiting");
+        parent_dropped_rx
+            .recv()
+            .expect("parent must signal its drop");
+        drop(child_guard);
+        (child_entry, pc_ort::denormal::read_mxcsr_for_test())
+    });
+    child_armed_rx.recv().expect("child must arm its guard");
+    drop(parent_guard); // the parent's scope ends while the child's guard is still live
+    let parent_after = pc_ort::denormal::read_mxcsr_for_test();
+    parent_dropped_tx.send(()).expect("child must be waiting");
+    let (child_entry, child_after) = child.join().expect("spawned thread must not panic");
+    pc_ort::denormal::write_mxcsr_for_test(original); // leave the thread as we found it
+
+    assert_eq!(
+        (child_entry, parent_inside, parent_after, child_after),
+        (
+            ABI_DEFAULT_MXCSR | ROUND_TOWARD_NEG_INF,
+            original | FTZ | DAZ,
+            original,
+            ABI_DEFAULT_MXCSR | ROUND_TOWARD_NEG_INF,
+        ),
+        "(child word after its overwrite, parent mxcsr inside its guard, parent mxcsr after its \
+         drop while the child's guard is live, child mxcsr after its own drop) -- each guard must \
+         save and restore its own thread's word; a process-global saved word or depth counter \
+         fails the third and/or fourth element"
+    );
+}
+
+#[test]
+fn enabling_the_guard_does_not_change_the_flush_state_of_an_already_running_thread() {
+    use std::sync::{Arc, Barrier};
+    // MXCSR is per-thread for threads that already exist. What a NEWLY created thread
+    // starts with is OS-defined (measured 2026-11-26 on Linux 6.18.44 / x86_64 / glibc 2.39:
+    // a copy of the creator's MXCSR, FTZ/DAZ and rounding mode included), so this test spawns
+    // its probe thread BEFORE the guard exists and asserts nothing about spawn-time
+    // inheritance.
+    //
+    // Be clear about what can fail here: only `parent_flushes` (a no-op guard turns it
+    // false). The probe thread never calls into the guard, so its two elements restate the
+    // platform guarantee that a running thread's MXCSR is its own; no guard implementation
+    // can make them fail. They document that guarantee rather than gate the guard (the
+    // review of this change, §16.55 item 3's follow-up, recorded it).
+    let guard_is_live = Arc::new(Barrier::new(2));
+    let child_has_measured = Arc::new(Barrier::new(2));
+    let (live, measured) = (Arc::clone(&guard_is_live), Arc::clone(&child_has_measured));
+    let child = std::thread::spawn(move || {
+        let before = denormal_survives_on_this_thread();
+        live.wait(); // the parent's guard is enabled from here on
+        let during = denormal_survives_on_this_thread();
+        measured.wait(); // redundant with `join` (the guard lives to the end of the test); kept so the measurement visibly precedes the parent's continuation
+        (before, during)
+    });
     let _guard = DenormalFlushGuard::enable();
-    let child_survives = std::thread::spawn(denormal_survives_on_this_thread)
-        .join()
-        .expect("spawned thread must not panic");
-    assert!(
-        child_survives,
-        "MXCSR is per-thread on x86_64 -- a freshly spawned thread must start with the \
-         ABI default state regardless of what the spawning thread's guard set"
+    let parent_flushes = !denormal_survives_on_this_thread();
+    guard_is_live.wait();
+    child_has_measured.wait();
+    let child = child.join().expect("probe thread must not panic");
+    // parent_flushes is the anti-vacuity element: a no-op guard turns it false.
+    assert_eq!(
+        (parent_flushes, child),
+        (true, (true, true)),
+        "(parent flushes inside its guard, (already-running thread keeps denormals before the \
+         guard, ... while the parent's guard is live)) -- the guard must reach only its own thread"
     );
 }
 
