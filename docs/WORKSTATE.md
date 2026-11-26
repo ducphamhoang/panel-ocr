@@ -43,7 +43,8 @@ Spec-sensitive and heaviest by the spec's own admission.
 | Worktree | Branch | Observed HEAD | Note |
 |---|---|---:|---|
 | Main | `claude/codex-plugin-install-jxirxa` | `f48c071` | Clean except pre-existing untracked local/proxy scratch files (`$COMMANDCODE_SCRATCHPAD/`, `.commandcode/`, `.router_secret`, `.scratch/`, `1router.db*`, `setup-ccx-proxy.ps1`) and this file itself — none are part of this project's work, intentionally left untracked. `graphify-out/` is now gitignored (generated knowledge-graph output). |
-| `main` (literal branch) | `main` | `f48c071` | 2026-08-12: fast-forwarded from a stale `04c5693` (200 commits behind) to match `claude/codex-plugin-install-jxirxa` exactly, at the user's explicit request. Both branches are identical now; no further reconciliation needed unless they diverge again. |
+| `main` (literal branch) | `main` | `644626e` | 2026-11-26: fast-forwarded `f48c071` → `644626e` (26 commits: §16.52–§16.54, PERFORMANCE_BACKLOG, v1.6.0 release closure) at the user's explicit request, non-force push, confirmed with `git ls-remote`. Equal to `claude/codex-plugin-install-jxirxa`. (Earlier 2026-08-12 sync: `04c5693` → `f48c071`.) Does **not** contain the three 2026-11-26 commits on `claude/zealous-keller-zg8la1` below. |
+| Scratch | `claude/zealous-keller-zg8la1` | `a4fa267` | 2026-11-26, cloud session. Forked at `644626e`; +3 commits, all pushed to `origin`, none merged to `main`: `f7c414d` (`.gitignore` entry for `.claude/settings.local.json`), `b05237b` (opt-in `profiles/…_small-text-and-punct-bubbles_v01.toml` + README section), `a4fa267` (README: per-user `default_profile`). Spec defaults deliberately **unchanged** (user chose an opt-in profile over a §16.x default flip). |
 | Mask parity | `mask-parity` | `b503cfb` | Branch ref only — worktree checkout removed 2026-08-10 (directory `D:\Duc\panel-ocr-mask-parity` may still exist on disk as an empty, git-detached leftover; a Windows file lock blocked its final deletion, harmless). **Not** an ancestor of main; keep this branch ref alive, do not delete. |
 
 `integration-v1.5` and `lama-inpaint` branches and worktrees were deleted 2026-08-10
@@ -881,3 +882,56 @@ heavy item rather than continuing an already-long one.
     an automatic side effect of a release. `main` is now stale relative to this branch
     by all of this session's commits (§16.53 through the v1.6.0 release) if that matters
     to a future session.
+
+## 2026-11-26 (cloud session, `claude/zealous-keller-zg8la1`): `main` sync, real-model checks, `denormal_guard` diagnosis
+
+Observed HEAD of the working branch at close: `a4fa267` (see the branch table above).
+
+- **`main` synced**: `git push origin 644626e:refs/heads/main` → `f48c071..644626e`, a pure
+  fast-forward (verified with `git merge-base --is-ancestor` beforehand and `git ls-remote`
+  after). The `v1.6.0` tag needed no push: `git ls-remote` already showed it on `origin`
+  (peeled to `31a9385`, an ancestor of `644626e`), consistent with the entry above that moved it.
+- **Real-model verification in this container** (models fetched with `curl` into
+  `~/.cache/panel-ocr/models/`, because `panel-ocr models download` fails here: its `reqwest`
+  `rustls-tls` build does not trust the sandbox proxy's CA; sha256/size confirmed by
+  `panel-ocr models verify` → all 4 `OK`): `cargo test -p pc-detect --features
+  onnx,testkit,bench-tuning -- --ignored` for `d4_real_weights_smoke_test`,
+  `perf2_bit_exactness` (3/3), `perf2_from_path_smoke`, `perf3_denormal_order`,
+  `perf2_mxcsr_hygiene` (3/3) — all pass with real weights.
+- **Filters that leave text on the page** (measured on 9 manga pages, one series;
+  `panel-ocr residual-check`): the detector found nearly every box; text survived because
+  of `preprocessor.box_min_size = 400` (area), `preprocessor.ocr_blacklist_pattern` (OCR text
+  of only dots/`!`/`?`/digits) and the **hard-coded** `DEFAULT_MIN_MASK_COVERAGE = 0.1`
+  (`pc-detect/src/lib.rs:51`, spec §8.3 step 6). Residual blocks 18 (defaults) → 9 with the
+  profile (two keys changed) → fewer still with coverage 0, but at coverage 0 two large
+  starburst bubbles on one page lost part of their line art (visually confirmed on one of
+  them), and two boxes (coverage 0.042 / 0.047) stayed uncleaned even then (cause not found).
+  **Not acted on**: no spec default changed; the coverage threshold is a ratified value.
+- **`denormal_guard` red — root cause found, NOT fixed (frozen test; needs the architects
+  per CLAUDE.md, not a unilateral edit).**
+  `crates/pc-ort/tests/denormal_guard.rs::a_thread_spawned_inside_an_active_guard_scope_does_not_inherit_the_flush_state`
+  fails 8/8 on this container (Linux 6.18, x86_64, glibc 2.39), including at the parent
+  commit — i.e. pre-existing, not caused by any 2026-11-26 change. Cause, measured with an
+  out-of-repo probe (`_mm_setcsr(FTZ|DAZ)` in `main`, then `std::thread::spawn` reading
+  `_mm_getcsr`): the **child reads `0x9fc0` — FTZ and DAZ still set — i.e. a new thread
+  inherits its creator's MXCSR on Linux**, so the test's premise ("a freshly spawned thread
+  must start with the ABI default state") is false here. The assertion's rationale lives only in
+  that test's own message; spec §16.52 and `pc_ort::denormal`'s docs claim only that MXCSR
+  is a *per-thread register* (true), and the guard's save/restore/nesting/unwind behaviour —
+  the other 5 tests in the file — passes. No product symptom observed: the real-weights
+  `perf2_*`/`perf3_*` tests above pass. **Unverified**: whether Windows/Intel-macOS threads
+  start from the default word (this test presumably passed on the maintainer's Windows machine
+  when committed, which is consistent with but does not prove that), and whether
+  `.github/workflows/ci.yml`'s `ubuntu-latest` x86_64 leg is red for the same reason (the
+  matrix includes it; CI status was not checked from this session). **Decision owed** (one of
+  cookbook's four legitimate exits from a frozen test; not chosen here): drop or weaken the
+  assertion to what holds on every target, replace it with a documented per-OS expectation, or
+  `cfg`-gate it — to be settled by the two architects jointly.
+- **Environment gotchas worth knowing**: `cargo test --workspace` rebuilds
+  `target/debug/panel-ocr` *without* the `onnx` feature, silently replacing an `onnx` build;
+  rebuild with `cargo build -p pc-cli --features onnx` before running the real pipeline. Also
+  `crates/pc-testkit/tests/a4d_claim_sites.rs` pins README claims by **line number**: add README
+  prose at the end of the file, never in the middle.
+- **Full-bar status of the 2026-11-26 commits**: `cargo test --workspace` = 1497 passed /
+  1 failed (the `denormal_guard` test above); onnx tier, clippy and fmt not run for them (diffs
+  were one `.gitignore` line, one TOML file and README prose).
