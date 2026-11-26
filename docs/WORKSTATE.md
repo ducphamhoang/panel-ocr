@@ -939,9 +939,11 @@ Observed HEAD of the working branch at close: `a4fa267` (see the branch table ab
 ### 2026-11-26 follow-up: joint `architect` + `rust-engineer` position on the `denormal_guard` test (consumed brief deleted)
 
 Two independent reports from one brief (`docs/BRIEF_denormal_guard_thread_inheritance.md`, now
-deleted, kept in git history at `bdce557`). **They agree on the approach, so Fable was not
-convened.** This is the two roles' *position*; it is **not yet ratified** and nothing in the
-spec, the frozen test or `pc_ort::denormal` has been changed.
+deleted, kept in git history at `bdce557`). **They agree on the approach and differ on three
+smaller points (listed below), none of which changes it, so Fable was not convened.** This is the
+two roles' *position*. It is **ratified as §16.55** in `docs/PIPELINE_SPEC_V1.md` (the
+transcription was read by a fresh-reader before commit; its findings were fixed). As of this entry the
+frozen test and `pc_ort::denormal` are **not yet changed**.
 
 - **Agreed:** the test's premise is wrong, not the guard and not the spec (§16.52 makes no claim
   about new threads). On Linux a new thread copies its creator's *whole* MXCSR word (both roles
@@ -965,14 +967,19 @@ spec, the frozen test or `pc_ort::denormal` has been changed.
   measurement scoped to "Linux 6.18.44 / x86_64 / glibc 2.39 / `std::thread::spawn`" — never widened
   to "all Linux" or "all OSes". It must **not** use SUPERSEDED/amended wording against §16.52
   (its text is not wrong; `spec_supersession.rs` would demand a back-pointer).
-  Per the unified-spec rule it is transcribed on the main/integration line, not on a feature branch.
-- **Over-claim sites found beyond the test message** (both roles): the test *name*;
+  The unified-spec rule puts such an entry on the main/integration line; the maintainer chose to
+  write it on `claude/zealous-keller-zg8la1` and then fast-forward `main` (that fast-forward still
+  awaits their permission).
+- **Over-claim sites found beyond the test message** (the roles overlap but do not fully agree; see
+  the doc-fix bullet): the test *name*;
   `crates/pc-ort/src/denormal.rs:13-14` ("per-thread ... is already all the isolation the design
   needs" — true only if no thread is spawned inside a guard scope);
   `docs/BRIEF_denormal_architect_position.md:155-157` (a measurement that may be vacuous because
   its `child` line prints after `restored=`; the probe source is not committed); WORKSTATE:579
   (describes it as "thread-locality"; a record, not normative).
-- **Not agreed (design detail, not approach):** the replacement test body.
+- **Not agreed (three small points, none changes the approach):** (1) the replacement test body
+  (here); (2) the doc note's site and wording (doc-fix bullet); (3) the `perf2_mxcsr_hygiene.rs`
+  cross-reference (minor-disagreement bullet).
   *Architect*: `guards_on_two_threads_are_independent_even_when_their_scopes_interleave` — the child
   overwrites its own word to a known non-default value, both threads hold a guard, the parent's
   drops first while the child's is live; asserts parent restored and child restored independently.
@@ -981,23 +988,40 @@ spec, the frozen test or `pc_ort::denormal` has been changed.
   — a thread spawned *before* the guard exists must be unaffected while the parent's guard is live
   (two barriers); catches a no-op guard and a guard whose effect crosses threads. Both pass on
   Linux (engineer: 20/20) and were validated by mutation out-of-tree only. They are
-  complementary; adopting both is possible. The final text is a ratification decision.
+  complementary; the maintainer selected adopting both (§16.55 item 3).
   **Whichever lands must first be shown red in-repo** by a temporary mutation of
   `DenormalFlushGuard` (then reverted), per the cookbook's "can it fail" check.
-- **Doc fix (not frozen; both roles):** in `denormal.rs:13-14` state that a thread spawned *while a
-  guard is live* starts from an OS-defined word and on Linux inherits FTZ/DAZ, and that code inside
-  a guard scope must not spawn threads expecting default float semantics.
-- **Minor disagreement, out of scope:** the engineer flags
+- **Doc fix (not frozen; both roles want it, site and wording differ):** the architect proposes
+  editing the module-docs phrase at `denormal.rs:13-14`; the rust-engineer reads that phrase as
+  true as written and proposes a note on the `DenormalFlushGuard` doc comment (~95-97). Either way
+  it must say that a thread spawned *while a guard is live* starts from an OS-defined word (on the
+  measured platform it inherits FTZ/DAZ) and that code inside a guard scope must not spawn threads
+  expecting default float semantics. §16.55 item 4 leaves site and wording to the implementer.
+- **Minor disagreement, out of scope:** both roles say
   `crates/pc-detect/tests/perf2_mxcsr_hygiene.rs:128-131` ("DAZ/FTZ leaked into a freshly spawned
-  thread") as unable to fail independently of line ~124; the architect says it does not carry the
-  false premise. Not touched.
+  thread") cannot fail independently of the assertion near line 124 on Linux; they differ on whether
+  it carries the false premise (rust-engineer: it relies on it; architect: it does not). Not touched.
 - **Unverified (neither role could settle it):** Windows and Intel-macOS new-thread behaviour
-  (WORKSTATE:581 records a 6/6 pass of this test on 2026-08-16 on what appears to be the
-  maintainer's Windows machine — consistent with Windows starting threads at the default, not
-  proof; one run of an out-of-repo probe on Windows and on an Intel Mac would settle it);
+  (WORKSTATE:581 records `cargo test -p pc-ort --test denormal_guard` passing — the file's 6
+  tests, 0 failed — on 2026-08-16 on what appears to be the maintainer's Windows machine:
+  consistent with Windows starting threads at the default, not proof; one run of an out-of-repo probe on Windows and on an Intel Mac would settle it);
   the actual state of the `ubuntu-latest` CI leg (`gh run list --workflow ci.yml`);
   that ORT creates no threads during `Run` (read from code structure; irrelevant to the ruling
-  because §16.52 item 1 records ORT overwriting pool-thread MXCSR itself).
-- **Still owed, in order:** (1) §16.55 ratification entry on the main/integration line + a fresh
-  `fresh-reader` over the *transcription*; (2) swap the test and edit the `denormal.rs` docs, with
-  the in-repo mutation run; (3) the full verification bar. Task size: one simple task after ratification.
+  because §16.52 items 1 and 3 record ORT setting/resetting pool-thread MXCSR itself).
+- **§16.55 transcription gate (done, 2026-11-26):** a new `fresh-reader` read the entry and found 5
+  blocking problems, all fixed before commit: scope widened past "this container only"; a wrong
+  statement of the architect's position on `perf2_mxcsr_hygiene.rs`; "differ only on the test body"
+  (there were three differences); "6/6" attached to the wrong noun (the file's 6 tests in one run,
+  not 6 runs of this test); and a "ratified part is the invariants" sentence with no source
+  (now attributed to the Orchestrator for the maintainer to confirm). Its non-blocking findings
+  (dates/commands in the provenance, "selected" vs "directed", ORT items 1 and 3, the depth-counter
+  mutation, a sleep-ordered probe, mask bits measured) were also applied. It also corrected the
+  brief: the maintainer's menu answers are in the session log
+  `/root/.claude/projects/-home-user-panel-ocr/98ceae0c-a98c-561e-89d2-1d5a63456c1b.jsonl`. The
+  fixes were mechanical narrowings the reader prescribed, so no second reader was spawned.
+  (Orchestrator slip: the question to the maintainer said the branch was "5 commits" ahead of
+  `main`; `git rev-list --count 644626e..ea3e5aa` is 6.)
+- **Still owed, in order:** (1) swap the test and edit the `denormal.rs` docs per §16.55 items 3-4
+  (implementer role, not the Orchestrator), with the in-repo mutation runs shown red then reverted;
+  (2) an independent review of that diff; (3) the full verification bar; (4) the `main` fast-forward,
+  which needs the maintainer's permission. Task size: one simple task.

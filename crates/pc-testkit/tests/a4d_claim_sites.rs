@@ -691,8 +691,11 @@ const PRESENT: &[Site] = &[
         //   → 10117 (2026-08-17, same entry's own step-1a fresh-reader fixes, added 31
         //     further net lines before this site; re-derived by grep for the exact
         //     claim text, single occurrence confirmed, not incremented blindly).
+        //   → 10133 (2026-11-26, §16.55's `denormal_guard` thread-inheritance ruling
+        //     added 16 net lines before this site; re-derived by grep for the exact
+        //     claim text, single occurrence confirmed, not incremented blindly).
         path: "docs/PIPELINE_SPEC_V1.md",
-        line: 10117,
+        line: 10133,
         text: "Upstream `refine_mask`/`refine_undetected_mask`",
     },
     Site {
