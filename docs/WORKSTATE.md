@@ -1064,3 +1064,9 @@ frozen test and `pc_ort::denormal` are **not yet changed**.
 - **Still owed:** the `main` fast-forward (needs the maintainer's permission); `perf2_mxcsr_hygiene.rs:128-131`
   and the decorative-assertion question are untouched per §16.55 item 5(d); Windows/Intel-macOS behaviour and the
   `ubuntu-latest` CI state remain unverified.
+
+- **Maintainer decision (2026-11-26, in session): keep test (b)** as it stands — a documented
+  platform-guarantee check whose only guard-sensitive element is `parent_flushes`. §16.55 item 3's
+  wording is **not** changed (the maintainer chose to keep the test, not to reword the spec); the
+  over-description of (b) recorded above therefore stands as a known caveat, stated in the test's own
+  comment. The maintainer also authorized the `main` fast-forward in the same message.
