@@ -1309,3 +1309,20 @@ Maintainer: "we may also need to translate English and Spanish comics" — so La
   like correct removal of text touching bubble borders, with slight edge changes in two cells. Not proven harmless.
 - **Still untested:** English/Spanish pages (maintainer will supply), Japanese regression, SFX policy, CRAFT/EasyOCR licensing and weight provenance,
   runtime (+~3.4 s/page CPU), and an in-tree integration design. `docs/BRIEF_dump_detector.md` was temporary and is deleted (consumed).
+
+## 2026-11-27 — English / Spanish samples from Internet Archive (out-of-tree; licences uploader-asserted, used locally only, not committed)
+
+- **Set A (easy, 8 pages):** Dell *Sword of Zorro* #497 (colour, EN) and *El Monje Loco* #1 (two-colour, ES), 4 pages each. Stock binary + recommended
+  profile: 8 completed, 0 failed, 2 m 43 s CPU. By eye (thumbnail side-by-sides, no pixel metric): dialogue, captions and thought balloons cleaned;
+  Spanish fills show flat colour patches slightly off the paper tone; a few faint remnants (e.g. "UNA NOCHE..."); SFX policy inconsistent
+  ("ZORRO!" removed, "¡JA, JA, JA!" kept). CRAFT (EasyOCR 1.7.2 `detect`, English weights) found no genuinely missed text; its 8 "still dark" boxes were
+  all artwork (explosion lines, hatching), i.e. false positives.
+- **Set B (harder, 16 pages found by a subagent: Buck Jones b&w UK reprint, 2-Bit Comics #3, Annie Oakley, Briggs 1914, Supermegatopia, La Taberna del
+  Escocés, Quirquincho, ComicCel):** 15 completed, 1 skipped ("no text detected": en-cowboy-p27, which CRAFT sees 3 boxes on), 0 failed, 3 m 39 s.
+  CRAFT boxes whose dark pixels survived (>60 % of original): Buck Jones p15 14/27 and p05 4/18 — viewed: the boxless typeset caption lines at the top of
+  panels are left untouched; ComicCel p04 17/37 and p12 7/34 — viewed (p04): hand-lettered title/exclamation text ("MUERO POR UN CELULAR!", "AHORA QUE SOY UN
+  CELULAR") left, bubbles cleaned; Briggs 1914 p37 130/131 — pen-lettered text swirl effectively untouched (not viewed in detail); other pages 0–4 each
+  (mostly art false positives, not individually reviewed).
+- **Reading:** on EN/ES the detector's weakness is boxless captions over line art, hand-lettered/display text, and sparse-text pages, not ordinary
+  balloons. CRAFT would catch the boxless captions but needs an art-false-positive filter. Not done: pixel-level scoring on Set B, running the CRAFT→pipeline
+  prototype on Set B, Japanese regression, licences (uploader-asserted only), mature pages es-taberna-p13/p19 excluded from the run.
