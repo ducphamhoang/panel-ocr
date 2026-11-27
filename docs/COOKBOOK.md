@@ -157,6 +157,27 @@ page. This one was written as a claim about the algorithm. When you write "this 
 upstream", say *on what input you checked*, and check whether the code path you compared
 was even taken.
 
+### Extending the recipe to the LaMa / full-CLI path (2026-11-27)
+
+The recipe above covers the detector path only. To run upstream's whole `clean` command, including its LaMa inpainting:
+
+- **Clone:** `curl`/`git` against `VoxelCubes/PanelCleaner` returned HTTP 403 from the sandbox proxy (GitHub access is scoped to the
+  project's own repository). Use the `add_repo` tool (`access: read`; it attaches nothing and says so), then
+  `GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/VoxelCubes/panelcleaner /home/user/voxelcubes/panelcleaner` and
+  `git fetch --depth=1 origin 0afa21fd6caab5bee0ab8ef51a5a19fc4bd9dda3 && git checkout 0afa21fd...` (the default branch tip was already `0afa21f`).
+- **Dependencies:** the filtered `requirements.txt` above **plus** `simple_lama_inpainting` (do not filter it out here), `psd-tools>=1.11.0` and
+  `pytesseract` (the Python wrapper only; `pcleaner.main` imports both at module level, no Tesseract binary needed). Do not stub them (same rule as
+  `manga_ocr`). PySide6 is still not needed. Install with `uv pip install --torch-backend=cpu -r reqs.txt`; the venv plus models is about 3 GB.
+  Resolved on 2026-11-27: torch 2.15.0+cpu, torchvision 0.29.2+cpu, numpy 2.5.5, opencv-python 5.1.0.95, Pillow 13.0.0, simple-lama-inpainting 0.1.0.
+- **Isolation:** set `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME` into a scratch directory and `PYTHONPATH=<clone>`, then run it as
+  `python -m pcleaner.main ...` (the `pcleaner-cli` console script is only created by the wheel build).
+- **Models:** `python -m pcleaner.main load models --cpu` downloads the ONNX detector `comictextdetector.pt.onnx` (sha256 `1a86ace7…`, the **same file**
+  this port pins) and the LaMa `anime-manga-big-lama.pt` (TorchScript, 205,717,870 bytes, sha256 `479d3afd…`; **not** the artifact this port uses:
+  `lama-manga.onnx`, 207,482,644 bytes, sha256 `50a1abae…`). Whether the two share weights is not known.
+- **Inpainting on:** the built-in profile has `inpainting_enabled = False`. `profile new u1 <path>`, then change that line to `True`, then
+  `clean <dir> -o <out> --profile <path> --hide-analytics`. Output names match this port's (`pageN_clean.jpg`, `pageN_mask.png`).
+- **Cost, 15 pages of ~770x1200, CPU only:** default profile 37 s wall; with LaMa 8 min 33 s wall (13 min 52 s CPU).
+
 ---
 
 ## 4. Classify a failure by what the function takes, not by how it feels

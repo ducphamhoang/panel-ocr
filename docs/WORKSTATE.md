@@ -1202,3 +1202,38 @@ them, so a default flip is its own §16.x deviation; evidence is 15 pages of two
   11 and no cell worse (the earlier sheets had the conf-gate on; this one did not).
 - Not measured: outlined SFX, text on screentone, other scripts, CUDA, ground truth, upstream output. The §16.38 ownership erratum (O2) remains an
   open, separate Spec-sensitive task; O3 (bubble lock) stays rejected.
+
+### 2026-11-27 upstream comparison: are the LaMa artifacts the port's fault? (Orchestrator ran upstream; nothing committed except these notes)
+
+Question from the maintainer: the defaults should be good, why do they leave these defects? Answers from the spec (checked): upstream's own default has
+`inpainting_enabled = False` (flat fill); this port ships LaMa on (DEVIATION(30), §16.46, maintainer decision 2026-08-10); the port runs LaMa per 512x512
+tile because the pinned ONNX artifact has fixed 512x512 inputs (DEVIATION(24), "forced, not chosen", with "the quality consequence real and unmeasured");
+the other seven `[inpainter]` values are upstream's verbatim. The 512 comes from the artifact (`mayocream/koharu` `lama-manga.onnx`, measured by the
+L0 spike 2026-08-06), and the ONNX-only decision from ARCHITECTURE_DECISIONS ("Full Rust, no Python at runtime"). The spec does not record why a
+dynamic-size re-export was not pursued (an inference only: the export used an explicit DFT cos/sin basis, which is size-specific).
+
+Upstream was then **actually run** (recipe now in COOKBOOK §3, last subsection; pinned `0afa21f`, deps in that note), on the same 15 pages
+(10 + 5, two series), CPU. Same detector file (sha256 identical, `1a86ace7…`); **different LaMa artifact** (TorchScript `anime-manga-big-lama.pt`).
+
+| config | residual blocks (our `residual-check`) | destroyed dark px, whole page |
+|---|---:|---:|
+| upstream default (flat fill) | 42 | 53 |
+| **upstream + LaMa** | 20 | **5487** |
+| port, `--skip-inpaint` (flat fill) | 44 | 44 |
+| port default (LaMa on) | 24 | **5244** |
+| port, recommended profile | 14 | **594** |
+
+- **Port fidelity with flat fill:** vs upstream's default output, mean absolute pixel difference 0.3-0.6 gray levels (probably JPEG encoding), and
+  only 0.023% of pixels differ by more than 40 (max 0.19% on p17, 0.11% on p40); no page is byte-identical; the residual differences were not traced.
+- **The LaMa art damage is NOT specific to the port:** upstream + LaMa destroys about as many dark pixels as the port's default (5487 vs 5244), and a
+  side-by-side of the 10 largest cells shows upstream leaving the same gray streaks / smudges / invented scribbles inside bubbles (p103 narrow bubble,
+  p37, p103 ×2, p40 "テア", p38 "ふ！"). Flat fill (upstream's real default) destroys almost nothing (53). The recommended profile is cleaner than
+  both LaMa configs in those cells (594).
+- **What IS port-specific (by eye on thumbnails, lower confidence for p38 #6):** the hard-edged rectangular blocks/seams (p39, p38) appear with the port's
+  default but not with upstream, consistent with DEVIATION(24) (one whole-page call upstream, per-tile here).
+- **Caveats:** two series, 15 pages; no ground truth; metrics are mine (whole-page "dark px destroyed" counts all changes far from the text mask, so
+  flat-fill and LaMa are not scored on identical regions); the LaMa weights may differ between the two sides; residual blocks are counted by the port's
+  own detector on both sides; flat fill leaving *more* detected residue (42/44 vs 20-24) was not investigated.
+- **Open for the maintainer:** (a) the product default (LaMa on) trades much more art damage for fewer residual detections vs upstream's flat fill;
+  (b) the recommended profile remains the best measured option; (c) a default flip still needs its own §16.x process; (d) the dynamic-size LaMa
+  re-export question is unanswered.
