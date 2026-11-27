@@ -1269,3 +1269,29 @@ Maintainer's question: can detection get better (other models, fine-tuning, othe
   bounded probe of a general scene-text detector for recall and false positives; (3) only if that is not enough, consider fine-tuning or replacing
   the detector, which needs labelled pages and a GPU and invalidates the recorded fixtures / provenance and the §16.13 bit-exactness evidence tied to
   the current weights (a Spec-sensitive task). The pipeline also needs a pixel text mask, not only boxes.
+
+### 2026-11-27 follow-up: CRAFT probe (maintainer allowed "measure only") and the English / Spanish requirement
+
+Maintainer: "we may also need to translate English and Spanish comics" — so Latin-script detection matters (the earlier content question was left unanswered).
+
+- **CRAFT (a general scene-text detector, via EasyOCR 1.7.2, CPU, in the scratch venv of the upstream run; nothing added to the repo or its
+  dependencies) recovers 12 of the 14 dialogue blocks the comic-text detector misses on the 5 Vietnamese pages** (p101 2/4, p102 8/8, p103 1/1,
+  p105 1/1; criterion: at least one CRAFT box centre inside the block and at least 10% of its area covered). The two missed are the tiny "A!" and
+  "HỞ?!!" on p101 (their coordinates were also my by-eye estimates). CRAFT returns word-level boxes (205 on the 5 pages, ~3.4 s per page on CPU).
+- **Measurement bug found and corrected the same hour:** the first scoring required one CRAFT box to cover 40% of the whole block and printed
+  0/14; the overlay drawn on p102 showed the boxes sitting exactly on the missed text, only smaller than the block. The scoring above is the
+  corrected one; the overlay is what caught it.
+- **False positives (by eye, overlays of p101, p103, p104, p105):** boxes are almost all on dialogue text; the extras are a few large sound-effect
+  lettering boxes (p101 "タン", p103 top SFX, p104 top SFX). None on plain art, windows or line work. (SFX are art for this tool; whether to
+  clean them is a product decision.)
+- **Facts about OCR for Latin text (read from the spec and code):** the port's only OCR engine is manga-ocr (Japanese); Tesseract is deferred
+  to v1.5 (spec §15.4 / decision confirmed near line 1457: upstream's `ocr_use_tesseract` defaults to False and its factory then returns
+  `MangaOcr()` for every language). So English / Spanish text can be *cleaned* if detected, but the `ocr` command will not read it usefully;
+  translation needs a separate Latin OCR step.
+- **Not tested / open:** CRAFT inside the pipeline (it gives word boxes; the pipeline needs block-level boxes and a pixel text mask — whether
+  the existing mask refinement works from boxes alone is unknown); English and Spanish pages themselves (only Latin text with Vietnamese
+  diacritics was tried); Japanese pages (the English CRAFT model is not meant for vertical Japanese); false positives beyond 4 pages; CRAFT /
+  EasyOCR licensing and weight provenance (not checked); effect on runtime (about +3.4 s per page on CPU).
+- **Candidate next experiment (needs the maintainer's go):** out-of-tree end-to-end prototype that merges CRAFT word boxes into block boxes,
+  adds them to the comic-text detector's boxes, and runs the existing mask / denoise / inpaint stages (for example via a replay fixture or a
+  patched binary), then measures residual text and art damage on the Vietnamese pages and on any English / Spanish pages the maintainer supplies.
