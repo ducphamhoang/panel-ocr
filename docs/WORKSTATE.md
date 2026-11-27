@@ -1326,3 +1326,19 @@ Maintainer: "we may also need to translate English and Spanish comics" — so La
 - **Reading:** on EN/ES the detector's weakness is boxless captions over line art, hand-lettered/display text, and sparse-text pages, not ordinary
   balloons. CRAFT would catch the boxless captions but needs an art-false-positive filter. Not done: pixel-level scoring on Set B, running the CRAFT→pipeline
   prototype on Set B, Japanese regression, licences (uploader-asserted only), mature pages es-taberna-p13/p19 excluded from the run.
+
+## 2026-11-27 — CRAFT→pipeline on Buck Jones / ComicCel (out-of-tree); root cause is NOT detection for most of the misses
+
+- **Setup:** live detector output dumped with the temporary `PC_DUMP_DIR` build (patch reverted, not in repo) for en-cowboy-p05/p15 and es-comicel-p04/p12; CRAFT
+  word boxes merged by the same pre-registered rules as the Vietnamese prototype, plus a text-on-light filter (Otsu ink fraction 0.04–0.40, 4 px ring luminance std ≤ 25).
+  Replay fixture run with the stock binary + recommended profile.
+- **Finding 1 (detector already sees most of it):** the live detector had boxes on the Buck Jones p05 caption and on the ComicCel hand-lettered text. With those pages
+  CRAFT + the strict filter added 1 block in total (p15) — nothing to add for ComicCel.
+- **Finding 2 (the real cause for p05):** all 4 masking regions have `failed: true` (std_deviation 29.4–59.9 vs `mask_max_standard_deviation` 15.0): a failed
+  fitment contributes nothing to the mask (test `a12_failed_fitments_contribute_nothing`), and the caption is left smeared with art texture. Loosening to 80 on the same
+  pages made it worse (dark smear over the caption) — consistent with the earlier measurement recorded above.
+- **Finding 3 (genuine detector miss):** the boxless typeset captions at the top of Buck Jones p15 have no detector box. With the ring filter *removed* (post-hoc,
+  not pre-registered) CRAFT recovered 3 blocks and the captions were cleaned; the same run also erased the italic "Buck Jones" header and page number "13"
+  (non-dialogue page furniture) and left p05's caption smear unchanged. With the pre-registered ring filter the captions were rejected.
+- **Not done / caveats:** no pixel-level scoring on this set; 4 pages only; the ring-filter relaxation is tuned on the very page it helps.
+  The temporary `$SC/lat` scripts (`build_fx.py`, `craft_lat.py`) are not in the repo.
