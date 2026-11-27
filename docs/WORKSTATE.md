@@ -1237,3 +1237,35 @@ Upstream was then **actually run** (recipe now in COOKBOOK §3, last subsection;
 - **Open for the maintainer:** (a) the product default (LaMa on) trades much more art damage for fewer residual detections vs upstream's flat fill;
   (b) the recommended profile remains the best measured option; (c) a default flip still needs its own §16.x process; (d) the dynamic-size LaMa
   re-export question is unanswered.
+
+### 2026-11-27 detection audit (Orchestrator; maintainer chose to keep the port + the recommended profile, "option a")
+
+Maintainer's question: can detection get better (other models, fine-tuning, other OCR)? Evidence gathered first; nothing in the repo changed.
+
+- **OCR is not on the critical path for cleaning.** In the pipeline OCR only filters: boxes under `ocr_max_size` (3000 px²) whose OCR text fully matches
+  `ocr_blacklist_pattern` are dropped; an engine error keeps the box. With the recommended profile (blacklist `""`, so only an empty reading drops a
+  box), running with `ocr_enabled = false` gave **byte-identical output on all 15 pages** and was ~13% faster (116 s vs 134 s wall). So a better OCR
+  would not improve cleaning; it matters only for text extraction / translation. (Candidate follow-up, not done: whether the recommended profile should
+  ship `ocr_enabled = false`; measured on 15 pages only.)
+- **Detector thresholds are code constants, not profile keys:** objectness 0.4, class score 0.4, NMS IoU 0.35 (`crates/pc-detect/src/yolo.rs:10-14`);
+  `[text_detector]` exposes only model path, threads and `mask_refine_mode`.
+- **Visual audit of the recommended-profile output, 10 pages at native resolution** (Orchestrator's reading; `residual-check` uses the same detector,
+  so it cannot see misses):
+  - Japanese series (p17, 19, 21, 38, 40): **no text missed by the detector.** Every leftover dialogue block was a box the detector found and a later
+    filter dropped (the fixed 0.1 coverage filter): p17 "助けて…", p19 "い…いったい", p38 "くそ", p40 two burst bubbles; p21 fully clean.
+  - Vietnamese / Latin-script series (p101-105): **the detector misses a lot.** About 14 dialogue blocks are left fully legible and not flagged by
+    `residual-check`: p101 4 ("REINER! MÀY MẤT TRÍ RỒI À?!", "NÓ LÀ CON TITAN…", "A!", "HỞ?!"), p102 8, p103 1, p105 1, p104 none. With the detector's
+    full output (confidence floor 0, coverage filter off) **none of the 14 overlaps any returned box**, so they are true misses; the boxes it did
+    return (36 on the 5 pages) are the bubbles that were cleaned. By block count that is roughly 36 of 50 found (~72%; p102 about 7 of 15, p101 about
+    9 of 13, p103 11 of 12, p105 6 of 7, p104 3 of 3). These counts are my visual ones; the leftover dots / SFX were not counted.
+  - **Lowering the thresholds does not fix it** (experimental binary, `PC_DET_THR`, patch kept only in the scratchpad, repo reverted): 0.4 → 0/14
+    missed blocks recovered, 0.25 → 2/14, 0.15 → 4/14, with extra boxes (33 → 36 → 40 on 4 pages; false positives not reviewed). The model barely
+    "sees" the rest: a model-level limit on this material (bold upper-case Latin text in jagged "shout" bubbles), not a threshold issue.
+- **Not tested, because the action was blocked by the auto-mode classifier (reason: it installs and runs third-party code/weights from the
+  internet):** whether a general scene-text detector (CRAFT through EasyOCR, planned in the scratch venv of the upstream run, 7 small packages) would
+  recover those 14 blocks. A dry-run resolved fine (`easyocr 1.7.2`); nothing was installed or run.
+- **Options, in the order the Orchestrator would take them** (all pending the maintainer's decision on what content matters):
+  (1) find out which content the studio needs cleaned (raw Japanese manga vs translated Latin-script scans vs other art); (2) if Latin-script: run a
+  bounded probe of a general scene-text detector for recall and false positives; (3) only if that is not enough, consider fine-tuning or replacing
+  the detector, which needs labelled pages and a GPU and invalidates the recorded fixtures / provenance and the §16.13 bit-exactness evidence tied to
+  the current weights (a Spec-sensitive task). The pipeline also needs a pixel text mask, not only boxes.
