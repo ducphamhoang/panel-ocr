@@ -1295,3 +1295,17 @@ Maintainer: "we may also need to translate English and Spanish comics" — so La
 - **Candidate next experiment (needs the maintainer's go):** out-of-tree end-to-end prototype that merges CRAFT word boxes into block boxes,
   adds them to the comic-text detector's boxes, and runs the existing mask / denoise / inpaint stages (for example via a replay fixture or a
   patched binary), then measures residual text and art damage on the Vietnamese pages and on any English / Spanish pages the maintainer supplies.
+
+## 2026-11-27 — CRAFT → pipeline prototype (out-of-tree, nothing in the repo changed)
+
+- **What was run:** CRAFT word boxes merged into 12 block boxes (page 101: 4, page 102: 6, page 103: 1, page 105: 1), added to the detector's replay
+  fixture with an Otsu-derived pixel mask, then the stock binary with the recommended profile (`--detector replay:<fixture>`). 5 Vietnamese pages.
+- **Result:** dialogue bubbles on pages 102/103 visually cleaned, bubble borders and hatching kept; full-page views show no obvious art damage.
+  `residual-check` findings 3 → 2 (that check uses the same detector, so it is blind to misses; treat as weak evidence).
+- **Residual dark pixels inside the 14 hand-listed missed-text rectangles** (rectangles include bubble outlines, so this is an upper bound on
+  leftover text, not a measure of it): without CRAFT 100% in all 14; with CRAFT 11%–76% in 12 of 14 (best: p102 "TO NO CAU" 11%, "KHONG! CAM ON"
+  16%); p101 "A!" and "HO ?!!" unchanged at 100% (CRAFT also missed them); p105 "NEU ..." 93%. Only 1 of 14 is under 15% by this crude metric.
+- **Collateral metric** ("destroyed dark pixels") rose 359 → 631, concentrated in 8 cells next to newly cleaned bubbles; the cells examined looked
+  like correct removal of text touching bubble borders, with slight edge changes in two cells. Not proven harmless.
+- **Still untested:** English/Spanish pages (maintainer will supply), Japanese regression, SFX policy, CRAFT/EasyOCR licensing and weight provenance,
+  runtime (+~3.4 s/page CPU), and an in-tree integration design. `docs/BRIEF_dump_detector.md` was temporary and is deleted (consumed).
