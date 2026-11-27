@@ -1078,8 +1078,10 @@ Maintainer's question: the cleaner seems to erase beyond the bubble or "redraw b
 with its colour. One `architect` report (scratch evidence under `…/scratchpad/archx/`, outputs not committed). The Orchestrator
 re-checked the spec wording (below) but **not** the architect's reproductions.
 
-- **Nothing is written outside the pipeline's own write region (`final_mask`)**: measured collateral (dark pixels destroyed, more than
-  3 px from the text mask) is 0 outside `final_mask` in all runs. The damage is *inside* that region: it is the raw text mask grown by
+- **Almost nothing is written outside the pipeline's own write region (`final_mask`) — CORRECTED 2026-11-27:** the architect's "0 outside" came from
+  a tool run that treated the whole page as `final_mask` (the alpha of `*_clean_inpaint.png` is 255 everywhere; the real region is the alpha of
+  `*_inpainting.png`). Re-measured with the right file (rust-engineer, then the Orchestrator, same numbers): dark pixels destroyed outside
+  `final_mask` = 36 (C0) / 43 (every config that uses the +rule), the same 43 in every config, so not caused by LaMa (untraced: mask/denoise stage?). The damage is *inside* that region: it is the raw text mask grown by
   `min_mask_thickness` and then by `7 + int(0.2*std)` px (cap 20), plus a 5 px isolation band and a 4 px blur (`fill.rs::padded_region`,
   `growth.rs`), i.e. upstream's growth formula and defaults. Failed-fit regions (std-dev above 15) skip the flat median fill and go to LaMa
   only, so noisier surroundings mean a bigger hole. The "two-tier" idea (flat fill when the ring is uniform, LaMa otherwise) already exists.
@@ -1117,3 +1119,40 @@ re-checked the spec wording (below) but **not** the architect's reproductions.
 - **Decisions owed to the maintainer:** whether to adopt the tight radii as an opt-in profile and test it on other material; whether to start
   the O2 ownership fix (a §16.x erratum + isolated task); whether to add a sentence to CLAUDE.md about copying the binary before long
   consultations (the Orchestrator did not edit CLAUDE.md on an agent's recommendation).
+
+### 2026-11-27 experiments: three ways to stop LaMa fill damaging art (rust-engineer, out-of-tree; brief deleted as consumed)
+
+Patch (env-gated: `PC_CONF_GATE`, `PC_OWNER_FIX`, `PC_BUBBLE_LOCK`), binaries, outputs and sheets were left in the session scratchpad
+(`.../scratchpad/exp3/`, ephemeral); **nothing was committed**, tree ended clean, `cargo test -p pc-inpaint` (72) and
+`cargo test -p pc-detect --features onnx,testkit` (293) pass with the switches unset. Setup: 10 pages of one series, profile = the opt-in profile
+(`P_B`) or it plus the architect's tight LaMa radii (`P_T`: 3 / 6 / 0.05 / 3 / 2), `PC_CONF_GATE=0.7` except C0. **Orchestrator re-verified:**
+C0 is byte-identical to the earlier outputs (10/10); the residual totals; the collateral numbers (recomputed with the right alpha file); and
+looked at the C2 and C4 contact sheets himself.
+
+| cfg | what | residual total | destroyed dark px inside `final_mask` | page-17 band |
+|---|---|---:|---:|---:|
+| C0 | opt-in profile, no gate (current behaviour) | 11 | 2178 | – |
+| C1 | + gate 0.7 (the "+rule") | 3 | 2706 | 554 |
+| C2 | C1 + tight radii (O1) | 3 | 311 | 0 |
+| C3 | C1 + ownership fix (O2) | 3 | 2556 | 0 |
+| C4 | C1 + bubble lock (O3) | 3 | 30 | 81 |
+| C5 | O1 + O2 | 3 | 331 | 0 |
+| C6 | O1 + O2 + O3 | **5** | 32 | 19 |
+| C7 | O2 + O3 | 3 | 33 | 96 |
+
+- **O1 tight radii is clearly best, also on the sheets (Orchestrator's own reading):** it *repairs C0's own damage*, not only the +rule's:
+  C0 (no gate) already leaves invented gray hatching streaks inside p37/p38 bubbles, smooths away burst spikes, erases a dark wedge on p39 and
+  bleeds gray into black areas on p40; C2 is clean white / keeps the art in those cells. Small loss: some burst stripes at the lower right of
+  p40 are thinner. No leftover text was seen. **Caveat that matters: the five radius values were chosen while looking at these same 10 pages;
+  no other series has been run.**
+- **O2 ownership fix** removes the band completely (554 → 0) and changes nothing else (it touched page 39 slightly, not zoomed). Write-once
+  check (engineer's own `PC_WRITE_CHECK`): 0 pixels unowned / written other than once / outside the region in C1-C7.
+- **O3 bubble lock: do not adopt.** Lowest damage counts, but the sheets show LaMa inventing gray sketch lines and hatching inside bubbles
+  (a face-like sketch in the lower p40 bubble; scribbles on p20 and p37; leftover leader dots and a faint vertical line on p17), and C6 has
+  more residual text (5). The damage metric cannot see *added* ink, so it scores O3 best. The flood-fill's open-bubble fallback never fired
+  (0 of 18 regions, largest border fraction 32%), so that path is untested. The texture mechanism is a guess (the lock leaves a sieve of holes
+  between strokes).
+- **What nobody can judge from this:** no ground truth ("art damaged"/"invented" are readings of 3x crops), one series, upstream not run, the
+  metric blind to invented content, `residual-check` unreliable for leader dots, page 39 under O2 unzoomed.
+- **Decision owed to the maintainer:** adopt O1 as an opt-in profile only after running it on other material; O2 as its own Spec-sensitive task
+  (an erratum to §16.38 item 5(f) and a change to 5(e)); drop O3.
