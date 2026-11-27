@@ -1187,3 +1187,18 @@ they must not leave more text / invent ink / erase art that the opt-in profile k
   now two series on which the tight radii reduce art damage by about 90% without a visible loss, but it is still not a rule for all material.
 - **Decision owed to the maintainer (unchanged):** package the tight radii as an opt-in profile (no code), and decide whether the §16.38 ownership
   erratum (O2) is worth its own Spec-sensitive task. O3 (bubble lock) stays rejected.
+
+### 2026-11-27 shipped: the recommended profile (opt-in; built-in defaults unchanged)
+
+`profiles/20261127_panel-ocr_profile_recommended-tight-fill-and-small-text_v01.toml` = the shipped default plus seven keys (`box_min_size` 100,
+`ocr_blacklist_pattern` `""`, and the five `[inpainter]` radii 3 / 6 / 0.05 / 3 / 2); README gets a "Recommended profile" section appended at the end
+(line-pinned README claims untouched). Maintainer's decision: package it as the recommended opt-in profile; the maintainer also asked why it is not
+the built-in default (answer given in session: the values are upstream's and spec-pinned, §14 item 30 / §16.38 item 13(a), and frozen tests assert
+them, so a default flip is its own §16.x deviation; evidence is 15 pages of two series).
+- **Validated as the exact shipped artifact**, with the shipped binary and no experimental switches: `panel-ocr profile validate` passes; it is
+  semantically identical (every key) to the experiment's tight profile; destroyed dark pixels inside the fill region 2178 → 199 (10 pages, series 1)
+  and 3051 → 318 (5 pages, series 2) against the opt-in small-text profile; residual text blocks 11 → 11 and 2 → 3 (it does not touch the fixed
+  0.1 coverage filter; the extra block is three leader dots). A side-by-side of the 12 largest changed cells on series 1 shows cleaner bubbles in
+  11 and no cell worse (the earlier sheets had the conf-gate on; this one did not).
+- Not measured: outlined SFX, text on screentone, other scripts, CUDA, ground truth, upstream output. The §16.38 ownership erratum (O2) remains an
+  open, separate Spec-sensitive task; O3 (bubble lock) stays rejected.

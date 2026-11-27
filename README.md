@@ -411,3 +411,42 @@ works). On Windows use a single-quoted string or forward slashes so `\` isn't re
 
 Check it with `panel-ocr profile list`, then run `panel-ocr clean <paths>` without `--profile`.
 Delete the `default_profile` line to go back to the built-in defaults.
+
+## Recommended profile
+
+[`profiles/20261127_panel-ocr_profile_recommended-tight-fill-and-small-text_v01.toml`](profiles/20261127_panel-ocr_profile_recommended-tight-fill-and-small-text_v01.toml)
+is the profile we recommend. It is the shipped default plus seven keys:
+
+| Key | Default | Recommended | Effect |
+|---|---|---|---|
+| `[preprocessor] box_min_size` | 400 | 100 | also clean very small text boxes |
+| `[preprocessor] ocr_blacklist_pattern` | `[～．ー！？０-９~.!?0-9-]*` | `""` | also clean bubbles that contain only `!`, `...` or `?` |
+| `[inpainter] min_inpainting_radius` | 7 | 3 | smaller LaMa fill area around the text |
+| `[inpainter] max_inpainting_radius` | 20 | 6 | " |
+| `[inpainter] inpainting_radius_multiplier` | 0.2 | 0.05 | " |
+| `[inpainter] inpainting_isolation_radius` | 5 | 3 | " |
+| `[inpainter] inpainting_fade_radius` | 4 | 2 | " |
+
+```
+panel-ocr clean --profile-path profiles/20261127_panel-ocr_profile_recommended-tight-fill-and-small-text_v01.toml <paths>
+```
+
+Or set it once as your own default (see "Make a profile your own default" above). The
+[small-text profile](profiles/20261126_panel-ocr_profile_small-text-and-punct-bubbles_v01.toml) described earlier is a
+subset of this one (its first two keys only).
+
+**Why it is recommended.** The default LaMa fill area is large: the text mask is grown by up to 20 px and then
+blended, so with noisy surroundings it reaches into the line art and screentone next to the text, and LaMa sometimes
+invents gray strokes or hatching inside a bubble. On 15 pages from two series (Japanese and Vietnamese text), run with
+the shipped binary and this file, the number of destroyed dark line-art pixels inside the fill region fell by about 90%
+(2178 to 199 on 10 pages, 3051 to 318 on 5 pages) with no loss visible in a side-by-side check of every changed area, and
+the gray hatching/seam artifacts seen with the defaults disappeared in those areas.
+
+**What it does not do.** It does not change which text boxes are detected or kept: a fixed minimum mask coverage
+(0.1) still drops some real text (for example tall narrow bubbles), and that value is not configurable from a profile.
+Known costs: some burst stripes get thinner and leader dots (`...`) can be left behind. Not measured: outlined sound
+effects, text lying on screentone, other scripts, the CUDA path, any ground truth, or upstream PanelCleaner's own output.
+
+**Why it is not the built-in default.** The shipped values are upstream PanelCleaner's and the spec pins them, as do
+frozen tests, so changing the defaults is a ratified deviation that has not been made. The recommendation above rests
+on 15 pages of two series; treat it as a strong default for your own use, and tell us if it harms your material.

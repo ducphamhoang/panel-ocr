@@ -1,0 +1,100 @@
+# Recommended profile (v01, 2026-11-27): the shipped default plus seven changed keys.
+#
+#   [preprocessor]  box_min_size 400 -> 100              also clean very small text boxes (e.g. a lone character)
+#   [preprocessor]  ocr_blacklist_pattern -> ""           also clean bubbles whose only content is "!", "..." or "?"
+#   [inpainter]     min_inpainting_radius        7 -> 3   )
+#   [inpainter]     max_inpainting_radius       20 -> 6   )  a much smaller LaMa fill area around the text,
+#   [inpainter]     inpainting_radius_multiplier 0.2 -> 0.05 )  so the fill reaches less into line art
+#   [inpainter]     inpainting_isolation_radius  5 -> 3   )  and screentone next to it
+#   [inpainter]     inpainting_fade_radius       4 -> 2   )
+#
+# Why: on 15 manga pages from two series, run with the shipped binary and this exact file, destroyed dark line-art
+# pixels inside the fill region fell by about 90% (2178 -> 199 on 10 pages, 3051 -> 318 on 5 pages, against the opt-in
+# small-text profile) with no loss visible in a side-by-side check, and LaMa stopped inventing gray strokes/hatching
+# inside some bubbles. It does NOT change which text is detected or dropped by the fixed 0.1 mask-coverage filter:
+# residual text blocks were 11 -> 11 and 2 -> 3 (the extra one is three leader dots). Known costs: some burst stripes
+# get thinner, and leader dots ("...") can be left behind. NOT measured: outlined sound effects, text lying on
+# screentone, scripts beyond Latin and Japanese, the CUDA path, any ground truth, or upstream PanelCleaner's output.
+#
+# NOT the built-in default: the shipped values are upstream's and are pinned by the spec (§14 item 30, §16.38 item 13(a))
+# and by frozen tests. Use with:  panel-ocr clean --profile-path <this file> <paths>
+# or make it your own default: README, "Make a profile your own default".
+
+[general]
+preferred_file_type          = ""        # empty = keep original suffix
+preferred_mask_file_type     = ".png"
+input_height_lower_target    = 1000
+input_height_upper_target    = 4000
+split_long_strips            = true
+preferred_split_height       = 2000
+split_tolerance_margin       = 500
+long_strip_aspect_ratio      = 0.33
+merge_after_split            = true
+max_threads                  = 0         # 0 = all cores
+always_cache_masks           = false
+device                       = "cpu"     # cpu | cuda (needs a build with the `cuda` feature: §16.22, §16.36)
+
+[text_detector]
+model_path                   = ""        # empty = use managed cache
+concurrent_models            = 1
+intra_threads                = 0         # 0 = let ONNX Runtime choose
+inter_threads                = 0         # 0 = let ONNX Runtime choose
+mask_refine_mode             = "annotation"  # simple | annotation (Annotation is the shipped default; `simple` is the opt-out)
+
+[preprocessor]
+box_min_size                 = 100       # 20*20
+suspicious_box_min_size      = 40000     # 200*200
+box_overlap_threshold        = 20.0
+ocr_enabled                  = true
+ocr_language                 = "detect_box"   # detect_box | detect_page | jpn | eng
+reading_order                = "auto"         # auto | manga | comic
+ocr_max_size                 = 3000      # 30*100
+ocr_blacklist_pattern        = ""
+ocr_strict_language          = false
+box_padding_initial          = 2
+box_right_padding_initial    = 3
+box_padding_extended         = 5
+box_right_padding_extended   = 5
+box_reference_padding        = 20
+
+[masker]
+mask_growth_step_pixels      = 2
+mask_growth_steps            = 11
+min_mask_thickness           = 4
+allow_colored_masks          = true
+off_white_max_threshold      = 240
+mask_max_standard_deviation  = 15.0
+mask_improvement_threshold   = 0.1
+mask_selection_fast          = false
+mask_fallback_to_lowest_deviation = true  # §10.3 step 10 / §16.35; DEVIATION(21)
+debug_mask_color             = [108, 30, 240, 127]
+
+[denoiser]
+denoising_enabled            = true
+noise_min_standard_deviation = 0.25
+noise_outline_size           = 5
+noise_fade_radius            = 1
+colored_images                = false
+filter_strength               = 10
+color_filter_strength         = 10
+template_window_size          = 7
+search_window_size            = 21
+
+[inpainter]                               # v1.5, ratified by §16.38 item 13. Values are
+                                          # `config.py:817-824`'s dataclass defaults, which
+                                          # §16.38 item 7(b) established are upstream's runtime
+                                          # authority -- NOT `media/default.conf`'s, which
+                                          # disagrees on two keys and is read by no upstream code.
+inpainting_enabled            = true
+inpainting_min_std_dev        = 15.0
+inpainting_max_mask_radius    = 6         # INERT, in this port and upstream: the gate its own
+                                          # comment describes is `inpainting.py:89`'s
+                                          # `thickness <= min_inpainting_radius`. Parsed and
+                                          # validated, never read by the eligibility filter;
+                                          # setting it away from this default emits a one-time
+                                          # WARN, which is DEVIATION(26). §16.38 item 7.
+min_inpainting_radius         = 3
+max_inpainting_radius         = 6
+inpainting_radius_multiplier  = 0.05
+inpainting_isolation_radius   = 3
+inpainting_fade_radius        = 2
