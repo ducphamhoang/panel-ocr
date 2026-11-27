@@ -929,6 +929,7 @@ Observed HEAD of the working branch at close: `a4fa267` (see the branch table ab
   `cfg`-gate it — to be settled by the two architects jointly.
 - **Environment gotchas worth knowing**: `cargo test --workspace` rebuilds
   `target/debug/panel-ocr` *without* the `onnx` feature, silently replacing an `onnx` build;
+  (mechanism and handling now in `docs/COOKBOOK.md` §11, 2026-11-27 note: copy the binary first;)
   rebuild with `cargo build -p pc-cli --features onnx` before running the real pipeline. Also
   `crates/pc-testkit/tests/a4d_claim_sites.rs` pins README claims by **line number**: add README
   prose at the end of the file, never in the middle.
@@ -1070,3 +1071,49 @@ frozen test and `pc_ort::denormal` are **not yet changed**.
   wording is **not** changed (the maintainer chose to keep the test, not to reword the spec); the
   over-description of (b) recorded above therefore stands as a known caveat, stated in the test's own
   comment. The maintainer also authorized the `main` fast-forward in the same message.
+
+### 2026-11-27 consultation: why text-removal fill damages art, and what to do (architect, read-only; brief deleted as consumed)
+
+Maintainer's question: the cleaner seems to erase beyond the bubble or "redraw by itself"; a human would lock the bubble and fill
+with its colour. One `architect` report (scratch evidence under `…/scratchpad/archx/`, outputs not committed). The Orchestrator
+re-checked the spec wording (below) but **not** the architect's reproductions.
+
+- **Nothing is written outside the pipeline's own write region (`final_mask`)**: measured collateral (dark pixels destroyed, more than
+  3 px from the text mask) is 0 outside `final_mask` in all runs. The damage is *inside* that region: it is the raw text mask grown by
+  `min_mask_thickness` and then by `7 + int(0.2*std)` px (cap 20), plus a 5 px isolation band and a 4 px blur (`fill.rs::padded_region`,
+  `growth.rs`), i.e. upstream's growth formula and defaults. Failed-fit regions (std-dev above 15) skip the flat median fill and go to LaMa
+  only, so noisier surroundings mean a bigger hole. The "two-tier" idea (flat fill when the ring is uniform, LaMa otherwise) already exists.
+- **Artifact 1 (hard gray band, only with the +rule experiment) = a tile-ownership seam, reproduced by injecting one box.** A box ~200 px
+  away makes a 512-px LaMa tile that is first in `(y1, x1)` order and therefore owns the top rows of other regions' fill areas; LaMa filled them
+  from hatching context with the hole on the tile edge. Pixel diff: changed-pixel counts per row 49,45,42,44,45,45 for rows 940-945 then 0 at
+  946 = the computed y2. **My hypotheses refuted:** "extra box re-merges with the region B already masked" (the causal box is ~200 px away,
+  rectangles do not intersect) and "composited back as a rectangle".
+  **Spec finding:** §16.38 item 5(f) (spec line ~7636) says clause (c)'s centred-window rule "removes this [seam] for every region that fits
+  in 512×512", but item 5(e)'s "first window in `(y1, x1)` order" ownership lets another region's earlier window own those pixels. Checked by
+  the Orchestrator: both sentences exist as quoted; the false-claim conclusion is the architect's reasoning plus its reproduction.
+  Page 39 under the opt-in profile shows a similar vertical seam (by eye only).
+- **Artifact 2 (faint gray curve at a bubble edge) = LaMa inventing a line**, not erasing one: the original has no outline there (two text
+  groups in one bubble, one detector box spans both). **Artifact 3 (burst line art lost) = the LaMa fill area covering the spikes**
+  (approximate reproduction with injected boxes).
+- **A tighter LaMa-radius profile fixes most of it without code** (`archx/tight.toml`: `min_inpainting_radius=3`,
+  `max_inpainting_radius=6`, `inpainting_radius_multiplier=0.05`, `inpainting_isolation_radius=3`, `inpainting_fade_radius=2`, on top of the
+  opt-in profile; the other five `[inpainter]` values are upstream's verbatim, spec §14 item 30 / §16.38 item 13(a)). Measured by the
+  architect: page 40 burst-area collateral 434/119 → 108/3; page 17 collateral 126 → 14; page-17 band white→gray pixels 670 → 0;
+  10-page `residual-check` total unchanged (11 → 11, per-page counts identical). **Caveat that matters:** those five values were chosen while
+  looking at the same 10 pages they were scored on (cookbook rules 7/13); no other series was run; upstream was not run.
+- **Options ranked by the architect (4-person team):** (1) the tight radii as an opt-in profile, validated first on pages/series *not* used to
+  choose it (success = per-page residual counts not worse AND the collateral metric lower AND a person checks a sheet of the top-N differing
+  cells for leftover text); (2) Spec-sensitive, own isolated task: make a pixel owned by a tile of its *own* merged region (new function in
+  `pc-inpaint/src/tile.rs`, keep `owner_map`'s signature; test-first via a stub `Inpainter` that returns tiles filled with their own (0,0) colour
+  over two failed regions ~280 px apart) — this changes §16.38 item 5(e) and is an erratum to 5(f), so it needs §16.x; (3) a bubble-lock
+  (flood-fill from the text mask clipped to the bubble) or a post-inpaint collateral guard only if (1) leaves real cases, out-of-tree first.
+  **Not recommended:** loosening `mask_max_standard_deviation` (already measured worse), a bubble-segmentation model, clipping only the
+  composite, flipping defaults on this evidence, building the guard before fixing the geometry.
+- **Not verified by anyone:** upstream's behaviour on artifacts 2-3 (it runs one whole-page LaMa context, so artifact 1 cannot occur there);
+  the real +rule boxes (injected approximations were used); the tight profile beyond these 10 pages or on outlined SFX / text on screentone;
+  a flood-fill prototype.
+- **Side effect:** the architect added cache entries under `/root/.cache/panel-ocr/images/` (`*_p17x*`, `*_p40x*`) and edited their
+  `#raw.json` there; container-local cache data, not repo state.
+- **Decisions owed to the maintainer:** whether to adopt the tight radii as an opt-in profile and test it on other material; whether to start
+  the O2 ownership fix (a §16.x erratum + isolated task); whether to add a sentence to CLAUDE.md about copying the binary before long
+  consultations (the Orchestrator did not edit CLAUDE.md on an agent's recommendation).

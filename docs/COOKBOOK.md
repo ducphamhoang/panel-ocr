@@ -653,6 +653,29 @@ a claim, not a verification.** Re-run the suite yourself; read the diff.
     "REQUIRED together" conditional binds the recorder rather than the type (§16.28 item 1(e)) lives
     only in the spec and the PR history, not at the type.
 
+- **`cargo test --workspace` silently swaps which `panel-ocr` binary sits at
+  `target/debug/panel-ocr`** (2026-11-27, two read-only architect consultations). `pc-cli` has
+  `default = []` and an opt-in `onnx` feature, and four `pc-cli` integration tests
+  (`x1_cli.rs`, `x1_ocr_no_side_effects.rs`, `x1_unsupported_format.rs`,
+  `g1_c_device_refusal.rs`) use `CARGO_BIN_EXE_panel-ocr`, so a feature-less
+  `cargo test --workspace` builds the bin without `onnx`. Cargo keeps one un-hashed hard link per
+  binary name, pointing at whichever hashed build under `target/debug/deps/` ran last (checked:
+  `find target/debug/deps -samefile target/debug/panel-ocr`). A feature swap fails loudly on the next
+  launch (the "compiled without the `onnx` feature" refusal, exit 1), and a process already running
+  keeps its old inode (inferred, not run). The quiet risk is a *different build between launches*
+  (feature set, and by the architect's reading `[profile.test]` opt-level 1 vs `cargo build`'s 0),
+  which makes multi-launch experiments and timings unreliable; the test binaries also execute that
+  same shared path (it is baked into them). **No spec change needed:** after
+  `cargo build -p pc-cli --features onnx`, *copy* the binary to a stable path outside `target/`,
+  check `! grep -aq 'compiled without the `onnx` feature' <copy>`, and run only the copy; a
+  long-lived agent or benchmark names that copy in its brief. While someone else is using
+  `target/debug/panel-ocr`, run the commit gate in a private tree:
+  `CARGO_TARGET_DIR=<scratch>/target-gate cargo test --workspace` (cold build, delete afterwards;
+  disk was 35 GB free against a 24 GB `target/`). Rejected: `default = ["onnx"]` (stops the
+  x86_64-apple-darwin release leg, and contradicts §16.17 item 1 and §16.33 item 10) and
+  `--exclude pc-cli` (contradicts CLAUDE.md's "do not substitute a crate-scoped run"). Unverified
+  (consultation experiments E1/E4, not run): that `--exclude pc-cli` really skips the bin, and the
+  profile-hash explanation.
 ---
 
 ## 12. Check that a review gate points at the artifact that carries the risk
