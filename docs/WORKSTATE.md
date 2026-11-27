@@ -1156,3 +1156,34 @@ looked at the C2 and C4 contact sheets himself.
   metric blind to invented content, `residual-check` unreliable for leader dots, page 39 under O2 unzoomed.
 - **Decision owed to the maintainer:** adopt O1 as an opt-in profile only after running it on other material; O2 as its own Spec-sensitive task
   (an erratum to §16.38 item 5(f) and a change to 5(e)); drop O3.
+
+### 2026-11-27 validation of the tight LaMa radii on a different series (Orchestrator; 5 pages, run from the experimental binary, nothing committed)
+
+Material: 5 scanned pages of another series (Vietnamese text, Latin script with diacritics) supplied by the maintainer; files and outputs in the
+session scratchpad (`.../scratchpad/val/`, ephemeral). Experimental binary `exp3/bin/panel-ocr-exp` (switches default off). The five radius values
+(3 / 6 / 0.05 / 3 / 2) were **not** re-tuned. Criteria were fixed before running: (a) tight radii must not increase residual blocks vs the same
+config without them; (b) they must reduce destroyed dark pixels inside `final_mask`; (c) in the cells where they differ from the opt-in profile
+they must not leave more text / invent ink / erase art that the opt-in profile keeps.
+
+| cfg | what | boxes kept | residual blocks (5 pages) | destroyed dark px inside `final_mask` |
+|---|---|---:|---:|---:|
+| A | shipped default profile | 36 | 4 | 3022 |
+| V0 | opt-in profile | 36 | 2 | 3051 |
+| V1 | V0 + conf gate 0.7 | 36 | 2 | 3051 |
+| V2 | V1 + tight radii | 36 | 3 | **318** |
+| V3 | V1 + ownership fix | 36 | 2 | 3001 |
+| V5 | tight + ownership | 36 | 3 | 316 |
+
+- **(b) passes: about 90% fewer destroyed dark pixels (3051 → 318), the same size of effect as on the first series.**
+- **(a) is violated on the letter:** V2/V5 have 3 residual blocks vs 2. The extra block (p103, bubble "CON TITAN", rect 536,151-546,193) is three
+  leader dots (punctuation) that V2 leaves; V0 covers the same place with a mess of invented gray strokes that `residual-check` does not count.
+  Both V0 and V2 leave a small smudge where a "!?" was (p103, same location, counted once in each).
+- **(c) passes:** 8 cells differ between V2 and V0; V2 is better in 1 (narrow bubble on p103: V0 fills it with invented gray scribbles, V2 is
+  clean), slightly better in 2-3 (cleaner bubble edges), equal in the rest; no cell where V2 invents ink or loses art that V0 keeps.
+- The confidence gate changed nothing here (all 36 boxes were already kept); the opt-in profile helped modestly (A 4 → V0 2 residual blocks);
+  the ownership fix had no visible effect (no seam artifacts on these pages), which is expected.
+- The page set also shows many `mask fitting failed` warnings (std-dev 23-74, screentone-heavy art) — the same fallback path as before.
+- **Limits:** 5 pages, one more series; no ground truth; upstream not run; judged by eye at 2-3x crops. Combined with the first 10 pages this is
+  now two series on which the tight radii reduce art damage by about 90% without a visible loss, but it is still not a rule for all material.
+- **Decision owed to the maintainer (unchanged):** package the tight radii as an opt-in profile (no code), and decide whether the §16.38 ownership
+  erratum (O2) is worth its own Spec-sensitive task. O3 (bubble lock) stays rejected.
