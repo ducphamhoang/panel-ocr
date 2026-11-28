@@ -1412,3 +1412,10 @@ Maintainer: "we may also need to translate English and Spanish comics" — so La
 | O2 ownership fix | Redundant once O1 is on (C5 ≈ C2); only matters with the old radii | A visible hard-edged grey band appears with the shipped profile |
 | Decisions still owed: `CLAUDE.md` sentence about copying the binary; whether to try `ocr_enabled=false` in the recommended profile | Cheap, not urgent | Next session that touches `CLAUDE.md` / profiles |
 | Dropped: O3 (bubble lock), O4 (scaled crops) | Measured worse (invented ink; grey tint) | – |
+
+## 2026-11-28 — `ocr_enabled=false` added to the recommended profile; CLAUDE.md note on the binary clobber
+
+- **Test:** recommended profile with `ocr_enabled` true vs false, 10 pages (`in8`), stock onnx binary copy: all 10 `_clean.jpg` and all 10 `_mask.png` byte-identical; wall time 2 m 00.8 s vs 1 m 39.8 s (one run each, not a benchmark). `clean` consults OCR text only for the blacklist, which this profile empties.
+- **Shipped:** `profiles/…recommended…_v01.toml` now carries eight changed keys (the new one has an inline comment: set `ocr_enabled` back to true if `ocr_blacklist_pattern` is set) and the README table has the row. The `ocr` subcommand forces OCR on regardless of the profile. The `a4d_claim_sites` pin was unaffected (README edit is at the end of the file).
+- **CLAUDE.md:** one bullet under Notes about `cargo test --workspace` overwriting `target/debug/panel-ocr` with a non-onnx build (copy the onnx build and run the copy).
+- **Verified (non-`.md` file touched → full bar, all run by the Orchestrator):** `cargo test --workspace` 1499 passed / 0 failed; onnx tier 1546 passed / 0 failed; clippy `--all-features -D warnings` clean; `cargo fmt --all --check` clean.

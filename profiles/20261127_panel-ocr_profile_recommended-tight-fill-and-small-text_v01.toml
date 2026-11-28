@@ -1,7 +1,8 @@
-# Recommended profile (v01, 2026-11-27): the shipped default plus seven changed keys.
+# Recommended profile (v01, 2026-11-27): the shipped default plus eight changed keys.
 #
 #   [preprocessor]  box_min_size 400 -> 100              also clean very small text boxes (e.g. a lone character)
 #   [preprocessor]  ocr_blacklist_pattern -> ""           also clean bubbles whose only content is "!", "..." or "?"
+#   [preprocessor]  ocr_enabled true -> false             skip the manga-ocr pass: nothing in `clean` uses its text while the blacklist is empty
 #   [inpainter]     min_inpainting_radius        7 -> 3   )
 #   [inpainter]     max_inpainting_radius       20 -> 6   )  a much smaller LaMa fill area around the text,
 #   [inpainter]     inpainting_radius_multiplier 0.2 -> 0.05 )  so the fill reaches less into line art
@@ -45,7 +46,7 @@ mask_refine_mode             = "annotation"  # simple | annotation (Annotation i
 box_min_size                 = 100       # 20*20
 suspicious_box_min_size      = 40000     # 200*200
 box_overlap_threshold        = 20.0
-ocr_enabled                  = true
+ocr_enabled                  = false     # needs to be true again if you set ocr_blacklist_pattern (the blacklist matches OCR text)
 ocr_language                 = "detect_box"   # detect_box | detect_page | jpn | eng
 reading_order                = "auto"         # auto | manga | comic
 ocr_max_size                 = 3000      # 30*100

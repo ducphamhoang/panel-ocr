@@ -496,6 +496,11 @@ to grow the same instance's context indefinitely.
     crate-scoped run (e.g. `-p pc-testkit`) for this — measured slower than the full
     workspace run on this repo, with no offsetting safety benefit. Any diff that touches
     even one non-`.md` file gets the full bar, no partial credit.
+  - **`cargo test --workspace` overwrites `target/debug/panel-ocr`** with a build that lacks the
+    `onnx` feature (default features are empty by design), so a binary used for real runs after a
+    test run can silently be the wrong one. Copy the onnx build (`cargo build -p pc-cli --features
+    onnx`) to a scratch path right after building and run only the copy; check it does not contain
+    "compiled without the `onnx` feature". See `docs/COOKBOOK.md` §11.
   - **Measured cost, so "skip it to save time" isn't the right frame for code diffs**:
     the full four-command bar runs in ~90s wall-clock on a warm `target/` (test ~27s,
     onnx ~35s, clippy ~23s, fmt ~6s); the multi-minute numbers people remember are a

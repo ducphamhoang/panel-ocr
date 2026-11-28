@@ -415,12 +415,13 @@ Delete the `default_profile` line to go back to the built-in defaults.
 ## Recommended profile
 
 [`profiles/20261127_panel-ocr_profile_recommended-tight-fill-and-small-text_v01.toml`](profiles/20261127_panel-ocr_profile_recommended-tight-fill-and-small-text_v01.toml)
-is the profile we recommend. It is the shipped default plus seven keys:
+is the profile we recommend. It is the shipped default plus eight keys:
 
 | Key | Default | Recommended | Effect |
 |---|---|---|---|
 | `[preprocessor] box_min_size` | 400 | 100 | also clean very small text boxes |
 | `[preprocessor] ocr_blacklist_pattern` | `[～．ー！？０-９~.!?0-9-]*` | `""` | also clean bubbles that contain only `!`, `...` or `?` |
+| `[preprocessor] ocr_enabled` | true | false | skip the OCR pass, which nothing in `clean` uses while the blacklist is empty; the output was byte-identical on 10 pages and the run about 17% faster. Set it back to true if you set `ocr_blacklist_pattern` |
 | `[inpainter] min_inpainting_radius` | 7 | 3 | smaller LaMa fill area around the text |
 | `[inpainter] max_inpainting_radius` | 20 | 6 | " |
 | `[inpainter] inpainting_radius_multiplier` | 0.2 | 0.05 | " |
