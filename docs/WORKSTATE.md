@@ -1400,3 +1400,15 @@ Maintainer: "we may also need to translate English and Spanish comics" — so La
   Reason: no box on these pages was dropped by the coverage rule, so there was nothing to rescue. These pages' leftovers are detector misses (see the 2026-11-27 CRAFT entries), which the gate cannot affect.
 - **Context from series 1 (10 pages):** the gate rescued 10 blocks (C0 → C1: p17 +2, p19 +1, p20 +1, p37 +1, p38 +1, p40 +2, p41 +2) with confidence 0.73–0.96 and coverage 0.042–0.099; six sit at coverage 0.08–0.099, i.e. just under the fixed 0.1 cut. Residual text 11 → 3 there.
 - **Reading:** on this evidence the gate is harmless (0 effect) but its benefit is series-dependent: 10 rescued blocks in one series, 0 in the other. Two series are still too few to know whether a rule change in `DEFAULT_MIN_MASK_COVERAGE` pays off in general. Not started as a task.
+
+## 2026-11-28 — Backlog (maintainer: "cứ ghi đi"): items parked, not scheduled
+
+| Item | Why parked | Trigger to pick it up |
+|---|---|---|
+| Confidence gate 0.7 (replace fixed `DEFAULT_MIN_MASK_COVERAGE = 0.1`, Spec-sensitive) | Helps on one series (10 blocks rescued, residual 11→3), no effect on another (0 rescued); six of the ten sat at coverage 0.08–0.099, just under the cut | A third series (different genre / Latin script) confirms a benefit, or the maintainer sees sót boxes in real work |
+| CRAFT as an opt-in "careful check" detector | Boxless captions are rare; art false positives need a filter; PyTorch dependency, ONNX export, licence check (see 2026-11-27 entries) | Boxless captions become common in the translated material, or the Latin-OCR/translation step is started (then reuse its detector as a cross-check) |
+| Full-page OCR as a cross-check | Only useful together with a Latin OCR for translation | Start of the translation step |
+| Fitment-failure on dense b&w line art (Buck Jones p05: std-dev 47 > 15 leaves the caption smeared) | Loosening the threshold measured worse; needs a design change and ratification | The maintainer translates b&w line-art comics regularly |
+| O2 ownership fix | Redundant once O1 is on (C5 ≈ C2); only matters with the old radii | A visible hard-edged grey band appears with the shipped profile |
+| Decisions still owed: `CLAUDE.md` sentence about copying the binary; whether to try `ocr_enabled=false` in the recommended profile | Cheap, not urgent | Next session that touches `CLAUDE.md` / profiles |
+| Dropped: O3 (bubble lock), O4 (scaled crops) | Measured worse (invented ink; grey tint) | – |
