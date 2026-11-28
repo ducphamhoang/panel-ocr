@@ -1373,3 +1373,15 @@ Maintainer: "we may also need to translate English and Spanish comics" — so La
 - **O4 = per-region scaled LaMa crops:** for each text region whose padded window fits in 512 px, crop a square window around it (bbox + margin), scale to 512×512, run LaMa once, scale back and write only that region's own fill pixels. Regions larger than 512 keep the existing tiling. Aims at the same tile-ownership band as O2 (O2 changes who owns overlapping pixels; O4 stops a region's window from covering other regions' fill).
   Option list: O1 tight radii (shipped as the opt-in profile), O2 ownership fix, O3 bubble lock (dropped), O4 this.
 - **Status:** the two standalone-harness attempts above are inconclusive. Commissioned: a `rust-engineer` out-of-tree, env-gated patch (`PC_SCALED_CROP=1`) on the `exp3` experiment patch, to be run on the C1 configuration (page-17 band) and the 10-page set against C0 / C1 / C3 (O2) / C2. Brief: scratchpad `o4/BRIEF_o4_scaled_crop.md` (not in the repo). Nothing is to be committed by the experiment.
+
+## 2026-11-28 — O4 (scaled per-region crops) run inside the pipeline (rust-engineer, out-of-tree; Orchestrator re-checked tree state and the p38 sheet)
+
+- **Setup:** env-gated patch `PC_SCALED_CROP=1` on top of the `exp3` patch (backup copy: scratchpad `o4/o4_total.patch`, 584 lines, ephemeral). 10 pages, same configs as the C-table. Unset path unchanged:
+  `cargo test -p pc-inpaint` 72 and `cargo test -p pc-detect --features onnx,testkit` 293 passed; C1 and C3 reruns byte-identical to the earlier outputs. Tree reverted, clean at `40a54dd`.
+- **Numbers** (residual total / destroyed dark px inside final_mask / page-17 band): C1 3 / 2706 / 554; C3 (O2) 3 / 2556 / 0; **C8 = C1 + O4: 3 / 2435 / 2**; C2 (tight) 3 / 311 / 0; **C9 = C2 + O4: 3 / 255 / 0**.
+  12 of 15 clusters took the O4 path in C8 (3 fell back, all window > 512: one on p21, both on p40); 17 of 18 in C9. `PC_WRITE_CHECK`: 0 not-written-once, 0 stray, identical write-pixel totals to C1.
+- **What the sheets show (engineer's reading; I confirmed p38 myself):** O4 removes the p17 band, but with the opt-in radii (C8) it makes other regions visibly worse: the burst bubble on p38 gets a grey ghosted tint
+  with a visible vertical edge and blurred spikes (C1/C3 are white with crisp spikes); p37 gets blurry grey strokes and haze; p39's right bubble gets a grey tint. The damage metric does not see this (it scores C8 better than C3).
+  With the tight radii (C9 vs C2) O4 is nearly neutral (slightly softer edges on p38/p40). Suspected mechanism, **unverified**: cubic upscaling blurs screentone/hatching before LaMa sees it.
+- **Not verified:** other margins or a sharper upscale; other series; ground truth; timing (noisy); which p17 cluster carried the band; p20/p41 sheets.
+- **Reading:** O4 is not better than O2 as a fix for the band. Shipped profile (tight radii) shows no band either way. No spec change proposed from this.
