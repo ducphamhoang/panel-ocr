@@ -1356,3 +1356,14 @@ Maintainer: "we may also need to translate English and Spanish comics" — so La
   regions larger than 512 px, other series, CPU cost inside the engine (wall time here is dominated by one process start per cluster: p39 A 1 m 07 s vs B 3 m 37 s, not representative).
 - **Reading:** scaling the crop is a viable alternative to O2 in principle but showed no measurable gain on these pages; not worth a spec change on this evidence.
 - **Maintainer direction (2026-11-28):** CRAFT-based extra detection, if ever built, is an opt-in setting for users who want a careful check, never a default (see the 2026-11-27 entries for the evidence).
+
+## 2026-11-28 — scaled crops, second attempt at the failure case (out-of-tree; inconclusive, nothing in the repo changed)
+
+- **Correction to the entry above:** it tested pages where the old method does not fail, so it could not say whether scaling fixes the ownership band.
+- **Decoy reproduction (p39, p40, stock `inpaint` standalone):** a 24×24 decoy mask 180–260 px above each cluster (variant 1 on near-white area, variant 2 on art). Stock with vs
+  without decoys differs by 735 / 125 px (variant 1) and 707 px (variant 2, p39) in the fill regions, by eye only faint vertical streaks / a small smudge — **not** the hard grey band.
+  Scaled crops are independent of decoys by construction; they showed no streaks and no dotted ghosts, but a faint flat grey tint in 2 of 4 tiles.
+- **Band case (C1 mask from `exp3`: opt-in profile P_B + gate 0.7, page 17, band rect x 285–445 ∪ 520–600, y 920–946):** the pipeline output `exp3/C1/page17_clean.jpg` shows the hard grey
+  band, but the standalone `inpaint` harness does **not** reproduce it (band metric 0): it treats every blob as a `failed` raw-mask region, so it fills the whole bubble with hatching instead of the
+  pipeline's flat white first tier, and has its own hard edge. Scaled crops in the same harness showed no hard edge but the same hatching infill. Not comparable to the pipeline.
+- **Conclusion:** the question "does scaling fix the band" needs an env-gated in-pipeline patch (like `PC_OWNER_FIX` in `exp3`) run on the C1 configuration; not done.
