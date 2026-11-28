@@ -1367,3 +1367,9 @@ Maintainer: "we may also need to translate English and Spanish comics" — so La
   band, but the standalone `inpaint` harness does **not** reproduce it (band metric 0): it treats every blob as a `failed` raw-mask region, so it fills the whole bubble with hatching instead of the
   pipeline's flat white first tier, and has its own hard edge. Scaled crops in the same harness showed no hard edge but the same hatching infill. Not comparable to the pipeline.
 - **Conclusion:** the question "does scaling fix the band" needs an env-gated in-pipeline patch (like `PC_OWNER_FIX` in `exp3`) run on the C1 configuration; not done.
+
+## 2026-11-28 — option O4 named; in-pipeline experiment commissioned
+
+- **O4 = per-region scaled LaMa crops:** for each text region whose padded window fits in 512 px, crop a square window around it (bbox + margin), scale to 512×512, run LaMa once, scale back and write only that region's own fill pixels. Regions larger than 512 keep the existing tiling. Aims at the same tile-ownership band as O2 (O2 changes who owns overlapping pixels; O4 stops a region's window from covering other regions' fill).
+  Option list: O1 tight radii (shipped as the opt-in profile), O2 ownership fix, O3 bubble lock (dropped), O4 this.
+- **Status:** the two standalone-harness attempts above are inconclusive. Commissioned: a `rust-engineer` out-of-tree, env-gated patch (`PC_SCALED_CROP=1`) on the `exp3` experiment patch, to be run on the C1 configuration (page-17 band) and the 10-page set against C0 / C1 / C3 (O2) / C2. Brief: scratchpad `o4/BRIEF_o4_scaled_crop.md` (not in the repo). Nothing is to be committed by the experiment.
