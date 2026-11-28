@@ -1342,3 +1342,17 @@ Maintainer: "we may also need to translate English and Spanish comics" — so La
   (non-dialogue page furniture) and left p05's caption smear unchanged. With the pre-registered ring filter the captions were rejected.
 - **Not done / caveats:** no pixel-level scoring on this set; 4 pages only; the ring-filter relaxation is tuned on the very page it helps.
   The temporary `$SC/lat` scripts (`build_fx.py`, `craft_lat.py`) are not in the repo.
+
+## 2026-11-28 — scaled per-region LaMa crops vs fixed 512 tiles (out-of-tree experiment, nothing in the repo changed)
+
+- **Method:** stock `panel-ocr inpaint` (standalone, recommended profile) driven from a Python script. Arm A = whole page, text mask from the cached `combined_mask` of a
+  `clean` run (3 pages: manga p17, p39, p40). Arm B = for each cluster of text (mask dilated 15 px, bbox + 50 % margin, min 32 px, square window), crop → scale to 512×512
+  → `inpaint` with growth radii scaled by the same factor → scale back → overwrite only the pixels LaMa changed. Clusters whose window would exceed 512 px or the page
+  keep arm A's result (none occurred on these pages: 13/13, 5/6, 3/3 clusters scaled). Rules fixed before looking at results.
+- **Result:** B is nearly identical to A. Pixels differing from A by > 10 grey levels: 1821 (p39), 237 (p40), 149 (p17). "Destroyed dark pixels" > 3 px from the text mask:
+  A 11 / 39 / 0, B 3 / 38 / 0. Mean grey in the fill region is 0.2–1.4 levels lower in B (p39 249.3 → 247.9). By eye (4 side-by-sides): B removed a faint dotted ghost left in one bubble
+  by A, but its fills are a very slightly grey flat tint (visible as a faint rectangle against white in 2 of 4 tiles).
+- **Not tested:** the actual tile-ownership band (it only reproduces in the earlier +rule/injected-box experiment, not on these pages under the recommended profile),
+  regions larger than 512 px, other series, CPU cost inside the engine (wall time here is dominated by one process start per cluster: p39 A 1 m 07 s vs B 3 m 37 s, not representative).
+- **Reading:** scaling the crop is a viable alternative to O2 in principle but showed no measurable gain on these pages; not worth a spec change on this evidence.
+- **Maintainer direction (2026-11-28):** CRAFT-based extra detection, if ever built, is an opt-in setting for users who want a careful check, never a default (see the 2026-11-27 entries for the evidence).
